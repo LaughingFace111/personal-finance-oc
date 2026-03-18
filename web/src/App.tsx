@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber } from 'antd'
 const { Content } = Layout
-import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined } from '@ant-design/icons'
-import { useState, useEffect, useIm, createContext, useContext } from 'react'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
+import { useState, useEffect, useImativeRef, createContext, useContext } from 'react'
 import { apiGet, apiPost } from './services/api'
 
 interface AuthContextType {
@@ -450,6 +450,139 @@ const TransferPage = () => {
       <div style={{ marginBottom: 16 }}><InputNumber placeholder="金额" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: String(v || '') }))} style={{ width: '100%' }} min={0} precision={2} /></div>
       <div style={{ marginBottom: 16 }}><input placeholder="备注" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #d9d9d9' }} /></div>
       <Button type="primary" block size="large" loading={loading} onClick={handleSubmit}>确认转账</Button>
+    </Card>
+  )
+}
+
+
+
+const AccountFormPage = () => {
+  const { user } = useAuth()
+  const [form] = Form.useForm()
+  const navigate = useNavigate()
+  const bookId = user?.default_book_id
+  const [loading, setLoading] = useState(false)
+
+  const onFinish = async (values: any) => {
+    if (!bookId) return
+    setLoading(true)
+    try {
+      await apiPost('/api/accounts', { ...values, book_id: bookId, current_balance: values.opening_balance || 0 })
+      message.success('创建成功')
+      navigate('/accounts')
+    } catch { message.error('创建失败') }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <Card title="新建账户">
+      <Form form={form} layout="vertical" onFinish={onFinish}>
+        <Form.Item name="name" label="账户名称" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
+          <Select>
+            <Select.Option value="cash">现金</Select.Option>
+            <Select.Option value="debit_card">借记卡</Select.Option>
+            <Select.Option value="credit_card">信用卡</Select.Option>
+            <Select.Option value="ewallet">电子钱包</Select.Option>
+            <Select.Option value="credit_line">信用账户</Select.Option>
+            <Select.Option value="loan">贷款</Select.Option>
+          </Select>
+        </Form.Item>
+        <Form.Item name="opening_balance" label="初始余额"><InputNumber style={{ width: "100%" }} precision={2} defaultValue={0} /></Form.Item>
+        <Form.Item name="note" label="备注"><Input.TextArea /></Form.Item>
+        <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
+      </Form>
+    </Card>
+  )
+}
+
+const CategoryFormPage = () => {
+  const { user } = useAuth()
+  const [form] = Form.useForm()
+  const navigate = useNavigate()
+  const bookId = user?.default_book_id
+  const [loading, setLoading] = useState(false)
+
+  const onFinish = async (values: any) => {
+    if (!bookId) return
+    setLoading(true)
+    try {
+      await apiPost('/api/categories', { ...values, book_id: bookId })
+      message.success('创建成功')
+      navigate('/categories')
+    } catch { message.error('创建失败') }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <Card title="新建分类">
+      <Form form={form} layout="vertical" onFinish={onFinish}>
+        <Form.Item name="name" label="分类名称" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="category_type" label="类型" rules={[{ required: true }]}>
+          <Select>
+            <Select.Option value="expense">支出</Select.Option>
+            <Select.Option value="income">收入</Select.Option>
+          </Select>
+        </Form.Item>
+        <Form.Item name="icon" label="图标（emoji）"><Input placeholder="如: 🍔" /></Form.Item>
+        <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
+      </Form>
+    </Card>
+  )
+}
+
+const TagsPage = () => {
+  const { user } = useAuth()
+  const [data, setData] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const bookId = user?.default_book_id
+  const navigate = useNavigate()
+
+  useEffect(() => { if (!bookId) return; apiGet(`/api/tags?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
+
+  const handleDelete = async (id: string) => {
+    try {
+      await apiDelete(`/api/tags/${id}`)
+      message.success('删除成功')
+      setData(data.filter((t: any) => t.id !== id))
+    } catch { message.error('删除失败') }
+  }
+
+  if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
+  return (
+    <div>
+      {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无标签"><Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button></Empty> : 
+        <List size="small" dataSource={data} renderItem={(item: any) => <List.Item actions={[<Button key="del" type="text" danger icon={<DeleteOutlined />} onClick={() => handleDelete(item.id)} />]}><Tag color={item.color || 'blue'}>{item.name}</Tag></List.Item>} />}
+      <FloatButton icon={<PlusOutlined />} tooltip="新增标签" onClick={() => navigate('/tags/new')} style={{ right: 24, bottom: 24 }} />
+    </div>
+  )
+}
+
+const TagFormPage = () => {
+  const { user } = useAuth()
+  const [form] = Form.useForm()
+  const navigate = useNavigate()
+  const bookId = user?.default_book_id
+  const [loading, setLoading] = useState(false)
+
+  const onFinish = async (values: any) => {
+    if (!bookId) return
+    setLoading(true)
+    try {
+      await apiPost('/api/tags', { ...values, book_id: bookId })
+      message.success('创建成功')
+      navigate('/tags')
+    } catch { message.error('创建失败') }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <Card title="新建标签">
+      <Form form={form} layout="vertical" onFinish={onFinish}>
+        <Form.Item name="name" label="标签名称" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="color" label="颜色"><Input type="color" /></Form.Item>
+        <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
+      </Form>
     </Card>
   )
 }
