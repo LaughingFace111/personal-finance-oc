@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+web/node_modules/
+
+# Python
+server/.venv/
+server/__pycache__/
+server/**/__pycache__/
+*.pyc
+
+# Build
+web/dist/
+web/.vite/
+
+# IDE
+.idea/
+.vscode/
+
+# Database
+server/data/*.db
+
+# Logs
+*.log
