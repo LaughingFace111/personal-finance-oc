@@ -1,23 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Drawer, FloatButton, message, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber } from 'antd'
 const { Content } = Layout
-import {
-  DashboardOutlined,
-  WalletOutlined,
-  TagsOutlined,
-  SwapOutlined,
-  BankOutlined,
-  UploadOutlined,
-  BarChartOutlined,
-  SettingOutlined,
-  PlusOutlined,
-  MenuOutlined,
-  CloseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-  ImportOutlined,
-} from '@ant-design/icons'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext } from 'react'
+import { apiGet, apiPost } from './services/api'
 
 interface AuthContextType {
   token: string | null;
@@ -235,25 +221,39 @@ function AppShell() {
 }
 
 const DashboardPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [overview, setOverview] = useState<any>({})
   const [expenses, setExpenses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const bookId = user?.default_book_id
 
   useEffect(() => {
-    if (!bookId || !token) return
+    if (!bookId) return
+    setLoading(true)
+    setError(null)
     const today = new Date()
     const dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
     const dateTo = today.toISOString().split('T')[0]
+    
     Promise.all([
-      fetch(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => { if (!r.ok) throw new Error('Unauthorized'); return r.json() }),
-      fetch(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => { if (!r.ok) throw new Error('Unauthorized'); return r.json() }),
-    ]).then(([ov, ex]) => { setOverview(ov || {}); setExpenses(ex || []) }).catch((err) => { console.error('API Error:', err); if (err.message === 'Unauthorized') { logout(); window.location.href = '/login' } }).finally(() => setLoading(false))
-  }, [bookId, token])
+      apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`),
+      apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`)
+    ]).then(([ov, ex]) => { 
+      setOverview(ov || {}); 
+      setExpenses(ex || []) 
+    }).catch((err) => { 
+      if (err.message !== 'AUTH_EXPIRED') {
+        setError(err.message)
+      }
+    }).finally(() => setLoading(false))
+  }, [bookId])
 
+  if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
+  
   return (
     <div>
+      {error && <Card style={{ marginBottom: 16, backgroundColor: '#fff2f0', borderColor: '#ffccc7' }}><span style={{ color: '#ff4d4f' }}>⚠️ {error}</span></Card>}
       <Row gutter={[16, 16]}>
         <Col span={12} xs={24}><Card size="small" title="本月收入"><div style={{ color: '#52c41a', fontSize: 20, fontWeight: 600 }}>¥{(overview.income || 0).toFixed(2)}</div></Card></Col>
         <Col span={12} xs={24}><Card size="small" title="本月支出"><div style={{ color: '#ff4d4f', fontSize: 20, fontWeight: 600 }}>¥{(overview.net_expense || 0).toFixed(2)}</div></Card></Col>
@@ -266,20 +266,19 @@ const DashboardPage = () => {
 }
 
 const TransactionsPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
   const bookId = user?.default_book_id
 
   useEffect(() => {
-    if (!bookId || !token) return
-    fetch(`/api/transactions?book_id=${bookId}&page=1&page_size=20`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => { if (!r.ok) throw new Error('Unauthorized'); return r.json() })
+    if (!bookId) return
+    apiGet(`/api/transactions?book_id=${bookId}&page=1&page_size=20`)
       .then(res => setData(res.items || []))
-      .catch((err) => { console.error('API Error:', err); if (err.message === 'Unauthorized') { logout(); navigate('/login') } })
+      .catch(() => {})
       .finally(() => setLoading(false))
-  }, [bookId, token])
+  }, [bookId])
 
   return (
     <div>{loading ? <Spin /> : data.length === 0 ? <Empty description="暂无交易记录" extra={<Button type="primary" onClick={() => navigate('/transactions/new')}>记一笔</Button>} /> : <List size="small" dataSource={data} renderItem={item => <List.Item style={{ padding: '12px 0' }}><div style={{ flex: 1 }}><div>{item.merchant || item.note || '-'}</div><div style={{ fontSize: 12, color: '#999' }}>{new Date(item.occurred_at).toLocaleDateString()}</div></div><div style={{ color: item.direction === 'in' ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>{item.direction === 'in' ? '+' : '-'}¥{Number(item.amount).toFixed(2)}</div></List.Item>} />}</div>
@@ -287,7 +286,7 @@ const TransactionsPage = () => {
 }
 
 const TransactionFormPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [form, setForm] = useState({ type: 'expense', amount: '', account_id: '', category_id: '', note: '' })
@@ -300,16 +299,16 @@ const TransactionFormPage = () => {
   useEffect(() => {
     if (!bookId || !token) return
     Promise.all([
-      fetch(`/api/accounts?book_id=${bookId}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => { if (!r.ok) throw new Error('Unauthorized'); return r.json() }),
-      fetch(`/api/categories?book_id=${bookId}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => { if (!r.ok) throw new Error('Unauthorized'); return r.json() }),
-    ]).then(([acc, cat]) => { setAccounts(acc || []); setCategories(cat || []) }).catch((err) => { console.error('API Error:', err); if (err.message === 'Unauthorized') { logout(); navigate('/login') } })
-  }, [bookId, token])
+      apiGet(`/api/accounts?book_id=${bookId}`),
+      apiGet(`/api/categories?book_id=${bookId}`),
+    ]).then(([acc, cat]) => { setAccounts(acc || []); setCategories(cat || []) }).catch(() => {})
+  }, [bookId])
 
   const handleSubmit = async () => {
     if (!form.amount || !form.account_id) { message.error('请填写必要信息'); return }
     setLoading(true)
     try {
-      const res = await fetch('/api/transactions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), direction: form.type === 'income' ? 'in' : 'out', book_id: bookId }) })
+      const res = await apiPost('/api/transactions', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), direction: form.type === 'income' ? 'in' : 'out', book_id: bookId })
       if (res.ok) { message.success('记录成功'); navigate('/transactions') }
       else { const data = await res.json(); message.error(data.detail || '记录失败') }
     } catch { message.error('请求失败') }
@@ -329,14 +328,14 @@ const TransactionFormPage = () => {
 }
 
 const AccountsPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
   const typeLabels: Record<string, string> = { cash: '现金', debit_card: '借记卡', credit_card: '信用卡', loan: '贷款' }
 
   
-  useEffect(() => { if (!bookId || !token) return; fetch(`/api/accounts?book_id=${bookId}`).then(r => r.json()).then(res => setData(res || [])).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
 
   return (
     <div>{loading ? <Spin /> : data.length === 0 ? <Empty description="暂无账户" /> : <List grid={{ gutter: 16, column: 2 }} dataSource={data} renderItem={item => <List.Item><Card size="small"><div style={{ fontWeight: 500 }}>{item.name}</div><div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div><div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>¥{Number(item.current_balance || 0).toFixed(2)}</div>{item.debt_amount > 0 && <div style={{ color: '#ff4d4f', fontSize: 12 }}>负债: ¥{Number(item.debt_amount).toFixed(2)}</div>}</Card></List.Item>} />}</div>
@@ -344,38 +343,38 @@ const AccountsPage = () => {
 }
 
 const CategoriesPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
 
   
-  useEffect(() => { if (!bookId || !token) return; fetch(`/api/categories?book_id=${bookId}`).then(r => r.json()).then(res => setData(res || [])).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/categories?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
 
   return <div>{loading ? <Spin /> : <List size="small" dataSource={data.filter(c => c.is_active)} renderItem={item => <List.Item><span>{item.icon} {item.name}</span><Tag color={item.category_type === 'expense' ? 'red' : 'green'}>{item.category_type === 'expense' ? '支出' : '收入'}</Tag></List.Item>} />}</div>
 }
 
 const LoansPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
 
   
-  useEffect(() => { if (!bookId || !token) return; fetch(`/api/loans?book_id=${bookId}`).then(r => r.json()).then(res => setData(res || [])).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/loans?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
 
   return <div>{loading ? <Spin /> : data.length === 0 ? <Empty description="暂无贷款" /> : <List size="small" dataSource={data} renderItem={item => <List.Item><div><div>{item.loan_name}</div><div style={{ fontSize: 12, color: '#999' }}>剩余 ¥{Number(item.principal_remaining).toFixed(2)}</div></div><Tag color="blue">{(item.current_period || 0)}/{item.total_periods}期</Tag></List.Item>} />}</div>
 }
 
 const ImportsPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
   const [uploading, setUploading] = useState(false)
 
   
-  useEffect(() => { if (!bookId || !token) return; fetch(`/api/imports?book_id=${bookId}`).then(r => r.json()).then(res => setData(res || [])).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/imports?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -384,8 +383,8 @@ const ImportsPage = () => {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await fetch(`/api/imports/upload?book_id=${bookId}`, { method: 'POST', body: formData, headers: { Authorization: `Bearer ${token}` } })
-      if (res.ok) { message.success('上传成功'); fetch(`/api/imports?book_id=${bookId}`).then(r => r.json()).then(setData) }
+      const res = await apiPost(`/api/imports/upload?book_id=${bookId}`, formData)
+      if (res) { message.success('上传成功'); apiGet(`/api/imports?book_id=${bookId}`).then(setData) }
       else { message.error('上传失败') }
     } catch { message.error('请求失败') }
     finally { setUploading(false) }
@@ -400,7 +399,7 @@ const ImportsPage = () => {
 }
 
 const ReportsPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [overview, setOverview] = useState<any>({})
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -411,14 +410,14 @@ const ReportsPage = () => {
     const today = new Date()
     const dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
     const dateTo = today.toISOString().split('T')[0]
-    fetch(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`).then(r => r.json()).then(setOverview).finally(() => setLoading(false))
+    apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`).then(setOverview).catch(() => {}).finally(() => setLoading(false))
   }, [bookId])
 
   return loading ? <Spin /> : <Row gutter={16}><Col span={8}><Card>收入<br/><b style={{ fontSize: 20 }}>¥{(overview.income || 0).toFixed(2)}</b></Card></Col><Col span={8}><Card>支出<br/><b style={{ fontSize: 20 }}>¥{(overview.net_expense || 0).toFixed(2)}</b></Card></Col><Col span={8}><Card>结余<br/><b style={{ fontSize: 20 }}>¥{(overview.net || 0).toFixed(2)}</b></Card></Col></Row>
 }
 
 const TransferPage = () => {
-  const { user, token, logout } = useAuth()
+  const { user } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [form, setForm] = useState({ from_account_id: '', to_account_id: '', amount: '', note: '' })
   const [loading, setLoading] = useState(false)
@@ -426,14 +425,14 @@ const TransferPage = () => {
   const bookId = user?.default_book_id
 
   
-  useEffect(() => { if (!bookId || !token) return; fetch(`/api/accounts?book_id=${bookId}`).then(r => r.json()).then(setAccounts) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(setAccounts).catch(() => {}) }, [bookId])
 
   const handleSubmit = async () => {
     if (!form.amount || !form.from_account_id || !form.to_account_id) { message.error('请填写必要信息'); return }
     if (form.from_account_id === form.to_account_id) { message.error('不能转给自己'); return }
     setLoading(true)
     try {
-      const res = await fetch('/api/transactions/transfer', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId }) })
+      const res = await apiPost('/api/transactions/transfer', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId })
       if (res.ok) { message.success('转账成功'); navigate('/transactions') }
       else { const data = await res.json(); message.error(data.detail || '转账失败') }
     } catch { message.error('请求失败') }

@@ -112,9 +112,9 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
     from src.modules.categories.models import Category
 
     # === 支出查询：使用别名避免混淆 ===
-    # 原始支出（毛支出）
-    original_txn = alias(Transaction, name="original")
-    refund_txn = alias(Transaction, name="refund")
+    # 原始支出（毛支出）- 退款需要通过它找到原交易的分类
+    OriginalTxn = alias(Transaction, name="original_txn")
+    RefundTxn = alias(Transaction, name="refund_txn")
 
     # 按分类统计毛支出
     expense_query = db.query(
@@ -134,19 +134,20 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
 
     # 按原交易分类统计退款冲减
     # 思路：通过 refund.related_transaction_id 找到原交易，再获取原交易的 category_id
+    # 使用两个别名：refund_txn 是退款记录，original_txn 是原交易
     refund_query = db.query(
-        Transaction.category_id,
-        func.sum(Transaction.amount).label("refund_amount")
+        OriginalTxn.c.category_id,
+        func.sum(RefundTxn.c.amount).label("refund_amount")
     ).join(
-        Transaction, Transaction.related_transaction_id == Transaction.id
+        RefundTxn, RefundTxn.c.related_transaction_id == OriginalTxn.c.id
     ).filter(
-        Transaction.book_id == book_id,
-        Transaction.transaction_type == TransactionType.REFUND.value,
-        Transaction.status == "confirmed",
-        Transaction.occurred_at >= datetime.combine(date_from, time.min),
-        Transaction.occurred_at <= datetime.combine(date_to, time.max),
-        Transaction.category_id.isnot(None)
-    ).group_by(Transaction.category_id).all()
+        OriginalTxn.c.book_id == book_id,
+        RefundTxn.c.transaction_type == TransactionType.REFUND.value,
+        RefundTxn.c.status == "confirmed",
+        RefundTxn.c.occurred_at >= datetime.combine(date_from, time.min),
+        RefundTxn.c.occurred_at <= datetime.combine(date_to, time.max),
+        OriginalTxn.c.category_id.isnot(None)
+    ).group_by(OriginalTxn.c.category_id).all()
 
     # 构建退款冲减映射
     refund_map = {r.category_id: r.refund_amount for r in refund_query if r.category_id}
