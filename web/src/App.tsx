@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Drawer, FloatButton, message, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber } from 'antd'
+import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber } from 'antd'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined } from '@ant-design/icons'
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, useIm, createContext, useContext } from 'react'
 import { apiGet, apiPost } from './services/api'
 
 interface AuthContextType {
@@ -155,7 +155,7 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/accounts': '账户管理', '/categories': '分类管理', '/loans': '贷款管理', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/settings': '设置' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/accounts': '账户管理', '/categories': '分类管理', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/settings': '设置' }
 
 function AppShell() {
   const navigate = useNavigate()
@@ -201,7 +201,11 @@ function AppShell() {
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/transactions/new" element={<TransactionFormPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/accounts/new" element={<AccountFormPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
+            <Route path="/categories/new" element={<CategoryFormPage />} />
+            <Route path="/tags" element={<TagsPage />} />
+            <Route path="/tags/new" element={<TagFormPage />} />
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
