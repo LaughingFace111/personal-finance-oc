@@ -498,19 +498,11 @@ function App() {
   return (
     <BrowserRouter>
       <AuthContext.Provider value={{ token, user, login, logout, loading }}>
-        {token ? (
-          <Routes>
-            <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/register" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/*" element={<AppShell />} />
-          </Routes>
-        ) : (
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/*" element={<Navigate to="/login" replace />} />
-          </Routes>
-        )}
+        <Routes>
+          <Route path="/login" element={token ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+          <Route path="/register" element={token ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
+          <Route path="/*" element={!token ? <Navigate to="/login" replace /> : <AppShell />} />
+        </Routes>
       </AuthContext.Provider>
     </BrowserRouter>
   )

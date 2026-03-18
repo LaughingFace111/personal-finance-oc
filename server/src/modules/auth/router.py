@@ -24,6 +24,10 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     """Login user"""
     user = authenticate_user(db, data.email, data.password)
     token = create_token(user)
+    # Get default book for the user
+    default_book = get_default_book(db, user.id)
+    if default_book:
+        user.default_book_id = default_book.id
     return LoginResponse(
         access_token=token,
         user=user
