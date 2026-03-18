@@ -421,6 +421,9 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
             Transaction.merchant.ilike(f"%{filters['keyword']}%") |
             Transaction.note.ilike(f"%{filters['keyword']}%")
         )
+    if filters.get("tag"):
+        # Filter by tags JSON field containing the tag name
+        query = query.filter(Transaction.tags.ilike(f"%{filters['tag']}%"))
 
     # Get total count
     total = query.count()

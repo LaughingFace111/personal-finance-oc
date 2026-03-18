@@ -14,6 +14,7 @@ from src.modules.loans import router as loans_router
 from src.modules.imports import router as imports_router
 from src.modules.rules import router as rules_router
 from src.modules.reports import router as reports_router
+from src.modules.tags import router as tags_router
 
 # Create FastAPI app
 app = FastAPI(
@@ -49,6 +50,7 @@ app.include_router(loans_router, prefix="/api")
 app.include_router(imports_router, prefix="/api")
 app.include_router(rules_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(tags_router, prefix="/api")
 
 
 @app.get("/")

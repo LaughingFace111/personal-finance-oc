@@ -82,6 +82,7 @@ def list_transactions(
     transaction_type: str = None,
     status: str = None,
     keyword: str = None,
+    tag: str = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100)
 ):
@@ -98,6 +99,7 @@ def list_transactions(
         "transaction_type": transaction_type,
         "status": status,
         "keyword": keyword,
+        "tag": tag,
         "page": page,
         "page_size": page_size
     }

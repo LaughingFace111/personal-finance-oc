@@ -221,7 +221,7 @@ function AppShell() {
 }
 
 const DashboardPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [overview, setOverview] = useState<any>({})
   const [expenses, setExpenses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -266,7 +266,7 @@ const DashboardPage = () => {
 }
 
 const TransactionsPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
@@ -286,7 +286,7 @@ const TransactionsPage = () => {
 }
 
 const TransactionFormPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [form, setForm] = useState({ type: 'expense', amount: '', account_id: '', category_id: '', note: '' })
@@ -297,7 +297,7 @@ const TransactionFormPage = () => {
 
   useEffect(() => { const params = new URLSearchParams(location.search); if (params.get('type')) setForm(f => ({ ...f, type: params.get('type')! })) }, [location])
   useEffect(() => {
-    if (!bookId || !token) return
+    if (!bookId) return
     Promise.all([
       apiGet(`/api/accounts?book_id=${bookId}`),
       apiGet(`/api/categories?book_id=${bookId}`),
@@ -328,7 +328,7 @@ const TransactionFormPage = () => {
 }
 
 const AccountsPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -343,7 +343,7 @@ const AccountsPage = () => {
 }
 
 const CategoriesPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -355,7 +355,7 @@ const CategoriesPage = () => {
 }
 
 const LoansPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -367,7 +367,7 @@ const LoansPage = () => {
 }
 
 const ImportsPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -399,7 +399,7 @@ const ImportsPage = () => {
 }
 
 const ReportsPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [overview, setOverview] = useState<any>({})
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -417,7 +417,7 @@ const ReportsPage = () => {
 }
 
 const TransferPage = () => {
-  const { user } = useAuth()
+  const { user, token } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [form, setForm] = useState({ from_account_id: '', to_account_id: '', amount: '', note: '' })
   const [loading, setLoading] = useState(false)
