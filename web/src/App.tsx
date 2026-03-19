@@ -1066,9 +1066,14 @@ const AccountEditPage = () => {
         form.setFieldsValue({
           name: acc.name,
           account_type: acc.account_type,
-          note: acc.note,
-          billing_date: acc.billing_date,
-          repayment_date: acc.repayment_date
+          note: acc.note || '',
+          // 信用类字段
+          credit_limit: acc.credit_limit,
+          billing_day: acc.billing_day,
+          repayment_day: acc.repayment_day,
+          card_last_four: acc.card_last4,
+          // 资产类字段
+          institution: acc.institution_name
         })
       })
       .catch(() => { message.error('加载失败'); navigate('/accounts') })
@@ -1106,11 +1111,20 @@ const AccountEditPage = () => {
             <Select.Option value="loan">贷款</Select.Option>
           </Select>
         </Form.Item>
-        <Form.Item name="billing_date" label="账单日（信用卡）">
+        <Form.Item name="billing_day" label="账单日（每月）">
           <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
         </Form.Item>
-        <Form.Item name="repayment_date" label="还款日（信用卡）">
+        <Form.Item name="repayment_day" label="还款日（每月）">
           <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
+        </Form.Item>
+        <Form.Item name="credit_limit" label="信用额度">
+          <InputNumber style={{ width: '100%' }} precision={2} min={0} placeholder="如: 10000" />
+        </Form.Item>
+        <Form.Item name="card_last_four" label="卡号后四位">
+          <Input maxLength={4} placeholder="如: 1234" />
+        </Form.Item>
+        <Form.Item name="institution" label="所属机构">
+          <Input placeholder="如: 工商银行" />
         </Form.Item>
         <Form.Item name="note" label="备注"><Input.TextArea /></Form.Item>
         <div style={{ display: 'flex', gap: 12 }}>
