@@ -2,6 +2,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from src.core import get_db
 from src.core.auth import get_current_user
@@ -16,8 +17,18 @@ from .service import (
     get_transactions, get_transaction, update_transaction, delete_transaction
 )
 from src.modules.books.service import get_default_book, create_book
+from src.common.enums import TransactionType, TransactionDirection
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+# Balance adjustment schema
+class BalanceAdjustCreate(BaseModel):
+    book_id: str
+    account_id: str
+    amount: float
+    direction: str  # 'in' or 'out'
+    note: str = ""
 
 
 def get_current_book_id(
@@ -68,6 +79,31 @@ def refund(
     """Create refund transaction"""
     bid = get_current_book_id(current_user, db, book_id)
     return create_refund(db, bid, data)
+
+
+@router.post("/adjust", response_model=TransactionResponse)
+def adjust_balance(
+    data: BalanceAdjustCreate, 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Adjust account balance (create adjustment transaction)"""
+    from datetime import datetime
+    from decimal import Decimal
+    
+    # Use book_id from the request body
+    bid = data.book_id
+    
+    # Create an income or expense transaction based on direction
+    tx_data = TransactionCreate(
+        account_id=data.account_id,
+        amount=Decimal(str(data.amount)),
+        direction=TransactionDirection.IN if data.direction == 'in' else TransactionDirection.OUT,
+        transaction_type=TransactionType.INCOME if data.direction == 'in' else TransactionType.EXPENSE,
+        occurred_at=datetime.utcnow(),
+        note=data.note or "余额调整",
+    )
+    return create_transaction(db, bid, tx_data)
 
 
 @router.get("", response_model=TransactionSummary)
