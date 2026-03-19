@@ -340,6 +340,7 @@ const TransactionsPage = () => {
   
   // 标签筛选
   const [tags, setTags] = useState<any[]>([])
+  const [categories, setCategories] = useState<any[]>([])
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
   
   // 批量操作状态
@@ -347,13 +348,29 @@ const TransactionsPage = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
 
-  // 加载标签列表
+  // 加载标签和分类列表
   useEffect(() => {
     if (!bookId) return
-    apiGet(`/api/tags?book_id=${bookId}`)
-      .then(res => setTags(res || []))
-      .catch(() => {})
+    Promise.all([
+      apiGet(`/api/tags?book_id=${bookId}`),
+      apiGet(`/api/categories?book_id=${bookId}`)
+    ]).then(([t, c]) => { 
+      setTags(t || [])
+      setCategories(c || [])
+    }).catch(() => {})
   }, [bookId])
+
+  // 获取类别名称（支持二级）
+  const getCategoryName = (categoryId: string) => {
+    if (!categoryId) return ''
+    const cat = categories.find((c: any) => c.id === categoryId)
+    if (!cat) return ''
+    if (cat.parent_id) {
+      const parent = categories.find((c: any) => c.id === cat.parent_id)
+      return parent ? `${parent.name}-${cat.name}` : cat.name
+    }
+    return cat.name
+  }
 
   const loadData = () => {
     if (!bookId) return
@@ -372,8 +389,9 @@ const TransactionsPage = () => {
   }
 
   useEffect(() => {
+    // 不再依赖 tags，避免无限循环
     loadData()
-  }, [bookId, selectedTagId, tags])
+  }, [bookId, selectedTagId])
 
   // 切换选择模式
   const enterSelectionMode = (mode: 'delete' | 'refund') => {
@@ -411,7 +429,8 @@ const TransactionsPage = () => {
     
     setSubmitting(true)
     try {
-      await Promise.all(selectedIds.map(id => apiDelete(`/api/transactions/${id}`)))
+      // 添加 book_id 参数
+      await Promise.all(selectedIds.map(id => apiDelete(`/api/transactions/${id}?book_id=${bookId}`)))
       message.success('删除成功')
       cancelSelectionMode()
       loadData()
@@ -543,12 +562,24 @@ const TransactionsPage = () => {
                 />
               )}
               <div style={{ flex: 1 }}>
-                <div>{item.merchant || item.note || '-'}</div>
+                <div>{getCategoryName(item.category_id) || item.merchant || item.note || '-'}</div>
                 <div style={{ fontSize: 12, color: '#999' }}>
                   {new Date(item.occurred_at).toLocaleDateString()}
-                  {item.tags && item.tags.length > 0 && item.tags.map((t: any) => (
-                    <Tag key={t.id} color={t.color} style={{ marginLeft: 4 }}>{t.name}</Tag>
-                  ))}
+                  {/* 显示标签 */}
+                  {(() => {
+                    let tagNames: string[] = []
+                    if (item.tags) {
+                      try {
+                        tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags
+                      } catch {}
+                    }
+                    if (tagNames.length > 0) {
+                      return tagNames.map((name: string, idx: number) => (
+                        <Tag key={idx} color="orange" style={{ marginLeft: 4 }}>{name}</Tag>
+                      ))
+                    }
+                    return null
+                  })()}
                 </div>
               </div>
               <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 500 }}>
@@ -582,6 +613,8 @@ const TransactionFormPage = () => {
   const isEditMode = !!transactionId
 
   // 加载已有交易数据（编辑模式）
+  const [loadedTx, setLoadedTx] = useState<any>(null)
+  
   useEffect(() => {
     if (!bookId) return
     
@@ -595,39 +628,47 @@ const TransactionFormPage = () => {
       setCategories(cat || []); 
       setTags(t || [])
     }).catch(() => {})
+  }, [bookId])
+
+  // 单独加载交易数据
+  useEffect(() => {
+    if (!bookId || !transactionId) return
     
-    // 如果是编辑模式，加载交易数据
-    if (transactionId) {
-      setFetching(true)
-      apiGet(`/api/transactions/${transactionId}`)
-        .then(tx => {
-          if (tx) {
-            setForm({
-              type: tx.direction === 'in' ? 'income' : 'expense',
-              amount: String(tx.amount),
-              account_id: tx.account_id || '',
-              category_id: tx.category_id || '',
-              note: tx.note || '',
-              occurred_at: tx.occurred_at ? tx.occurred_at.split('T')[0] : ''
-            })
-            // 加载已有标签（从 JSON 字符串解析标签名称，再匹配 tag IDs）
-            if (tx.tags) {
-              try {
-                const tagNames = typeof tx.tags === 'string' ? JSON.parse(tx.tags) : tx.tags
-                if (Array.isArray(tagNames) && tags.length > 0) {
-                  const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
-                  setSelectedTagIds(matchedIds)
-                }
-              } catch (e) {
-                console.error('Failed to parse tags:', e)
-              }
-            }
-          }
-        })
-        .catch(() => { message.error('加载失败'); navigate('/transactions') })
-        .finally(() => setFetching(false))
+    setFetching(true)
+    apiGet(`/api/transactions/${transactionId}`)
+      .then(tx => {
+        if (tx) {
+          setLoadedTx(tx)
+          setForm({
+            type: tx.direction === 'in' ? 'income' : 'expense',
+            amount: String(tx.amount),
+            account_id: tx.account_id || '',
+            category_id: tx.category_id || '',
+            note: tx.note || '',
+            occurred_at: tx.occurred_at ? tx.occurred_at.split('T')[0] : ''
+          })
+        }
+      })
+      .catch(() => { message.error('加载失败'); navigate('/transactions') })
+      .finally(() => setFetching(false))
+  }, [transactionId, bookId])
+
+  // 当 tags 加载完成后，匹配已选标签
+  useEffect(() => {
+    if (!loadedTx || tags.length === 0) return
+    
+    if (loadedTx.tags) {
+      try {
+        const tagNames = typeof loadedTx.tags === 'string' ? JSON.parse(loadedTx.tags) : loadedTx.tags
+        if (Array.isArray(tagNames)) {
+          const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
+          setSelectedTagIds(matchedIds)
+        }
+      } catch (e) {
+        console.error('Failed to parse tags:', e)
+      }
     }
-  }, [bookId, transactionId, tags])
+  }, [loadedTx, tags])
 
   // URL 参数设置类型
   useEffect(() => { 
@@ -740,7 +781,20 @@ const AccountsPage = () => {
   const navigate = useNavigate()
   const typeLabels: Record<string, string> = { cash: '现金', debit_card: '借记卡', credit_card: '信用卡', loan: '贷款', ewallet: '电子钱包', credit_line: '信用账户' }
 
+  // 判断是否为信用类账户
+  const isCreditAccount = (type: string) => ['credit_card', 'credit_line'].includes(type)
   
+  // 计算信用账户剩余额度
+  const getCreditDisplay = (item: any) => {
+    if (isCreditAccount(item.account_type)) {
+      const limit = Number(item.credit_limit || 0)
+      const debt = Number(item.debt_amount || 0)
+      const remaining = limit - debt
+      return { remaining, limit, debt }
+    }
+    return null
+  }
+
   useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
 
   return (
@@ -750,21 +804,31 @@ const AccountsPage = () => {
         <List 
           grid={{ gutter: 16, column: 2 }} 
           dataSource={data} 
-          renderItem={item => (
-            <List.Item>
-              <Card 
-                size="small" 
-                hoverable 
-                style={{ cursor: 'pointer' }}
-                onClick={() => navigate(`/accounts/${item.id}`)}
-              >
-                <div style={{ fontWeight: 500 }}>{item.name}</div>
-                <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
-                <div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>¥{Number(item.current_balance || 0).toFixed(2)}</div>
-                {item.debt_amount > 0 && <div style={{ color: '#ff4d4f', fontSize: 12 }}>负债: ¥{Number(item.debt_amount).toFixed(2)}</div>}
-              </Card>
-            </List.Item>
-          )} 
+          renderItem={item => {
+            const creditInfo = getCreditDisplay(item)
+            return (
+              <List.Item>
+                <Card 
+                  size="small" 
+                  hoverable 
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => navigate(`/accounts/${item.id}`)}
+                >
+                  <div style={{ fontWeight: 500 }}>{item.name}</div>
+                  <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
+                  {creditInfo ? (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>剩余 ¥{creditInfo.remaining.toFixed(2)}</div>
+                      <div style={{ fontSize: 12, color: '#999' }}>额度: ¥{creditInfo.limit.toFixed(2)}</div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>¥{Number(item.current_balance || 0).toFixed(2)}</div>
+                  )}
+                  {item.debt_amount > 0 && !creditInfo && <div style={{ color: '#ff4d4f', fontSize: 12 }}>负债: ¥{Number(item.debt_amount).toFixed(2)}</div>}
+                </Card>
+              </List.Item>
+            )
+          }} 
         />
       }
     </div>
@@ -858,22 +922,42 @@ const AccountDetailPage = () => {
         </div>
         
         {/* 信用账户额外信息 */}
-        {account.account_type === 'credit_card' && (
+        {(account.account_type === 'credit_card' || account.account_type === 'credit_line') && (
           <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>信用额度:</span>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span>总额度:</span>
               <span>¥{Number(account.credit_limit || 0).toFixed(2)}</span>
             </div>
-            {account.billing_date && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span>已用额度:</span>
+              <span style={{ color: '#ff4d4f' }}>¥{Number(account.debt_amount || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
+              <span>剩余额度:</span>
+              <span style={{ color: '#52c41a' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
+            </div>
+            {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                 <span>账单日:</span>
-                <span>每月 {account.billing_date} 日</span>
+                <span>每月 {account.billing_day} 日</span>
               </div>
             )}
-            {account.repayment_date && (
+            {account.repayment_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                 <span>还款日:</span>
-                <span>每月 {account.repayment_date} 日</span>
+                <span>每月 {account.repayment_day} 日</span>
+              </div>
+            )}
+            {account.institution_name && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                <span>所属机构:</span>
+                <span>{account.institution_name}</span>
+              </div>
+            )}
+            {account.card_last4 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                <span>卡号后四位:</span>
+                <span>****{account.card_last4}</span>
               </div>
             )}
           </div>
@@ -1522,21 +1606,61 @@ const TagsPage = () => {
   const bookId = user?.default_book_id
   const navigate = useNavigate()
 
-  useEffect(() => { if (!bookId) return; apiGet(`/api/tags?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
+  const loadTags = () => {
+    if (!bookId) return
+    apiGet(`/api/tags?book_id=${bookId}`)
+      .then(res => setData(res || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadTags()
+  }, [bookId])
 
   const handleDelete = async (id: string) => {
     try {
-      await apiDelete(`/api/tags/${id}`)
+      await apiDelete(`/api/tags/${id}?book_id=${bookId}`)
       message.success('删除成功')
-      setData(data.filter((t: any) => t.id !== id))
+      loadTags()
     } catch { message.error('删除失败') }
   }
 
+  // 构建二级结构
+  const buildTree = (tags: any[]) => {
+    const roots = tags.filter(t => !t.parent_id && t.is_active !== false)
+    return roots.map(root => ({
+      ...root,
+      children: tags.filter(t => t.parent_id === root.id && t.is_active !== false)
+    }))
+  }
+
+  const tagTree = buildTree(data)
+
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
+  
   return (
     <div>
-      {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无标签"><Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button></Empty> : 
-        <List size="small" dataSource={data} renderItem={(item: any) => <List.Item actions={[<Button key="del" type="text" danger icon={<DeleteOutlined />} onClick={() => handleDelete(item.id)} />]}><Tag color={item.color || 'blue'}>{item.name}</Tag></List.Item>} />}
+      {loading ? <Spin /> : tagTree.length === 0 ? 
+        <Empty description="暂无标签" extra={<Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button>} /> : 
+        tagTree.map(root => (
+          <div key={root.id} style={{ marginBottom: 8 }}>
+            {/* 一级标签 */}
+            <div style={{ padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span><Tag color={root.color || 'blue'}>{root.name}</Tag></span>
+              <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(root.id)} />
+            </div>
+            {/* 二级标签 */}
+            {root.children && root.children.length > 0 && (
+              <List size="small" dataSource={root.children} renderItem={item => (
+                <List.Item actions={[<Button key="del" type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(item.id)} />]}>
+                  <Tag color={item.color || 'blue'}>{item.name}</Tag>
+                </List.Item>
+              )} />
+            )}
+          </div>
+        ))
+      }
     </div>
   )
 }
@@ -1547,12 +1671,30 @@ const TagFormPage = () => {
   const navigate = useNavigate()
   const bookId = user?.default_book_id
   const [loading, setLoading] = useState(false)
+  const [parentTags, setParentTags] = useState<any[]>([])
+
+  // 加载一级标签
+  useEffect(() => {
+    if (!bookId) return
+    apiGet(`/api/tags?book_id=${bookId}`)
+      .then(res => {
+        const tags = res || []
+        setParentTags(tags.filter((t: any) => !t.parent_id && t.is_active !== false))
+      })
+      .catch(() => {})
+  }, [bookId])
 
   const onFinish = async (values: any) => {
     if (!bookId) return
     setLoading(true)
     try {
-      await apiPost('/api/tags', { ...values, book_id: bookId })
+      const payload = {
+        name: values.name,
+        color: values.color,
+        parent_id: values.parent_id || null,
+        book_id: bookId
+      }
+      await apiPost('/api/tags', payload)
       message.success('创建成功')
       navigate('/tags')
     } catch { message.error('创建失败') }
@@ -1564,6 +1706,13 @@ const TagFormPage = () => {
       <Form form={form} layout="vertical" onFinish={onFinish}>
         <Form.Item name="name" label="标签名称" rules={[{ required: true }]}><Input /></Form.Item>
         <Form.Item name="color" label="颜色"><Input type="color" /></Form.Item>
+        <Form.Item name="parent_id" label="所属大类（留空则为一级标签）">
+          <Select allowClear placeholder="选择父标签">
+            {parentTags.map(t => (
+              <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
+            ))}
+          </Select>
+        </Form.Item>
         <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
       </Form>
     </Card>
