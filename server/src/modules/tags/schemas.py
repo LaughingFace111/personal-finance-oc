@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class TagBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
     color: Optional[str] = None
+    parent_id: Optional[str] = None
 
 
 class TagCreate(TagBase):
@@ -15,6 +16,7 @@ class TagCreate(TagBase):
 class TagUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None
+    parent_id: Optional[str] = None
     is_active: Optional[bool] = None
 
 

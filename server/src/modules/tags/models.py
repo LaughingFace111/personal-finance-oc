@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from src.core.database import Base
 
@@ -8,6 +9,7 @@ class Tag(Base):
 
     id = Column(String(36), primary_key=True)
     book_id = Column(String(36), nullable=False, index=True)
+    parent_id = Column(String(36), nullable=True, index=True)
     name = Column(String(50), nullable=False)
     color = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True)
