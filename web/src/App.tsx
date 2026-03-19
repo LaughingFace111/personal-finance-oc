@@ -644,9 +644,14 @@ const TransactionFormPage = () => {
         ? JSON.stringify(selectedTagIds.map(id => tags.find(t => t.id === id)?.name || '').filter(Boolean))
         : null
       
+      // transaction_type 是必须的
+      const transactionType = form.type === 'income' ? 'income' : 'expense'
+      const direction = form.type === 'income' ? 'in' : 'out'
+      
       const payload = { 
+        transaction_type: transactionType,
         amount: Number(form.amount), 
-        direction: form.type === 'income' ? 'in' : 'out', 
+        direction: direction, 
         account_id: form.account_id,
         category_id: form.category_id || null,
         note: form.note,
@@ -655,28 +660,23 @@ const TransactionFormPage = () => {
         tags: tagsJson
       }
       
-      let res
       if (isEditMode) {
-        // 编辑模式：使用 PUT
-        res = await fetch(`/api/transactions/${transactionId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(payload)
-        })
+        // 编辑模式：使用 PATCH
+        await apiPatch(`/api/transactions/${transactionId}`, payload)
+        message.success('更新成功')
+        navigate('/transactions')
       } else {
         // 新建模式
-        res = await apiPost('/api/transactions', payload)
+        await apiPost('/api/transactions', payload)
+        message.success('记录成功')
+        navigate('/transactions')
       }
-      
-      if (res.ok || res.status === 200) { 
-        message.success(isEditMode ? '更新成功' : '记录成功'); 
-        navigate('/transactions') 
-      } else { 
-        const data = await res.json(); 
-        message.error(data.detail || '操作失败') 
-      }
-    } catch { message.error('请求失败') }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      // 错误由 api 层统一处理，这里可以不做额外处理
+      console.error('Transaction error:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleCancel = () => {
@@ -1329,12 +1329,48 @@ const AccountFormPage = () => {
   const navigate = useNavigate()
   const bookId = user?.default_book_id
   const [loading, setLoading] = useState(false)
+  const [accountType, setAccountType] = useState<string>('cash')
+
+  // 判断是否为资产类账户
+  const isAssetAccount = ['cash', 'debit_card', 'ewallet'].includes(accountType)
+  // 判断是否为信用类账户
+  const isCreditAccount = ['credit_card', 'credit_line'].includes(accountType)
+  // 判断是否为贷款账户
+  const isLoanAccount = accountType === 'loan'
 
   const onFinish = async (values: any) => {
     if (!bookId) return
     setLoading(true)
     try {
-      await apiPost('/api/accounts', { ...values, book_id: bookId, current_balance: values.opening_balance || 0 })
+      // 根据账户类型构建不同的 payload
+      const payload: any = {
+        name: values.name,
+        account_type: values.account_type,
+        note: values.note || '',
+        book_id: bookId
+      }
+
+      if (isAssetAccount) {
+        // 资产类：初始余额
+        payload.opening_balance = values.opening_balance || 0
+        payload.current_balance = values.opening_balance || 0
+        payload.institution_name = values.institution || null
+      } else if (isCreditAccount) {
+        // 信用类：额度、账单日、还款日
+        payload.credit_limit = values.credit_limit || 0
+        payload.billing_day = values.billing_day || null
+        payload.repayment_day = values.repayment_day || null
+        payload.card_last4 = values.card_last_four || null
+        payload.current_balance = 0  // 信用卡使用 debt_amount
+        payload.debt_amount = values.initial_debt || 0
+      } else if (isLoanAccount) {
+        // 贷款类
+        payload.current_balance = values.initial_balance || 0
+        payload.debt_amount = values.initial_balance || 0
+        payload.institution_name = values.institution || null
+      }
+
+      await apiPost('/api/accounts', payload)
       message.success('创建成功')
       navigate('/accounts')
     } catch { message.error('创建失败') }
@@ -1345,7 +1381,9 @@ const AccountFormPage = () => {
     <Card title="新建账户">
       <Form form={form} layout="vertical" onFinish={onFinish}>
         <Form.Item name="name" label="账户名称" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
+        <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}
+          onChange={(value) => setAccountType(value as string)}
+        >
           <Select>
             <Select.Option value="cash">现金</Select.Option>
             <Select.Option value="debit_card">借记卡</Select.Option>
@@ -1355,8 +1393,56 @@ const AccountFormPage = () => {
             <Select.Option value="loan">贷款</Select.Option>
           </Select>
         </Form.Item>
-        <Form.Item name="opening_balance" label="初始余额"><InputNumber style={{ width: "100%" }} precision={2} defaultValue={0} /></Form.Item>
-        <Form.Item name="note" label="备注"><Input.TextArea /></Form.Item>
+
+        {/* 资产类账户字段 */}
+        {isAssetAccount && (
+          <>
+            <Form.Item name="opening_balance" label="初始余额">
+              <InputNumber style={{ width: "100%" }} precision={2} defaultValue={0} />
+            </Form.Item>
+            <Form.Item name="institution" label="所属机构（可选）">
+              <Input placeholder="如: 工商银行" />
+            </Form.Item>
+          </>
+        )}
+
+        {/* 信用类账户字段 */}
+        {isCreditAccount && (
+          <>
+            <Form.Item name="credit_limit" label="信用额度" rules={[{ required: true, message: '请输入信用额度' }]}>
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 10000" />
+            </Form.Item>
+            <Form.Item name="billing_day" label="账单日（每月）">
+              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="repayment_day" label="还款日（每月）">
+              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="card_last_four" label="卡号后四位（可选）">
+              <Input maxLength={4} placeholder="如: 1234" />
+            </Form.Item>
+            <Form.Item name="initial_debt" label="当前欠款（可选）">
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} defaultValue={0} placeholder="如: 5000" />
+            </Form.Item>
+          </>
+        )}
+
+        {/* 贷款账户字段 */}
+        {isLoanAccount && (
+          <>
+            <Form.Item name="initial_balance" label="贷款本金" rules={[{ required: true, message: '请输入贷款本金' }]}>
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 300000" />
+            </Form.Item>
+            <Form.Item name="institution" label="所属机构（可选）">
+              <Input placeholder="如: 建设银行" />
+            </Form.Item>
+          </>
+        )}
+
+        <Form.Item name="note" label="备注">
+          <Input.TextArea placeholder="可选备注" />
+        </Form.Item>
+
         <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
       </Form>
     </Card>
