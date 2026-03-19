@@ -672,8 +672,15 @@ const TransactionFormPage = () => {
         navigate('/transactions')
       }
     } catch (err: any) {
-      // 错误由 api 层统一处理，这里可以不做额外处理
-      console.error('Transaction error:', err)
+      // 错误已由 api 层显示，但这里可以额外处理一些常见错误
+      if (err.message?.includes('Account not found')) {
+        message.error('账户不存在，请重新选择')
+      } else if (err.message?.includes('Category not found')) {
+        message.error('分类不存在，请重新选择')
+      } else if (err.message?.includes('validation')) {
+        message.error('数据验证失败，请检查输入')
+      }
+      // 其他错误由 api 层统一处理
     } finally {
       setLoading(false)
     }
@@ -1364,9 +1371,10 @@ const AccountFormPage = () => {
         payload.current_balance = 0  // 信用卡使用 debt_amount
         payload.debt_amount = values.initial_debt || 0
       } else if (isLoanAccount) {
-        // 贷款类
-        payload.current_balance = values.initial_balance || 0
-        payload.debt_amount = values.initial_balance || 0
+        // 贷款类：使用 debt_amount 表达负债
+        payload.debt_amount = values.loan_principal || 0  // 贷款本金
+        // 贷款账户的 current_balance 为 0，表示已借出
+        payload.current_balance = 0
         payload.institution_name = values.institution || null
       }
 
@@ -1379,12 +1387,10 @@ const AccountFormPage = () => {
 
   return (
     <Card title="新建账户">
-      <Form form={form} layout="vertical" onFinish={onFinish}>
-        <Form.Item name="name" label="账户名称" rules={[{ required: true }]}><Input /></Form.Item>
-        <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}
-          onChange={(value) => setAccountType(value as string)}
-        >
-          <Select>
+      <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ account_type: 'cash', opening_balance: 0 }}>
+        <Form.Item name="name" label="账户名称" rules={[{ required: true, message: '请输入账户名称' }]}><Input /></Form.Item>
+        <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
+          <Select onChange={(value) => setAccountType(value as string)}>
             <Select.Option value="cash">现金</Select.Option>
             <Select.Option value="debit_card">借记卡</Select.Option>
             <Select.Option value="credit_card">信用卡</Select.Option>
@@ -1398,11 +1404,46 @@ const AccountFormPage = () => {
         {isAssetAccount && (
           <>
             <Form.Item name="opening_balance" label="初始余额">
-              <InputNumber style={{ width: "100%" }} precision={2} defaultValue={0} />
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} />
             </Form.Item>
             <Form.Item name="institution" label="所属机构（可选）">
               <Input placeholder="如: 工商银行" />
             </Form.Item>
+          </>
+        )}
+
+        {/* 信用类账户字段 */}
+        {isCreditAccount && (
+          <>
+            <Form.Item name="credit_limit" label="信用额度" rules={[{ required: true, message: '请输入信用额度' }]}>
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 10000" />
+            </Form.Item>
+            <Form.Item name="billing_day" label="账单日（每月）">
+              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="repayment_day" label="还款日（每月）">
+              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="card_last_four" label="卡号后四位（可选）">
+              <Input maxLength={4} placeholder="如: 1234" />
+            </Form.Item>
+            <Form.Item name="initial_debt" label="当前欠款（可选）">
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 5000" />
+            </Form.Item>
+          </>
+        )}
+
+        {/* 贷款账户字段 */}
+        {isLoanAccount && (
+          <>
+            <Form.Item name="loan_principal" label="贷款本金" rules={[{ required: true, message: '请输入贷款本金' }]}>
+              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 300000" />
+            </Form.Item>
+            <Form.Item name="institution" label="所属机构（可选）">
+              <Input placeholder="如: 建设银行" />
+            </Form.Item>
+          </>
+        )}
           </>
         )}
 
