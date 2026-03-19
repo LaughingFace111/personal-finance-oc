@@ -428,21 +428,24 @@ const TransactionsPage = () => {
     if (!confirm(`确定要删除选中的 ${selectedIds.length} 条交易吗？`)) return
     
     setSubmitting(true)
+    setLoading(true)
     try {
-      // 先清空本地数据，再删除
-      setData([])
-      // 添加 book_id 参数
-      await Promise.all(selectedIds.map(id => apiDelete(`/api/transactions/${id}?book_id=${bookId}`)))
+      // 删除所有选中的交易
+      for (const id of selectedIds) {
+        await apiDelete(`/api/transactions/${id}?book_id=${bookId}`)
+      }
       message.success('删除成功')
       cancelSelectionMode()
-      // 重新加载数据
-      loadData()
+      // 清空选中项，重新加载数据
+      const newData = await apiGet(`/api/transactions?book_id=${bookId}&page=1&page_size=50`)
+      setData(newData.items || [])
     } catch { 
       message.error('删除失败')
       // 失败时重新加载
       loadData()
     } finally {
       setSubmitting(false)
+      setLoading(false)
     }
   }
 
