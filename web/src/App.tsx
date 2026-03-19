@@ -429,13 +429,21 @@ const TransactionsPage = () => {
     
     setSubmitting(true)
     try {
+      // 先清空本地数据，再删除
+      setData([])
       // 添加 book_id 参数
       await Promise.all(selectedIds.map(id => apiDelete(`/api/transactions/${id}?book_id=${bookId}`)))
       message.success('删除成功')
       cancelSelectionMode()
+      // 重新加载数据
       loadData()
-    } catch { message.error('删除失败') }
-    finally { setSubmitting(false) }
+    } catch { 
+      message.error('删除失败')
+      // 失败时重新加载
+      loadData()
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   // 退款（单笔限制）
@@ -584,6 +592,7 @@ const TransactionsPage = () => {
               </div>
               <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 500 }}>
                 {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
+                {item.direction === 'refund' && <Tag color="blue" style={{ marginLeft: 4 }}>退款</Tag>}
               </div>
             </List.Item>
           )} 
@@ -1063,6 +1072,7 @@ const AccountEditPage = () => {
     
     apiGet(`/api/accounts/${accountId}`)
       .then(acc => {
+        setAccountType(acc.account_type)
         form.setFieldsValue({
           name: acc.name,
           account_type: acc.account_type,
@@ -1072,6 +1082,7 @@ const AccountEditPage = () => {
           billing_day: acc.billing_day,
           repayment_day: acc.repayment_day,
           card_last_four: acc.card_last4,
+          initial_debt: acc.debt_amount,  // 加载当前欠款/已用额度
           // 资产类字段
           institution: acc.institution_name
         })
@@ -1084,10 +1095,32 @@ const AccountEditPage = () => {
     if (!bookId) return
     setLoading(true)
     try {
+      // 根据账户类型构建不同的 payload
+      const payload: any = {}
+
+      if (isAssetAccount) {
+        payload.name = values.name
+        payload.note = values.note || ''
+        payload.institution_name = values.institution || null
+      } else if (isCreditAccount) {
+        payload.name = values.name
+        payload.note = values.note || ''
+        payload.credit_limit = values.credit_limit || 0
+        payload.billing_day = values.billing_day || null
+        payload.repayment_day = values.repayment_day || null
+        payload.card_last4 = values.card_last_four || null
+        // 信用账户使用 debt_amount 表示已用额度
+        payload.debt_amount = values.initial_debt || 0
+      } else if (isLoanAccount) {
+        payload.name = values.name
+        payload.note = values.note || ''
+        payload.institution_name = values.institution || null
+      }
+
       await fetch(`/api/accounts/${accountId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(values)
+        body: JSON.stringify(payload)
       })
       message.success('更新成功')
       navigate(`/accounts/${accountId}`)
@@ -1700,25 +1733,36 @@ const TagFormPage = () => {
 
   const onFinish = async (values: any) => {
     if (!bookId) return
+    if (!values.name || !values.name.trim()) {
+      message.error('请输入标签名称')
+      return
+    }
     setLoading(true)
     try {
       const payload = {
-        name: values.name,
-        color: values.color,
+        name: values.name.trim(),
+        color: values.color || '#1677ff',
         parent_id: values.parent_id || null,
         book_id: bookId
       }
       await apiPost('/api/tags', payload)
       message.success('创建成功')
       navigate('/tags')
-    } catch { message.error('创建失败') }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      message.error(err.message || '创建失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCancel = () => {
+    navigate('/tags')
   }
 
   return (
     <Card title="新建标签">
       <Form form={form} layout="vertical" onFinish={onFinish}>
-        <Form.Item name="name" label="标签名称" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="name" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input /></Form.Item>
         <Form.Item name="color" label="颜色"><Input type="color" /></Form.Item>
         <Form.Item name="parent_id" label="所属大类（留空则为一级标签）">
           <Select allowClear placeholder="选择父标签">
@@ -1727,7 +1771,10 @@ const TagFormPage = () => {
             ))}
           </Select>
         </Form.Item>
-        <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <Button size="large" style={{ flex: 1 }} onClick={handleCancel}>取消</Button>
+          <Button type="primary" size="large" style={{ flex: 1 }} htmlType="submit" loading={loading}>创建</Button>
+        </div>
       </Form>
     </Card>
   )
