@@ -1444,41 +1444,6 @@ const AccountFormPage = () => {
             </Form.Item>
           </>
         )}
-          </>
-        )}
-
-        {/* 信用类账户字段 */}
-        {isCreditAccount && (
-          <>
-            <Form.Item name="credit_limit" label="信用额度" rules={[{ required: true, message: '请输入信用额度' }]}>
-              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 10000" />
-            </Form.Item>
-            <Form.Item name="billing_day" label="账单日（每月）">
-              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
-            </Form.Item>
-            <Form.Item name="repayment_day" label="还款日（每月）">
-              <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
-            </Form.Item>
-            <Form.Item name="card_last_four" label="卡号后四位（可选）">
-              <Input maxLength={4} placeholder="如: 1234" />
-            </Form.Item>
-            <Form.Item name="initial_debt" label="当前欠款（可选）">
-              <InputNumber style={{ width: "100%" }} precision={2} min={0} defaultValue={0} placeholder="如: 5000" />
-            </Form.Item>
-          </>
-        )}
-
-        {/* 贷款账户字段 */}
-        {isLoanAccount && (
-          <>
-            <Form.Item name="initial_balance" label="贷款本金" rules={[{ required: true, message: '请输入贷款本金' }]}>
-              <InputNumber style={{ width: "100%" }} precision={2} min={0} placeholder="如: 300000" />
-            </Form.Item>
-            <Form.Item name="institution" label="所属机构（可选）">
-              <Input placeholder="如: 建设银行" />
-            </Form.Item>
-          </>
-        )}
 
         <Form.Item name="note" label="备注">
           <Input.TextArea placeholder="可选备注" />
