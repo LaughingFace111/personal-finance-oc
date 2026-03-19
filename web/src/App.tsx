@@ -1,9 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox } from 'antd'
+import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal } from 'antd'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext } from 'react'
-import { apiGet, apiPost, apiDelete } from './services/api'
+import { apiGet, apiPost, apiDelete, apiUpload, apiPatch } from './services/api'
 
 interface AuthContextType {
   token: string | null;
@@ -419,7 +419,28 @@ const TransactionsPage = () => {
     finally { setSubmitting(false) }
   }
 
-  // 批量退款（单笔限制提示）
+  // 退款（单笔限制）
+  const handleRefund = async (txId: string, amount: number, accountId: string) => {
+    if (!confirm(`确定要退款 ¥${Number(amount).toFixed(2)} 吗？`)) return
+    
+    setSubmitting(true)
+    try {
+      // 调用专用退款接口
+      await apiPost('/api/transactions/refund', {
+        book_id: bookId,
+        original_transaction_id: txId,
+        refund_account_id: accountId,
+        amount: amount,
+        occurred_at: new Date().toISOString()
+      })
+      message.success('退款成功')
+      cancelSelectionMode()
+      loadData()
+    } catch { message.error('退款失败') }
+    finally { setSubmitting(false) }
+  }
+
+  // 批量选择模式进入时，渲染退款按钮（单笔）
   const handleBatchRefund = async () => {
     if (selectedIds.length === 0) return
     if (selectedIds.length > 1) {
@@ -434,25 +455,8 @@ const TransactionsPage = () => {
       return
     }
     
-    if (!confirm(`确定要退款 ¥${Number(tx.amount).toFixed(2)} 吗？`)) return
-    
-    setSubmitting(true)
-    try {
-      // refund 不算收入，冲减原支出
-      await apiPost('/api/transactions', {
-        book_id: bookId,
-        amount: tx.amount,
-        direction: 'refund',
-        category_id: tx.category_id,
-        account_id: tx.account_id,
-        note: `退款: ${tx.note || tx.merchant || ''}`,
-        occurred_at: new Date().toISOString()
-      })
-      message.success('退款成功')
-      cancelSelectionMode()
-      loadData()
-    } catch { message.error('退款失败') }
-    finally { setSubmitting(false) }
+    // 直接调用单笔退款
+    await handleRefund(tx.id, tx.amount, tx.account_id)
   }
 
   // 点击交易项进入编辑页
@@ -771,6 +775,9 @@ const AccountDetailPage = () => {
   const [account, setAccount] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [adjustModalVisible, setAdjustModalVisible] = useState(false)
+  const [adjustForm] = Form.useForm()
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false)
   const [month, setMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -868,14 +875,49 @@ const AccountDetailPage = () => {
         {/* 余额调整 */}
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>余额调整</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="small" onClick={() => {
-              const amt = prompt('请输入调整金额（正数增加，负数减少）:', '0')
-              if (amt) handleBalanceAdjust(Number(amt), '手动调整')
-            }}>调整</Button>
-          </div>
+          <Button size="small" type="primary" onClick={() => setAdjustModalVisible(true)}>调整</Button>
         </div>
       </Card>
+
+      {/* 余额调整弹窗 */}
+      <Modal
+        title="余额调整"
+        open={adjustModalVisible}
+        onCancel={() => { setAdjustModalVisible(false); adjustForm.resetFields() }}
+        footer={null}
+      >
+        <Form
+          form={adjustForm}
+          layout="vertical"
+          onFinish={async (values) => {
+            setAdjustSubmitting(true)
+            try {
+              await handleBalanceAdjust(
+                values.adjustType === 'increase' ? values.amount : -values.amount,
+                values.note || '余额调整'
+              )
+              setAdjustModalVisible(false)
+              adjustForm.resetFields()
+            } finally {
+              setAdjustSubmitting(false)
+            }
+          }}
+        >
+          <Form.Item name="adjustType" label="调整方向" rules={[{ required: true }]}>
+            <Select>
+              <Select.Option value="increase">增加</Select.Option>
+              <Select.Option value="decrease">减少</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="amount" label="金额" rules={[{ required: true, message: '请输入金额' }]}>
+            <InputNumber style={{ width: '100%' }} min={0.01} precision={2} placeholder="请输入金额" />
+          </Form.Item>
+          <Form.Item name="note" label="备注">
+            <Input.TextArea rows={2} placeholder="可选备注" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={adjustSubmitting}>确认调整</Button>
+        </Form>
+      </Modal>
 
       {/* 月份切换 */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1099,11 +1141,8 @@ const CategoryEditPage = () => {
     if (!bookId) return
     setLoading(true)
     try {
-      await fetch(`/api/categories/${categoryId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(values)
-      })
+      // 使用 PATCH 方法统一更新
+      await apiPatch(`/api/categories/${categoryId}`, values)
       message.success('更新成功')
       navigate('/categories')
     } catch { message.error('更新失败') }
@@ -1159,7 +1198,6 @@ const LoansPage = () => {
     <div>
       {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无贷款" extra={<Button type="primary" onClick={() => navigate('/loans/new')}>添加贷款</Button>} /> : 
         <List size="small" dataSource={data} renderItem={item => <List.Item><div><div>{item.loan_name}</div><div style={{ fontSize: 12, color: '#999' }}>剩余 ¥{Number(item.principal_remaining).toFixed(2)}</div></div><Tag color="blue">{(item.current_period || 0)}/{item.total_periods}期</Tag></List.Item>} />}
-      <FloatButton icon={<PlusOutlined />} tooltip="添加贷款" onClick={() => navigate('/loans/new')} style={{ right: 24, bottom: 24 }} />
     </div>
   )
 }
@@ -1214,10 +1252,11 @@ const ImportsPage = () => {
     const formData = new FormData()
     formData.append('file', file)
     try {
-      const res = await apiPost(`/api/imports/upload?book_id=${bookId}`, formData)
-      if (res) { message.success('上传成功'); apiGet(`/api/imports?book_id=${bookId}`).then(setData) }
-      else { message.error('上传失败') }
-    } catch { message.error('请求失败') }
+      // 使用专用上传函数 apiUpload
+      await apiUpload(`/api/imports/upload?book_id=${bookId}`, formData)
+      message.success('上传成功')
+      apiGet(`/api/imports?book_id=${bookId}`).then(setData)
+    } catch { /* error already handled by apiUpload */ }
     finally { setUploading(false) }
   }
 
@@ -1263,10 +1302,11 @@ const TransferPage = () => {
     if (form.from_account_id === form.to_account_id) { message.error('不能转给自己'); return }
     setLoading(true)
     try {
-      const res = await apiPost('/api/transactions/transfer', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId })
-      if (res.ok) { message.success('转账成功'); navigate('/transactions') }
-      else { const data = await res.json(); message.error(data.detail || '转账失败') }
-    } catch { message.error('请求失败') }
+      // apiPost returns the data directly on success, throws on failure
+      await apiPost('/api/transactions/transfer', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId })
+      message.success('转账成功')
+      navigate('/transactions')
+    } catch { /* error already handled by apiPost */ }
     finally { setLoading(false) }
   }
 
@@ -1405,7 +1445,6 @@ const TagsPage = () => {
     <div>
       {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无标签"><Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button></Empty> : 
         <List size="small" dataSource={data} renderItem={(item: any) => <List.Item actions={[<Button key="del" type="text" danger icon={<DeleteOutlined />} onClick={() => handleDelete(item.id)} />]}><Tag color={item.color || 'blue'}>{item.name}</Tag></List.Item>} />}
-      <FloatButton icon={<PlusOutlined />} tooltip="新增标签" onClick={() => navigate('/tags/new')} style={{ right: 24, bottom: 24 }} />
     </div>
   )
 }
@@ -1439,13 +1478,41 @@ const TagFormPage = () => {
   )
 }
 
-const SettingsPage = () => (
-  <div>
-    <Card title="个人设置">
-      <p>设置功能开发中...</p>
-    </Card>
-  </div>
-)
+const SettingsPage = () => {
+  const { user, logout } = useAuth()
+  
+  return (
+    <div>
+      <Card title="个人设置" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+          <Avatar size={64} style={{ backgroundColor: '#1677ff', marginRight: 16 }}>
+            {user?.email?.[0]?.toUpperCase() || 'U'}
+          </Avatar>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>{user?.email || '用户'}</div>
+            <div style={{ color: '#666', fontSize: 14 }}>默认账本</div>
+          </div>
+        </div>
+        {user?.default_book_id && (
+          <div style={{ fontSize: 12, color: '#999', marginBottom: 16 }}>
+            账本ID: {user.default_book_id}
+          </div>
+        )}
+      </Card>
+      
+      <Card title="关于" style={{ marginBottom: 16 }}>
+        <List size="small">
+          <List.Item>版本: 1.0.0</List.Item>
+          <List.Item>个人记账 Web 应用</List.Item>
+        </List>
+      </Card>
+      
+      <Button type="primary" danger block onClick={logout}>
+        退出登录
+      </Button>
+    </div>
+  )
+}
 
 // ========== Main App ==========
 

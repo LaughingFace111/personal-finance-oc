@@ -25,12 +25,15 @@ def get_tags(db: Session, book_id: str, include_inactive: bool = False) -> List[
     return query.order_by(Tag.name).all()
 
 
-def get_tag(db: Session, tag_id: str) -> Optional[Tag]:
-    return db.query(Tag).filter(Tag.id == tag_id).first()
+def get_tag(db: Session, tag_id: str, book_id: str = None) -> Optional[Tag]:
+    query = db.query(Tag).filter(Tag.id == tag_id)
+    if book_id:
+        query = query.filter(Tag.book_id == book_id)
+    return query.first()
 
 
-def update_tag(db: Session, tag_id: str, tag_data: TagUpdate) -> Optional[Tag]:
-    tag = get_tag(db, tag_id)
+def update_tag(db: Session, tag_id: str, book_id: str, tag_data: TagUpdate) -> Optional[Tag]:
+    tag = get_tag(db, tag_id, book_id)
     if not tag:
         return None
     for key, value in tag_data.model_dump(exclude_unset=True).items():
@@ -40,10 +43,11 @@ def update_tag(db: Session, tag_id: str, tag_data: TagUpdate) -> Optional[Tag]:
     return tag
 
 
-def delete_tag(db: Session, tag_id: str) -> bool:
-    tag = get_tag(db, tag_id)
+def delete_tag(db: Session, tag_id: str, book_id: str = None) -> bool:
+    tag = get_tag(db, tag_id, book_id)
     if not tag:
         return False
-    db.delete(tag)
+    # Soft delete - set is_active to False instead of hard delete
+    tag.is_active = False
     db.commit()
     return True

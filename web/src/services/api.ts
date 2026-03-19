@@ -32,12 +32,14 @@ export async function apiFetch(url: string, options: FetchOptions = {}): Promise
 
 // Convenience wrapper that handles JSON and errors
 export async function apiJson<T = any>(url: string, options: FetchOptions = {}): Promise<T> {
+  // If body is FormData, let fetch handle it automatically (don't set Content-Type)
+  const isFormData = options.body instanceof FormData;
+  
   const response = await apiFetch(url, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers: isFormData 
+      ? options.headers 
+      : { 'Content-Type': 'application/json', ...options.headers },
   });
 
   // Only handle auth errors - 401/403
@@ -70,7 +72,7 @@ export function apiGet<T = any>(url: string, options?: FetchOptions): Promise<T>
   return apiJson<T>(url, { ...options, method: 'GET' });
 }
 
-// POST request
+// POST request (for JSON body)
 export function apiPost<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
   return apiJson<T>(url, { 
     ...options, 
@@ -91,4 +93,45 @@ export function apiPut<T = any>(url: string, body?: any, options?: FetchOptions)
 // DELETE request
 export function apiDelete<T = any>(url: string, options?: FetchOptions): Promise<T> {
   return apiJson<T>(url, { ...options, method: 'DELETE' });
+}
+
+// PATCH request
+export function apiPatch<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
+  return apiJson<T>(url, { 
+    ...options, 
+    method: 'PATCH', 
+    body: body ? JSON.stringify(body) : undefined 
+  });
+}
+
+// Upload request (for FormData - file uploads)
+export async function apiUpload<T = any>(url: string, formData: FormData, options?: FetchOptions): Promise<T> {
+  const response = await apiFetch(url, {
+    ...options,
+    method: 'POST',
+    body: formData,
+    // Don't set Content-Type for FormData - browser will set with boundary
+  });
+
+  // Handle auth errors
+  if (response.status === 401 || response.status === 403) {
+    localStorage.removeItem('token');
+    message.error('登录已失效，请重新登录');
+    window.location.href = '/login';
+    throw new Error('AUTH_EXPIRED');
+  }
+
+  if (!response.ok) {
+    let errorMsg = '上传失败';
+    try {
+      const errorData = await response.json();
+      errorMsg = errorData.detail || errorData.message || errorMsg;
+    } catch {
+      errorMsg = `上传失败 (${response.status})`;
+    }
+    message.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
 }
