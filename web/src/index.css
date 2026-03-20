@@ -12,6 +12,7 @@
   --accent-color: #1677ff;
   --accent-red: #ff4d4f;
   --accent-green: #52c41a;
+  --accent-orange: #fa8c16;
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.15);
 }
@@ -29,12 +30,22 @@
   --accent-color: #1677ff;
   --accent-red: #ff4d4f;
   --accent-green: #52c41a;
+  --accent-orange: #fa8c16;
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-body {
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
   margin: 0;
+  padding: 0;
+}
+
+body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
@@ -45,69 +56,231 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* iOS 安全区 */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
 
-/* 暗色模式适配 */
+/* 暗色模式全局适配 */
+[data-theme="dark"] {
+  /* Ant Design 组件 */
+  --antd-colorBgContainer: var(--bg-card);
+  --antd-colorBgElevated: var(--bg-elevated);
+  --antd-colorText: var(--text-primary);
+  --antd-colorTextSecondary: var(--text-secondary);
+}
+
 [data-theme="dark"] .ant-card {
   background-color: var(--bg-card);
   border-color: var(--border-color);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .ant-layout {
   background: var(--bg-page);
+  color: var(--text-primary);
 }
 
 [data-theme="dark"] .ant-layout-header {
   background: var(--bg-card);
   border-bottom-color: var(--border-light);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-layout-content {
+  background: var(--bg-page);
 }
 
 [data-theme="dark"] .ant-drawer-content {
   background: var(--bg-card);
 }
 
+[data-theme="dark"] .ant-drawer-header {
+  background: var(--bg-card);
+  border-bottom-color: var(--border-light);
+}
+
+[data-theme="dark"] .ant-drawer-footer {
+  background: var(--bg-card);
+  border-top-color: var(--border-light);
+}
+
 [data-theme="dark"] .ant-select-dropdown {
   background: var(--bg-elevated);
 }
 
+[data-theme="dark"] .ant-select-item {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-select-item-option-active {
+  background: var(--bg-elevated);
+}
+
+[data-theme="dark"] .ant-select-item-option-selected {
+  background: var(--bg-input);
+}
+
+/* 输入框 */
 [data-theme="dark"] .ant-input,
 [data-theme="dark"] .ant-input-number,
 [data-theme="dark"] input[type="date"],
 [data-theme="dark"] input[type="text"],
 [data-theme="dark"] input[type="number"],
 [data-theme="dark"] input[type="password"],
-[data-theme="dark"] input[type="email"] {
-  background: var(--bg-input);
+[data-theme="dark"] input[type="email"],
+[data-theme="dark"] textarea {
+  background: var(--bg-input) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .ant-input::placeholder,
+[data-theme="dark"] input::placeholder {
+  color: var(--text-tertiary) !important;
+}
+
+/* 按钮 */
+[data-theme="dark"] .ant-btn {
   border-color: var(--border-color);
+  background: var(--bg-card);
   color: var(--text-primary);
 }
 
-[data-theme="dark"] .ant-btn {
+[data-theme="dark"] .ant-btn-primary {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
+[data-theme="dark"] .ant-btn-default {
+  background: var(--bg-card);
   border-color: var(--border-color);
 }
 
+[data-theme="dark"] .ant-btn-dangerous {
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+}
+
+/* 浮动按钮 */
 [data-theme="dark"] .ant-float-btn {
   background: var(--accent-color);
+  color: #fff;
 }
 
+/* 列表 */
 [data-theme="dark"] .ant-list-item {
   border-bottom-color: var(--border-light);
+  background: var(--bg-card);
 }
 
+[data-theme="dark"] .ant-list-item-meta-title {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-list-item-meta-description {
+  color: var(--text-secondary);
+}
+
+/* 空状态 */
 [data-theme="dark"] .ant-empty-description {
   color: var(--text-secondary);
 }
 
-/* 交易列表样式 */
-[data-theme="dark"] .transaction-item {
+/* 标签 */
+[data-theme="dark"] .ant-tag {
+  border-color: var(--border-color);
+}
+
+/* Modal */
+[data-theme="dark"] .ant-modal-content {
+  background: var(--bg-card);
+}
+
+[data-theme="dark"] .ant-modal-header {
   background: var(--bg-card);
   border-bottom-color: var(--border-light);
 }
 
-/* 标签页卡片 */
+[data-theme="dark"] .ant-modal-footer {
+  background: var(--bg-card);
+  border-top-color: var(--border-light);
+}
+
+/* Menu */
+[data-theme="dark"] .ant-menu {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-menu-item {
+  color: var(--text-primary);
+}
+
+/* Segmented */
+[data-theme="dark"] .ant-segmented {
+  background: var(--bg-input);
+}
+
+[data-theme="dark"] .ant-segmented-item {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .ant-segmented-item-selected {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Form */
+[data-theme="dark"] .ant-form-item-label > label {
+  color: var(--text-secondary);
+}
+
+/* Checkbox */
+[data-theme="dark"] .ant-checkbox-wrapper {
+  color: var(--text-primary);
+}
+
+/* Radio */
+[data-theme="dark"] .ant-radio-wrapper {
+  color: var(--text-primary);
+}
+
+/* Message */
+[data-theme="dark"] .ant-message-notice-content {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Tabs */
+[data-theme="dark"] .ant-tabs-tab {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--accent-color);
+}
+
+/* Drawer */
+[data-theme="dark"] .ant-drawer-body {
+  background: var(--bg-card);
+}
+
+/* Card */
 [data-theme="dark"] .ant-card {
   box-shadow: var(--shadow-card);
+}
+
+/* App Shell 修复 */
+[data-theme="dark"] .app-header {
+  background: var(--bg-card) !important;
+  border-bottom: 1px solid var(--border-light);
+}
+
+[data-theme="dark"] .app-content {
+  background: var(--bg-page);
 }

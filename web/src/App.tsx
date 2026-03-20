@@ -233,7 +233,7 @@ function AppShell() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', padding: '0 16px', zIndex: 100 }}>
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: 'var(--bg-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', padding: '0 16px', zIndex: 100 }}>
         <Button type="text" icon={<MenuOutlined style={{ fontSize: 20 }} />} onClick={() => setDrawerOpen(true)} style={{ marginRight: 16 }} />
         <span style={{ fontSize: 18, fontWeight: 500 }}>{currentTitle}</span>
       </div>
@@ -320,7 +320,7 @@ const DashboardPage = () => {
   
   return (
     <div>
-      {error && <Card style={{ marginBottom: 16, backgroundColor: '#fff2f0', borderColor: '#ffccc7' }}><span style={{ color: '#ff4d4f' }}>⚠️ {error}</span></Card>}
+      {error && <Card style={{ marginBottom: 16, backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--accent-red)' }}><span style={{ color: 'var(--accent-red)' }}>⚠️ {error}</span></Card>}
       <Row gutter={[16, 16]}>
         <Col span={12} xs={24}><Card size="small" title="本月收入"><div style={{ color: '#52c41a', fontSize: 20, fontWeight: 600 }}>¥{(overview.income || 0).toFixed(2)}</div></Card></Col>
         <Col span={12} xs={24}><Card size="small" title="本月支出"><div style={{ color: '#ff4d4f', fontSize: 20, fontWeight: 600 }}>¥{(overview.net_expense || 0).toFixed(2)}</div></Card></Col>
@@ -574,7 +574,7 @@ const TransactionsPage = () => {
           dataSource={data} 
           renderItem={item => (
             <List.Item 
-              style={{ padding: '12px 0', cursor: 'pointer', background: selectedIds.includes(item.id) ? '#f5f5f5' : undefined }}
+              style={{ padding: '12px 0', cursor: 'pointer', background: selectedIds.includes(item.id) ? 'var(--bg-elevated)' : undefined }}
               onClick={() => handleItemClick(item)}
             >
               {selectionMode !== 'none' && (
@@ -765,13 +765,13 @@ const TransactionFormPage = () => {
     <div style={{ maxWidth: 480, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <Button type="text" onClick={() => navigate('/transactions')} style={{ padding: '0 8px' }}>← 返回</Button>
-        <div style={{ display: 'flex', background: '#f5f5f5', borderRadius: 20, padding: 3 }}>
+        <div style={{ display: 'flex', background: 'var(--border-light)', borderRadius: 20, padding: 3 }}>
           <div
             onClick={() => { setForm(f => ({ ...f, type: 'expense' })); setErrors({}) }}
             style={{
               padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
-              background: isExpense ? '#ff4d4f' : 'transparent',
-              color: isExpense ? '#fff' : '#666',
+              background: isExpense ? 'var(--accent-red)' : 'transparent',
+              color: isExpense ? '#fff' : 'var(--text-secondary)',
               fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
             }}
           >支出</div>
@@ -779,8 +779,8 @@ const TransactionFormPage = () => {
             onClick={() => { setForm(f => ({ ...f, type: 'income' })); setErrors({}) }}
             style={{
               padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
-              background: !isExpense ? '#52c41a' : 'transparent',
-              color: !isExpense ? '#fff' : '#666',
+              background: !isExpense ? 'var(--accent-green)' : 'transparent',
+              color: !isExpense ? '#fff' : 'var(--text-secondary)',
               fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
             }}
           >收入</div>
@@ -812,9 +812,9 @@ const TransactionFormPage = () => {
         {errors.amount && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 8 }}>{errors.amount}</div>}
       </div>
 
-      <div style={{ background: '#fff', borderRadius: 12, padding: '0 16px', marginBottom: 16 }}>
-        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
-          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>账户</div>
+      <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '0 16px', marginBottom: 16 }}>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>账户</div>
           <Select
             placeholder="选择账户"
             value={form.account_id || undefined}
@@ -828,8 +828,8 @@ const TransactionFormPage = () => {
           {errors.account_id && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.account_id}</div>}
         </div>
 
-        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
-          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>分类</div>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>分类</div>
           <Select
             placeholder="选择分类（可选）"
             value={form.category_id || undefined}
@@ -844,21 +844,22 @@ const TransactionFormPage = () => {
           </Select>
         </div>
 
-        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
-          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>日期</div>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>日期</div>
           <input
             type="date"
             value={form.occurred_at || today}
             onChange={e => setForm(f => ({ ...f, occurred_at: e.target.value }))}
             style={{
               width: '100%', padding: '10px 12px', borderRadius: 8,
-              border: '1px solid #d9d9d9', fontSize: 15,
+              border: '1px solid var(--border-color)', fontSize: 15,
+              background: 'var(--bg-input)', color: 'var(--text-primary)',
             }}
           />
         </div>
 
-        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
-          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>标签</div>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>标签</div>
           <Select
             mode="multiple"
             placeholder="选择标签（可选）"
@@ -882,14 +883,15 @@ const TransactionFormPage = () => {
         </div>
 
         <div style={{ padding: '14px 0' }}>
-          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>备注（可选）</div>
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>备注（可选）</div>
           <input
             placeholder="添加备注"
             value={form.note}
             onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
             style={{
               width: '100%', padding: '10px 12px', borderRadius: 8,
-              border: '1px solid #d9d9d9', fontSize: 15,
+              border: '1px solid var(--border-color)', fontSize: 15,
+              background: 'var(--bg-input)', color: 'var(--text-primary)',
             }}
           />
         </div>
@@ -1057,18 +1059,18 @@ const AccountDetailPage = () => {
         
         {/* 信用账户额外信息 */}
         {(account.account_type === 'credit_card' || account.account_type === 'credit_line') && (
-          <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
+          <div style={{ marginTop: 16, padding: 12, background: 'var(--bg-elevated)', borderRadius: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span>总额度:</span>
-              <span>¥{Number(account.credit_limit || 0).toFixed(2)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>总额度:</span>
+              <span style={{ fontWeight: 500 }}>¥{Number(account.credit_limit || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span>已用额度:</span>
-              <span style={{ color: '#ff4d4f' }}>¥{Number(account.debt_amount || 0).toFixed(2)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>已用额度:</span>
+              <span style={{ color: 'var(--accent-red)', fontWeight: 500 }}>¥{Number(account.debt_amount || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
-              <span>剩余额度:</span>
-              <span style={{ color: '#52c41a' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>剩余额度:</span>
+              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
             </div>
             {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
@@ -1317,7 +1319,7 @@ const CategoriesPage = () => {
   // 渲染单个分类项（可点击编辑）
   const renderCategory = (item: any, isChild: boolean = false) => (
     <List.Item 
-      style={{ padding: isChild ? '8px 12px' : '12px 0', cursor: 'pointer', background: isChild ? '#fafafa' : undefined }}
+      style={{ padding: isChild ? '8px 12px' : '12px 0', cursor: 'pointer', background: isChild ? 'var(--bg-page)' : undefined }}
       onClick={() => navigate(`/categories/${item.id}`)}
     >
       <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
@@ -1340,10 +1342,11 @@ const CategoriesPage = () => {
               <div 
                 style={{ 
                   padding: '12px 16px', 
-                  background: '#f5f5f5', 
+                  background: 'var(--bg-elevated)', 
                   borderRadius: 8, 
                   fontWeight: 600,
-                  cursor: 'pointer'
+                  cursor: 'pointer',
+                  color: 'var(--text-primary)',
                 }}
                 onClick={() => navigate(`/categories/${root.id}`)}
               >
@@ -1871,7 +1874,7 @@ const TagsPage = () => {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   cursor: 'pointer',
-                  background: isExpanded ? '#fafafa' : '#fff',
+                  background: isExpanded ? 'var(--bg-elevated)' : 'var(--bg-card)',
                 }}
                 onClick={() => toggleGroup(group.id)}
               >
@@ -1903,7 +1906,7 @@ const TagsPage = () => {
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        borderBottom: '1px solid #f5f5f5',
+                        borderBottom: '1px solid var(--border-light)',
                       }}
                     >
                       <Tag color={group.color || 'blue'}>{child.name}</Tag>
