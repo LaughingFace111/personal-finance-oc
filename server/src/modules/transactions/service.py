@@ -416,6 +416,9 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
         query = query.filter(Transaction.transaction_type == filters["transaction_type"])
     if filters.get("status"):
         query = query.filter(Transaction.status == filters["status"])
+    else:
+        # 默认不显示已作废交易，除非明确指定 status
+        query = query.filter(Transaction.status != TransactionStatus.VOID.value)
     if filters.get("keyword"):
         query = query.filter(
             Transaction.merchant.ilike(f"%{filters['keyword']}%") |

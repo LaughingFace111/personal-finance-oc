@@ -29,3 +29,8 @@ class TagResponse(TagBase):
 
     class Config:
         from_attributes = True
+
+
+class TagTreeNode(TagResponse):
+    """一级标签节点，包含 children（二级标签列表）"""
+    children: List[TagResponse] = []

@@ -511,11 +511,23 @@ const TransactionsPage = () => {
             allowClear
             size="small"
           >
-            {tags.map(t => (
-              <Select.Option key={t.id} value={t.id}>
-                <Tag color={t.color || 'blue'}>{t.name}</Tag>
-              </Select.Option>
-            ))}
+            {tags.map(t => {
+              // 如果是二级标签，显示 "父级 > 子级" 格式
+              let label = t.name
+              let color = t.color || 'blue'
+              if (t.parent_id) {
+                const parent = tags.find((p: any) => p.id === t.parent_id)
+                if (parent) {
+                  label = `${parent.name} > ${t.name}`
+                  color = parent.color || color
+                }
+              }
+              return (
+                <Select.Option key={t.id} value={t.id}>
+                  <Tag color={color}>{label}</Tag>
+                </Select.Option>
+              )
+            })}
           </Select>
         </div>
       )}
@@ -576,7 +588,7 @@ const TransactionsPage = () => {
                 <div>{getCategoryName(item.category_id) || item.merchant || item.note || '-'}</div>
                 <div style={{ fontSize: 12, color: '#999' }}>
                   {new Date(item.occurred_at).toLocaleDateString()}
-                  {/* 显示标签 */}
+                  {/* 显示标签（使用继承颜色） */}
                   {(() => {
                     let tagNames: string[] = []
                     if (item.tags) {
@@ -585,9 +597,17 @@ const TransactionsPage = () => {
                       } catch {}
                     }
                     if (tagNames.length > 0) {
-                      return tagNames.map((name: string, idx: number) => (
-                        <Tag key={idx} color="orange" style={{ marginLeft: 4 }}>{name}</Tag>
-                      ))
+                      return tagNames.map((name: string, idx: number) => {
+                        // 查找标签所属的一级标签颜色
+                        const tag = tags.find((t: any) => t.name === name)
+                        let color = tag?.color || 'blue'
+                        // 如果是二级标签，查找其父级颜色
+                        if (tag?.parent_id) {
+                          const parent = tags.find((t: any) => t.id === tag.parent_id)
+                          if (parent?.color) color = parent.color
+                        }
+                        return <Tag key={idx} color={color} style={{ marginLeft: 4 }}>{name}</Tag>
+                      })
                     }
                     return null
                   })()}
@@ -606,7 +626,7 @@ const TransactionsPage = () => {
 }
 
 const TransactionFormPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [tags, setTags] = useState<any[]>([])
@@ -614,27 +634,24 @@ const TransactionFormPage = () => {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(false)
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const navigate = useNavigate()
   const location = useLocation()
   const bookId = user?.default_book_id
   
-  // 判断是编辑模式还是新建模式
   const transactionId = location.pathname.includes('/transactions/') && !location.pathname.endsWith('/new') 
     ? location.pathname.split('/transactions/')[1] 
     : null
   const isEditMode = !!transactionId
 
-  // 加载已有交易数据（编辑模式）
   const [loadedTx, setLoadedTx] = useState<any>(null)
   
   useEffect(() => {
     if (!bookId) return
-    
-    // 加载账户、分类和标签
     Promise.all([
-      apiGet(`/api/accounts?book_id=${bookId}`),
-      apiGet(`/api/categories?book_id=${bookId}`),
-      apiGet(`/api/tags?book_id=${bookId}`),
+      apiGet('/api/accounts?book_id=' + bookId),
+      apiGet('/api/categories?book_id=' + bookId),
+      apiGet('/api/tags?book_id=' + bookId),
     ]).then(([acc, cat, t]) => { 
       setAccounts(acc || []); 
       setCategories(cat || []); 
@@ -642,12 +659,10 @@ const TransactionFormPage = () => {
     }).catch(() => {})
   }, [bookId])
 
-  // 单独加载交易数据
   useEffect(() => {
     if (!bookId || !transactionId) return
-    
     setFetching(true)
-    apiGet(`/api/transactions/${transactionId}`)
+    apiGet('/api/transactions/' + transactionId)
       .then(tx => {
         if (tx) {
           setLoadedTx(tx)
@@ -665,10 +680,8 @@ const TransactionFormPage = () => {
       .finally(() => setFetching(false))
   }, [transactionId, bookId])
 
-  // 当 tags 加载完成后，匹配已选标签
   useEffect(() => {
     if (!loadedTx || tags.length === 0) return
-    
     if (loadedTx.tags) {
       try {
         const tagNames = typeof loadedTx.tags === 'string' ? JSON.parse(loadedTx.tags) : loadedTx.tags
@@ -676,35 +689,42 @@ const TransactionFormPage = () => {
           const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
           setSelectedTagIds(matchedIds)
         }
-      } catch (e) {
-        console.error('Failed to parse tags:', e)
-      }
+      } catch {}
     }
   }, [loadedTx, tags])
 
-  // URL 参数设置类型
   useEffect(() => { 
-    const params = new URLSearchParams(location.search); 
+    const params = new URLSearchParams(location.search)
     if (params.get('type')) setForm(f => ({ ...f, type: params.get('type')! })) 
   }, [location])
 
+  const groupedTags = (() => {
+    const parents = tags.filter((t: any) => !t.parent_id)
+    return parents.map(p => ({
+      ...p,
+      children: tags.filter((t: any) => t.parent_id === p.id)
+    })).filter(g => g.children.length > 0)
+  })()
+
+  const validate = () => {
+    const errs: Record<string, string> = {}
+    if (!form.amount || Number(form.amount) <= 0) errs.amount = '请输入金额'
+    if (!form.account_id) errs.account_id = '请选择账户'
+    setErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
   const handleSubmit = async () => {
-    if (!form.amount || !form.account_id) { message.error('请填写必要信息'); return }
+    if (!validate()) return
     setLoading(true)
     try {
-      // 将 tag IDs 转换为 JSON 字符串（存储标签名称）
       const tagsJson = selectedTagIds.length > 0 
         ? JSON.stringify(selectedTagIds.map(id => tags.find(t => t.id === id)?.name || '').filter(Boolean))
         : null
-      
-      // transaction_type 是必须的
-      const transactionType = form.type === 'income' ? 'income' : 'expense'
-      const direction = form.type === 'income' ? 'in' : 'out'
-      
       const payload = { 
-        transaction_type: transactionType,
+        transaction_type: form.type === 'income' ? 'income' : 'expense',
         amount: Number(form.amount), 
-        direction: direction, 
+        direction: form.type === 'income' ? 'in' : 'out', 
         account_id: form.account_id,
         category_id: form.category_id || null,
         note: form.note,
@@ -712,76 +732,167 @@ const TransactionFormPage = () => {
         book_id: bookId,
         tags: tagsJson
       }
-      
       if (isEditMode) {
-        // 编辑模式：使用 PATCH
-        await apiPatch(`/api/transactions/${transactionId}`, payload)
+        await apiPatch('/api/transactions/' + transactionId, payload)
         message.success('更新成功')
-        navigate('/transactions')
       } else {
-        // 新建模式
         await apiPost('/api/transactions', payload)
         message.success('记录成功')
-        navigate('/transactions')
       }
-    } catch (err: any) {
-      // 错误已由 api 层显示，但这里可以额外处理一些常见错误
-      if (err.message?.includes('Account not found')) {
-        message.error('账户不存在，请重新选择')
-      } else if (err.message?.includes('Category not found')) {
-        message.error('分类不存在，请重新选择')
-      } else if (err.message?.includes('validation')) {
-        message.error('数据验证失败，请检查输入')
-      }
-      // 其他错误由 api 层统一处理
-    } finally {
-      setLoading(false)
-    }
+      navigate('/transactions')
+    } catch {} 
+    finally { setLoading(false) }
   }
 
-  const handleCancel = () => {
-    navigate('/transactions')
-  }
+  if (fetching) return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
 
-  if (fetching) {
-    return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-  }
+  const isExpense = form.type === 'expense'
+  const accentColor = isExpense ? '#ff4d4f' : '#52c41a'
+  const today = new Date().toISOString().split('T')[0]
 
   return (
-    <Card title={isEditMode ? '编辑交易' : (form.type === 'expense' ? '记支出' : form.type === 'income' ? '记收入' : '新建交易')}>
-      <div style={{ marginBottom: 16 }}><Button.Group><Button type={form.type === 'expense' ? 'primary' : 'default'} onClick={() => setForm(f => ({ ...f, type: 'expense' }))}>支出</Button><Button type={form.type === 'income' ? 'primary' : 'default'} onClick={() => setForm(f => ({ ...f, type: 'income' }))}>收入</Button></Button.Group></div>
-      <div style={{ marginBottom: 16 }}><InputNumber placeholder="金额" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: String(v || '') }))} style={{ width: '100%' }} min={0} precision={2} /></div>
-      <div style={{ marginBottom: 16 }}><Input type="date" placeholder="日期" value={form.occurred_at} onChange={e => setForm(f => ({ ...f, occurred_at: e.target.value }))} style={{ width: '100%', padding: '8px', borderRadius: 8, border: '1px solid #d9d9d9' }} /></div>
-      <div style={{ marginBottom: 16 }}><Select placeholder="选择账户" value={form.account_id || undefined} onChange={v => setForm(f => ({ ...f, account_id: v || '' }))} style={{ width: '100%' }}>{accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}</Select></div>
-      <div style={{ marginBottom: 16 }}><Select placeholder="选择分类" value={form.category_id || undefined} onChange={v => setForm(f => ({ ...f, category_id: v || '' }))} style={{ width: '100%' }} allowClear>{categories.filter(c => c.category_type === form.type).map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}</Select></div>
-      
-      {/* 标签选择 */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ marginBottom: 8, fontSize: 14, color: '#666' }}>标签</div>
-        <Select
-          mode="multiple"
-          placeholder="选择标签"
-          value={selectedTagIds}
-          onChange={setSelectedTagIds}
-          style={{ width: '100%' }}
-          allowClear
-        >
-          {tags.map(t => (
-            <Select.Option key={t.id} value={t.id}>
-              <Tag color={t.color || 'blue'}>{t.name}</Tag>
-            </Select.Option>
-          ))}
-        </Select>
+    <div style={{ maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <Button type="text" onClick={() => navigate('/transactions')} style={{ padding: '0 8px' }}>← 返回</Button>
+        <div style={{ display: 'flex', background: '#f5f5f5', borderRadius: 20, padding: 3 }}>
+          <div
+            onClick={() => { setForm(f => ({ ...f, type: 'expense' })); setErrors({}) }}
+            style={{
+              padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
+              background: isExpense ? '#ff4d4f' : 'transparent',
+              color: isExpense ? '#fff' : '#666',
+              fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
+            }}
+          >支出</div>
+          <div
+            onClick={() => { setForm(f => ({ ...f, type: 'income' })); setErrors({}) }}
+            style={{
+              padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
+              background: !isExpense ? '#52c41a' : 'transparent',
+              color: !isExpense ? '#fff' : '#666',
+              fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
+            }}
+          >收入</div>
+        </div>
+        <div style={{ width: 48 }} />
       </div>
-      
-      <div style={{ marginBottom: 16 }}><input placeholder="备注" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #d9d9d9' }} /></div>
-      
-      {/* 底部按钮：取消 + 保存 */}
-      <div style={{ display: 'flex', gap: 12 }}>
-        <Button size="large" style={{ flex: 1 }} onClick={handleCancel}>取消</Button>
-        <Button type="primary" size="large" style={{ flex: 1 }} loading={loading} onClick={handleSubmit}>保存</Button>
+
+      <div style={{
+        textAlign: 'center', padding: '24px 16px', marginBottom: 20,
+        background: 'linear-gradient(135deg, ' + accentColor + '08, ' + accentColor + '15)',
+        borderRadius: 16, border: errors.amount ? '2px solid ' + accentColor : '2px solid transparent',
+      }}>
+        <div style={{ fontSize: 14, color: '#999', marginBottom: 8 }}>{isExpense ? '支出金额' : '收入金额'}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center' }}>
+          <span style={{ fontSize: 28, color: accentColor, fontWeight: 300, marginRight: 4 }}>¥</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={form.amount}
+            onChange={e => { setForm(f => ({ ...f, amount: e.target.value })); setErrors(prev => ({ ...prev, amount: '' })) }}
+            style={{
+              fontSize: 40, fontWeight: 600, color: accentColor,
+              border: 'none', background: 'transparent', outline: 'none',
+              width: '60%', textAlign: 'left',
+            }}
+          />
+        </div>
+        {errors.amount && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 8 }}>{errors.amount}</div>}
       </div>
-    </Card>
+
+      <div style={{ background: '#fff', borderRadius: 12, padding: '0 16px', marginBottom: 16 }}>
+        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
+          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>账户</div>
+          <Select
+            placeholder="选择账户"
+            value={form.account_id || undefined}
+            onChange={v => { setForm(f => ({ ...f, account_id: v || '' })); setErrors(prev => ({ ...prev, account_id: '' })) }}
+            style={{ width: '100%' }}
+            size="large"
+            status={errors.account_id ? 'error' : undefined}
+          >
+            {accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}
+          </Select>
+          {errors.account_id && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.account_id}</div>}
+        </div>
+
+        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
+          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>分类</div>
+          <Select
+            placeholder="选择分类（可选）"
+            value={form.category_id || undefined}
+            onChange={v => setForm(f => ({ ...f, category_id: v || '' }))}
+            style={{ width: '100%' }}
+            size="large"
+            allowClear
+          >
+            {categories.filter(c => c.category_type === form.type).map(c => (
+              <Select.Option key={c.id} value={c.id}>{c.icon ? c.icon + ' ' : ''}{c.name}</Select.Option>
+            ))}
+          </Select>
+        </div>
+
+        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
+          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>日期</div>
+          <input
+            type="date"
+            value={form.occurred_at || today}
+            onChange={e => setForm(f => ({ ...f, occurred_at: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 8,
+              border: '1px solid #d9d9d9', fontSize: 15,
+            }}
+          />
+        </div>
+
+        <div style={{ padding: '14px 0', borderBottom: '1px solid #f5f5f5' }}>
+          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>标签</div>
+          <Select
+            mode="multiple"
+            placeholder="选择标签（可选）"
+            value={selectedTagIds}
+            onChange={setSelectedTagIds}
+            style={{ width: '100%' }}
+            size="large"
+            allowClear
+            maxTagCount={3}
+          >
+            {groupedTags.map(group => (
+              <Select.OptGroup key={group.id} label={<span><Tag color={group.color} style={{ marginRight: 4, fontSize: 12 }}>{group.name}</Tag></span>}>
+                {group.children.map((child: any) => (
+                  <Select.Option key={child.id} value={child.id}>
+                    <Tag color={group.color} style={{ fontSize: 12 }}>{child.name}</Tag>
+                  </Select.Option>
+                ))}
+              </Select.OptGroup>
+            ))}
+          </Select>
+        </div>
+
+        <div style={{ padding: '14px 0' }}>
+          <div style={{ fontSize: 13, color: '#999', marginBottom: 6 }}>备注（可选）</div>
+          <input
+            placeholder="添加备注"
+            value={form.note}
+            onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 8,
+              border: '1px solid #d9d9d9', fontSize: 15,
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, padding: '0 0 24px' }}>
+        <Button size="large" style={{ flex: 1, height: 48, borderRadius: 12, fontSize: 16 }} onClick={() => navigate('/transactions')}>取消</Button>
+        <Button
+          type="primary" size="large" loading={loading}
+          style={{ flex: 2, height: 48, borderRadius: 12, fontSize: 16, background: accentColor, borderColor: accentColor }}
+          onClick={handleSubmit}
+        >{isEditMode ? '保存修改' : '记一笔'}</Button>
+      </div>
+    </div>
   )
 }
 
@@ -1653,20 +1764,38 @@ const TagsPage = () => {
   const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [editModal, setEditModal] = useState<{ visible: boolean; tag: any | null; isParent: boolean }>({ visible: false, tag: null, isParent: false })
+  const [editName, setEditName] = useState('')
+  const [editColor, setEditColor] = useState('')
+  const [editParentId, setEditParentId] = useState<string | undefined>(undefined)
+  const [saving, setSaving] = useState(false)
   const bookId = user?.default_book_id
   const navigate = useNavigate()
 
   const loadTags = () => {
     if (!bookId) return
-    apiGet(`/api/tags?book_id=${bookId}`)
-      .then(res => setData(res || []))
+    apiGet(`/api/tags/tree?book_id=${bookId}`)
+      .then(res => {
+        const tree = res || []
+        setData(tree)
+        // 默认全部展开
+        setExpandedGroups(new Set(tree.map((g: any) => g.id)))
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => {
-    loadTags()
-  }, [bookId])
+  useEffect(() => { loadTags() }, [bookId])
+
+  const toggleGroup = (id: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   const handleDelete = async (id: string) => {
     try {
@@ -1676,41 +1805,153 @@ const TagsPage = () => {
     } catch { message.error('删除失败') }
   }
 
-  // 构建二级结构
-  const buildTree = (tags: any[]) => {
-    const roots = tags.filter(t => !t.parent_id && t.is_active !== false)
-    return roots.map(root => ({
-      ...root,
-      children: tags.filter(t => t.parent_id === root.id && t.is_active !== false)
-    }))
+  const openEdit = (tag: any, isParent: boolean) => {
+    setEditModal({ visible: true, tag, isParent })
+    setEditName(tag.name)
+    setEditColor(tag.color || '#1677ff')
+    setEditParentId(tag.parent_id || undefined)
   }
 
-  const tagTree = buildTree(data)
+  const handleEditSave = async () => {
+    if (!editModal.tag) return
+    setSaving(true)
+    try {
+      const payload: any = { name: editName.trim() }
+      // 一级标签可以改颜色
+      if (editModal.isParent) {
+        payload.color = editColor
+      }
+      // 二级标签可以改父级
+      if (!editModal.isParent && editParentId) {
+        payload.parent_id = editParentId
+      }
+      await apiPatch(`/api/tags/${editModal.tag.id}?book_id=${bookId}`, payload)
+      message.success('更新成功')
+      setEditModal({ visible: false, tag: null, isParent: false })
+      loadTags()
+    } catch { message.error('更新失败') }
+    finally { setSaving(false) }
+  }
 
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
-  
+
+  // 一级标签列表（供编辑二级标签时切换父级）
+  const parentOptions = data.map(g => ({ id: g.id, name: g.name }))
+
   return (
     <div>
-      {loading ? <Spin /> : tagTree.length === 0 ? 
-        <Empty description="暂无标签" extra={<Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button>} /> : 
-        tagTree.map(root => (
-          <div key={root.id} style={{ marginBottom: 8 }}>
-            {/* 一级标签 */}
-            <div style={{ padding: '12px 16px', background: '#f5f5f5', borderRadius: 8, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span><Tag color={root.color || 'blue'}>{root.name}</Tag></span>
-              <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(root.id)} />
-            </div>
-            {/* 二级标签 */}
-            {root.children && root.children.length > 0 && (
-              <List size="small" dataSource={root.children} renderItem={item => (
-                <List.Item actions={[<Button key="del" type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(item.id)} />]}>
-                  <Tag color={item.color || 'blue'}>{item.name}</Tag>
-                </List.Item>
-              )} />
-            )}
-          </div>
-        ))
+      {loading ? <Spin /> : data.length === 0 ?
+        <Empty description="暂无标签" extra={<Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button>} /> :
+        data.map(group => {
+          const isExpanded = expandedGroups.has(group.id)
+          const childCount = group.children?.length || 0
+          return (
+            <Card
+              key={group.id}
+              size="small"
+              style={{ marginBottom: 8, borderLeft: `4px solid ${group.color || '#1677ff'}` }}
+              bodyStyle={{ padding: 0 }}
+            >
+              {/* 一级标签标题栏 */}
+              <div
+                style={{
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                  background: isExpanded ? '#fafafa' : '#fff',
+                }}
+                onClick={() => toggleGroup(group.id)}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{
+                    display: 'inline-block',
+                    transition: 'transform 0.2s',
+                    transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                    fontSize: 12,
+                    color: '#999',
+                  }}>▶</span>
+                  <Tag color={group.color || 'blue'} style={{ margin: 0 }}>{group.name}</Tag>
+                  <span style={{ fontSize: 12, color: '#999' }}>{childCount} 个子标签</span>
+                </div>
+                <div style={{ display: 'flex', gap: 4 }} onClick={e => e.stopPropagation()}>
+                  <Button type="text" size="small" onClick={() => openEdit(group, true)}>编辑</Button>
+                  <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(group.id)} />
+                </div>
+              </div>
+
+              {/* 二级标签列表 */}
+              {isExpanded && childCount > 0 && (
+                <div style={{ borderTop: '1px solid #f0f0f0' }}>
+                  {group.children.map((child: any) => (
+                    <div
+                      key={child.id}
+                      style={{
+                        padding: '10px 16px 10px 48px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        borderBottom: '1px solid #f5f5f5',
+                      }}
+                    >
+                      <Tag color={group.color || 'blue'}>{child.name}</Tag>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Button type="text" size="small" onClick={() => openEdit(child, false)}>编辑</Button>
+                        <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDelete(child.id)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 展开但无子标签 */}
+              {isExpanded && childCount === 0 && (
+                <div style={{ padding: '12px 48px', color: '#999', fontSize: 13, borderTop: '1px solid #f0f0f0' }}>
+                  暂无子标签
+                </div>
+              )}
+            </Card>
+          )
+        })
       }
+
+      {/* 编辑弹窗 */}
+      <Modal
+        title={editModal.isParent ? '编辑一级标签' : '编辑二级标签'}
+        open={editModal.visible}
+        onCancel={() => setEditModal({ visible: false, tag: null, isParent: false })}
+        onOk={handleEditSave}
+        confirmLoading={saving}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>名称</div>
+          <Input value={editName} onChange={e => setEditName(e.target.value)} />
+        </div>
+        {editModal.isParent && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>颜色</div>
+            <Input type="color" value={editColor} onChange={e => setEditColor(e.target.value)} style={{ width: 60, height: 36, padding: 2 }} />
+          </div>
+        )}
+        {!editModal.isParent && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>所属一级标签</div>
+            <Select
+              value={editParentId}
+              onChange={setEditParentId}
+              style={{ width: '100%' }}
+            >
+              {parentOptions.map(p => (
+                <Select.Option key={p.id} value={p.id}>{p.name}</Select.Option>
+              ))}
+            </Select>
+          </div>
+        )}
+        {!editModal.isParent && (
+          <div style={{ fontSize: 12, color: '#999' }}>颜色由一级标签决定，不可单独修改</div>
+        )}
+      </Modal>
     </div>
   )
 }
@@ -1722,17 +1963,22 @@ const TagFormPage = () => {
   const bookId = user?.default_book_id
   const [loading, setLoading] = useState(false)
   const [parentTags, setParentTags] = useState<any[]>([])
+  const [tagType, setTagType] = useState<'parent' | 'child'>('parent')
+  const [selectedParentColor, setSelectedParentColor] = useState<string>('')
 
-  // 加载一级标签
+  // 加载一级标签（用于选择父级）
   useEffect(() => {
     if (!bookId) return
-    apiGet(`/api/tags?book_id=${bookId}`)
-      .then(res => {
-        const tags = res || []
-        setParentTags(tags.filter((t: any) => !t.parent_id && t.is_active !== false))
-      })
+    apiGet(`/api/tags/first-level?book_id=${bookId}`)
+      .then(res => setParentTags(res || []))
       .catch(() => {})
   }, [bookId])
+
+  // 当选择父标签时，显示其颜色
+  const handleParentChange = (parentId: string) => {
+    const parent = parentTags.find(t => t.id === parentId)
+    setSelectedParentColor(parent?.color || '#1677ff')
+  }
 
   const onFinish = async (values: any) => {
     if (!bookId) return
@@ -1742,11 +1988,23 @@ const TagFormPage = () => {
     }
     setLoading(true)
     try {
-      const payload = {
+      const payload: any = {
         name: values.name.trim(),
-        color: values.color || '#1677ff',
-        parent_id: values.parent_id || null,
+        parent_id: null,
         book_id: bookId
+      }
+      if (tagType === 'parent') {
+        // 一级标签：可以指定颜色，不传则后端自动分配
+        if (values.color) payload.color = values.color
+      } else {
+        // 二级标签：必须选父级，颜色由后端继承父级
+        if (!values.parent_id) {
+          message.error('请选择所属一级标签')
+          setLoading(false)
+          return
+        }
+        payload.parent_id = values.parent_id
+        // 不传 color，后端自动继承
       }
       await apiPost('/api/tags', payload)
       message.success('创建成功')
@@ -1765,15 +2023,45 @@ const TagFormPage = () => {
   return (
     <Card title="新建标签">
       <Form form={form} layout="vertical" onFinish={onFinish}>
+        {/* 标签类型切换 */}
+        <div style={{ marginBottom: 16 }}>
+          <Button.Group>
+            <Button type={tagType === 'parent' ? 'primary' : 'default'} onClick={() => { setTagType('parent'); form.resetFields(['parent_id']) }}>一级标签</Button>
+            <Button type={tagType === 'child' ? 'primary' : 'default'} onClick={() => setTagType('child')}>二级标签</Button>
+          </Button.Group>
+        </div>
+
         <Form.Item name="name" label="标签名称" rules={[{ required: true, message: '请输入标签名称' }]}><Input /></Form.Item>
-        <Form.Item name="color" label="颜色"><Input type="color" /></Form.Item>
-        <Form.Item name="parent_id" label="所属大类（留空则为一级标签）">
-          <Select allowClear placeholder="选择父标签">
-            {parentTags.map(t => (
-              <Select.Option key={t.id} value={t.id}>{t.name}</Select.Option>
-            ))}
-          </Select>
-        </Form.Item>
+
+        {tagType === 'parent' ? (
+          <Form.Item name="color" label="颜色（不选则系统自动分配）">
+            <Input type="color" style={{ width: 60, height: 36, padding: 2 }} />
+          </Form.Item>
+        ) : (
+          <>
+            <Form.Item name="parent_id" label="所属一级标签" rules={[{ required: true, message: '请选择一级标签' }]}>
+              <Select placeholder="请选择一级标签" onChange={handleParentChange}>
+                {parentTags.map(t => (
+                  <Select.Option key={t.id} value={t.id}>
+                    <Tag color={t.color || 'blue'}>{t.name}</Tag>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            {selectedParentColor && (
+              <div style={{ marginBottom: 16, fontSize: 13, color: '#999' }}>
+                颜色将继承一级标签：<span style={{ display: 'inline-block', width: 14, height: 14, borderRadius: 3, background: selectedParentColor, verticalAlign: 'middle', marginRight: 4 }} />
+                {selectedParentColor}
+              </div>
+            )}
+            {parentTags.length === 0 && (
+              <div style={{ marginBottom: 16, color: '#ff4d4f', fontSize: 13 }}>
+                暂无一级标签，请先创建一级标签
+              </div>
+            )}
+          </>
+        )}
+
         <div style={{ display: 'flex', gap: 12 }}>
           <Button size="large" style={{ flex: 1 }} onClick={handleCancel}>取消</Button>
           <Button type="primary" size="large" style={{ flex: 1 }} htmlType="submit" loading={loading}>创建</Button>
