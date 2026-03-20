@@ -585,7 +585,13 @@ const TransactionsPage = () => {
                 />
               )}
               <div style={{ flex: 1 }}>
-                <div>{getCategoryName(item.category_id) || item.merchant || item.note || '-'}</div>
+                <div>
+                  {/* 已退款的原交易显示 <已退款> 标记 */}
+                  {item.has_refund && (
+                    <span style={{ color: '#1890ff', fontSize: 12, marginRight: 4 }}>&lt;已退款&gt;</span>
+                  )}
+                  {getCategoryName(item.category_id) || item.merchant || item.note || '-'}
+                </div>
                 <div style={{ fontSize: 12, color: '#999' }}>
                   {new Date(item.occurred_at).toLocaleDateString()}
                   {/* 显示标签（使用继承颜色） */}
@@ -615,7 +621,7 @@ const TransactionsPage = () => {
               </div>
               <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 500 }}>
                 {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
-                {item.direction === 'refund' && <Tag color="blue" style={{ marginLeft: 4 }}>退款</Tag>}
+                {/* 退款交易不再额外显示标签，因为备注已包含 <退款> */}
               </div>
             </List.Item>
           )} 

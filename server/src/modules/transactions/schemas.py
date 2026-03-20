@@ -56,6 +56,7 @@ class TransactionResponse(TransactionBase):
     status: TransactionStatus = TransactionStatus.CONFIRMED
     created_at: datetime
     updated_at: datetime
+    has_refund: bool = False  # 是否已有退款
 
     class Config:
         from_attributes = True

@@ -381,7 +381,8 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         account_id=data.refund_account_id,
         category_id=original.category_id,
         merchant=original.merchant,
-        note=data.note,
+        # 自动添加 <退款> 前缀
+        note=f"<退款> {data.note}" if data.note else "<退款>",
         related_transaction_id=data.original_transaction_id,
         business_key=f"refund:{data.original_transaction_id}:{datetime.utcnow().timestamp()}",
         source_type=SourceType.MANUAL.value,
@@ -437,7 +438,25 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
     query = query.order_by(Transaction.occurred_at.desc())
     query = query.offset((page - 1) * page_size).limit(page_size)
 
-    return query.all(), total
+    transactions = query.all()
+
+    # 预先查询所有已退款的原交易ID，用于标记 has_refund
+    refunded_ids = set()
+    if transactions:
+        ids = [t.id for t in transactions]
+        # 查找所有以这些交易为原交易的退款记录
+        refunds = db.query(Transaction.related_transaction_id).filter(
+            Transaction.related_transaction_id.in_(ids),
+            Transaction.transaction_type == TransactionType.REFUND.value,
+            Transaction.status == TransactionStatus.CONFIRMED.value
+        ).all()
+        refunded_ids = {r[0] for r in refunds}
+
+    # 为每个交易添加 has_refund 标记
+    for t in transactions:
+        t.has_refund = t.id in refunded_ids
+
+    return transactions, total
 
 
 def get_transaction(db: Session, transaction_id: str, book_id: str) -> Optional[Transaction]:
