@@ -1,3 +1,38 @@
+:root {
+  /* 默认浅色主题变量 */
+  --bg-page: #f5f5f5;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --text-primary: rgba(0, 0, 0, 0.88);
+  --text-secondary: rgba(0, 0, 0, 0.65);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+  --border-color: #d9d9d9;
+  --border-light: #f0f0f0;
+  --accent-color: #1677ff;
+  --accent-red: #ff4d4f;
+  --accent-green: #52c41a;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="dark"] {
+  --bg-page: #141414;
+  --bg-card: #1f1f1f;
+  --bg-elevated: #262626;
+  --bg-input: #2a2a2a;
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --border-color: #424242;
+  --border-light: #303030;
+  --accent-color: #1677ff;
+  --accent-red: #ff4d4f;
+  --accent-green: #52c41a;
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-fab: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -5,9 +40,74 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* 暗色模式适配 */
+[data-theme="dark"] .ant-card {
+  background-color: var(--bg-card);
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .ant-layout {
+  background: var(--bg-page);
+}
+
+[data-theme="dark"] .ant-layout-header {
+  background: var(--bg-card);
+  border-bottom-color: var(--border-light);
+}
+
+[data-theme="dark"] .ant-drawer-content {
+  background: var(--bg-card);
+}
+
+[data-theme="dark"] .ant-select-dropdown {
+  background: var(--bg-elevated);
+}
+
+[data-theme="dark"] .ant-input,
+[data-theme="dark"] .ant-input-number,
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] input[type="number"],
+[data-theme="dark"] input[type="password"],
+[data-theme="dark"] input[type="email"] {
+  background: var(--bg-input);
+  border-color: var(--border-color);
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ant-btn {
+  border-color: var(--border-color);
+}
+
+[data-theme="dark"] .ant-float-btn {
+  background: var(--accent-color);
+}
+
+[data-theme="dark"] .ant-list-item {
+  border-bottom-color: var(--border-light);
+}
+
+[data-theme="dark"] .ant-empty-description {
+  color: var(--text-secondary);
+}
+
+/* 交易列表样式 */
+[data-theme="dark"] .transaction-item {
+  background: var(--bg-card);
+  border-bottom-color: var(--border-light);
+}
+
+/* 标签页卡片 */
+[data-theme="dark"] .ant-card {
+  box-shadow: var(--shadow-card);
 }

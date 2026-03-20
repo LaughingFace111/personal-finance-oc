@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal } from 'antd'
+import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext } from 'react'
 import { apiGet, apiPost, apiDelete, apiUpload, apiPatch } from './services/api'
+import { useTheme, getThemeVariables } from './hooks/useTheme'
 
 interface AuthContextType {
   token: string | null;
@@ -2083,6 +2084,7 @@ const TagFormPage = () => {
 
 const SettingsPage = () => {
   const { user, logout } = useAuth()
+  const { mode, setMode } = useTheme()
   
   return (
     <div>
@@ -2093,14 +2095,43 @@ const SettingsPage = () => {
           </Avatar>
           <div>
             <div style={{ fontSize: 16, fontWeight: 500 }}>{user?.email || '用户'}</div>
-            <div style={{ color: '#666', fontSize: 14 }}>默认账本</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 14 }}>默认账本</div>
           </div>
         </div>
         {user?.default_book_id && (
-          <div style={{ fontSize: 12, color: '#999', marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 16 }}>
             账本ID: {user.default_book_id}
           </div>
         )}
+      </Card>
+      
+      <Card title="外观" style={{ marginBottom: 16 }}>
+        <Radio.Group 
+          value={mode} 
+          onChange={e => setMode(e.target.value)}
+          style={{ width: '100%' }}
+        >
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Radio value="system">
+              <div>
+                <div style={{ fontWeight: 500 }}>跟随系统</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>根据设备自动切换浅色/深色模式</div>
+              </div>
+            </Radio>
+            <Radio value="light">
+              <div>
+                <div style={{ fontWeight: 500 }}>浅色模式</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>始终使用浅色主题</div>
+              </div>
+            </Radio>
+            <Radio value="dark">
+              <div>
+                <div style={{ fontWeight: 500 }}>深色模式</div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>始终使用深色主题</div>
+              </div>
+            </Radio>
+          </Space>
+        </Radio.Group>
       </Card>
       
       <Card title="关于" style={{ marginBottom: 16 }}>
@@ -2123,6 +2154,17 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'))
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const { theme } = useTheme()
+
+  // 设置 data-theme 属性
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    // 同时设置 body 样式变量
+    const vars = getThemeVariables(theme)
+    Object.entries(vars).forEach(([key, value]) => {
+      document.documentElement.style.setProperty(key, value)
+    })
+  }, [theme])
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token')
