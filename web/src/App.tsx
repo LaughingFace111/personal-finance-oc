@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
 import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
@@ -254,6 +254,7 @@ function AppShell() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/date/:date" element={<DateDetailPage />} />
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/transactions/new" element={<TransactionFormPage />} />
             <Route path="/transactions/:id" element={<TransactionFormPage />} />
@@ -288,49 +289,316 @@ function AppShell() {
 }
 
 const DashboardPage = () => {
-  const { user, token } = useAuth()
-  const [overview, setOverview] = useState<any>({})
-  const [expenses, setExpenses] = useState<any[]>([])
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [currentDate, setCurrentDate] = useState(new Date())
+  const [monthData, setMonthData] = useState<{income: number, expense: number, daily: Record<string, number>}>({ income: 0, expense: 0, daily: {} })
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const bookId = user?.default_book_id
+
+  const year = currentDate.getFullYear()
+  const month = currentDate.getMonth()
+  const monthStr = `${year}年${String(month + 1).padStart(2, '0')}月`
 
   useEffect(() => {
     if (!bookId) return
     setLoading(true)
-    setError(null)
-    const today = new Date()
-    const dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-    const dateTo = today.toISOString().split('T')[0]
+    const firstDay = new Date(year, month, 1).toISOString().split('T')[0]
+    const lastDay = new Date(year, month + 1, 0).toISOString().split('T')[0]
     
-    Promise.all([
-      apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`),
-      apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`)
-    ]).then(([ov, ex]) => { 
-      setOverview(ov || {}); 
-      setExpenses(ex || []) 
-    }).catch((err) => { 
-      if (err.message !== 'AUTH_EXPIRED') {
-        setError(err.message)
-      }
-    }).finally(() => setLoading(false))
-  }, [bookId])
+    apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`)
+      .then(data => {
+        apiGet(`/api/transactions?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}&page_size=500`)
+          .then(txData => {
+            const daily: Record<string, number> = {}
+            const items = txData?.items || []
+            items.forEach((tx: any) => {
+              const day = tx.occurred_at?.split('T')[0]
+              if (day) {
+                const amount = Number(tx.amount)
+                if (tx.direction === 'in' || tx.transaction_type === 'refund') {
+                  daily[day] = (daily[day] || 0) + amount
+                } else {
+                  daily[day] = (daily[day] || 0) - amount
+                }
+              }
+            })
+            setMonthData({
+              income: Number(data?.income || 0),
+              expense: Number(data?.net_expense || 0),
+              daily
+            })
+          })
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [bookId, year, month])
+
+  const generateCalendarDays = () => {
+    const firstDay = new Date(year, month, 1).getDay()
+    const daysInMonth = new Date(year, month + 1, 0).getDate()
+    const days: { date: number | null, dateStr: string, amount: number }[] = []
+    
+    for (let i = 0; i < firstDay; i++) {
+      days.push({ date: null, dateStr: '', amount: 0 })
+    }
+    
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      days.push({ date: d, dateStr, amount: monthData.daily[dateStr] || 0 })
+    }
+    
+    return days
+  }
+
+  const goPrevMonth = () => setCurrentDate(new Date(year, month - 1, 1))
+  const goNextMonth = () => setCurrentDate(new Date(year, month + 1, 1))
+
+  const balance = monthData.income - monthData.expense
+  const isToday = (d: number) => {
+    const today = new Date()
+    return d === today.getDate() && month === today.getMonth() && year === today.getFullYear()
+  }
+
+  const weekDays = ['日', '一', '二', '三', '四', '五', '六']
 
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
-  
+
   return (
-    <div>
-      {error && <Card style={{ marginBottom: 16, backgroundColor: 'var(--bg-elevated)', borderColor: 'var(--accent-red)' }}><span style={{ color: 'var(--accent-red)' }}>⚠️ {error}</span></Card>}
-      <Row gutter={[16, 16]}>
-        <Col span={12} xs={24}><Card size="small" title="本月收入"><div style={{ color: '#52c41a', fontSize: 20, fontWeight: 600 }}>¥{(overview.income || 0).toFixed(2)}</div></Card></Col>
-        <Col span={12} xs={24}><Card size="small" title="本月支出"><div style={{ color: '#ff4d4f', fontSize: 20, fontWeight: 600 }}>¥{(overview.net_expense || 0).toFixed(2)}</div></Card></Col>
-        <Col span={12} xs={24}><Card size="small" title="总资产"><div style={{ fontSize: 20, fontWeight: 600 }}>¥{(overview.total_assets || 0).toFixed(2)}</div></Card></Col>
-        <Col span={12} xs={24}><Card size="small" title="总负债"><div style={{ color: overview.total_debt > 0 ? '#ff4d4f' : undefined, fontSize: 20, fontWeight: 600 }}>¥{(overview.total_debt || 0).toFixed(2)}</div></Card></Col>
-      </Row>
-      <Card size="small" title="支出分类" style={{ marginTop: 16 }}>{loading ? <Spin /> : expenses.length === 0 ? <Empty description="暂无数据" /> : <List size="small" dataSource={expenses.slice(0, 5)} renderItem={item => <List.Item><span>{item.icon} {item.name}</span><span style={{ color: '#ff4d4f' }}>¥{(item.net_amount || 0).toFixed(2)}</span></List.Item>} />}</Card>
+    <div style={{ paddingBottom: 80 }}>
+      {/* 月度概览卡片 */}
+      <div style={{ margin: '0 0 16px', borderRadius: 16, background: 'var(--bg-card)', padding: 16, boxShadow: 'var(--shadow-card)' }}>
+        {/* 月份控制 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div onClick={goPrevMonth} style={{ width: 32, height: 32, borderRadius: 16, background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <span style={{ fontSize: 14 }}>◀</span>
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>{monthStr}</div>
+          <div onClick={goNextMonth} style={{ width: 32, height: 32, borderRadius: 16, background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <span style={{ fontSize: 14 }}>▶</span>
+          </div>
+        </div>
+
+        {/* 收支概览 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 4 }}>支出</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent-red)' }}>¥{monthData.expense.toFixed(2)}</div>
+          </div>
+          <div style={{ textAlign: 'center', flex: 1 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 4 }}>收入</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent-green)' }}>¥{monthData.income.toFixed(2)}</div>
+          </div>
+        </div>
+
+        {/* 收支比例条 */}
+        <div style={{ height: 6, borderRadius: 3, background: 'var(--border-light)', overflow: 'hidden', display: 'flex', marginBottom: 16 }}>
+          {monthData.expense > 0 && (
+            <div style={{ width: `${Math.min(100, (monthData.expense / (monthData.income + monthData.expense || 1)) * 100)}%`, background: 'var(--accent-red)', transition: 'width 0.3s' }} />
+          )}
+          {monthData.income > 0 && (
+            <div style={{ flex: 1, background: 'var(--accent-green)', transition: 'width 0.3s' }} />
+          )}
+        </div>
+
+        {/* 结余 */}
+        <div style={{ textAlign: 'center' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>结余 </span>
+          <span style={{ fontSize: 18, fontWeight: 600, color: balance >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+            ¥{balance.toFixed(2)}
+          </span>
+        </div>
+      </div>
+
+      {/* 月历 */}
+      <div style={{ margin: '0 0 16px', borderRadius: 16, background: 'var(--bg-card)', padding: 16, boxShadow: 'var(--shadow-card)' }}>
+        {/* 星期标题 */}
+        <div style={{ display: 'flex', marginBottom: 8 }}>
+          {weekDays.map((day, i) => (
+            <div key={i} style={{ flex: 1, textAlign: 'center', fontSize: 12, color: 'var(--text-tertiary)' }}>{day}</div>
+          ))}
+        </div>
+        
+        {/* 日期网格 */}
+        <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+          {generateCalendarDays().map((day, i) => (
+            <div 
+              key={i} 
+              style={{ 
+                width: '14.28%', 
+                aspectRatio: '1/1', 
+                display: 'flex', 
+                flexDirection: 'column',
+                alignItems: 'center', 
+                justifyContent: 'center',
+                cursor: day.date ? 'pointer' : 'default',
+                borderRadius: 8,
+                background: day.date && isToday(day.date) ? 'var(--accent-color)' : 'transparent',
+              }}
+              onClick={() => day.date && navigate(`/date/${day.dateStr}`)}
+            >
+              {day.date && (
+                <>
+                  <span style={{ 
+                    fontSize: 13, 
+                    color: day.date && isToday(day.date) ? '#fff' : 'var(--text-primary)',
+                    fontWeight: isToday(day.date) ? 600 : 400,
+                  }}>{day.date}</span>
+                  {day.amount !== 0 && (
+                    <span style={{ 
+                      fontSize: 10, 
+                      color: day.date && isToday(day.date) ? '#fff' : (day.amount > 0 ? 'var(--accent-green)' : 'var(--accent-red)'),
+                      maxWidth: '90%',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {day.amount > 0 ? '+' : ''}{day.amount.toFixed(0)}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
+
+// 日期明细页
+const DateDetailPage = () => {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const params = useParams()
+  const date = params.date
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [summary, setSummary] = useState({ income: 0, expense: 0 })
+  const bookId = user?.default_book_id
+
+  useEffect(() => {
+    if (!bookId || !date) return
+    setLoading(true)
+    
+    apiGet(`/api/transactions?book_id=${bookId}&date_from=${date}&date_to=${date}&page_size=100`)
+      .then(data => {
+        const items = data?.items || []
+        setTransactions(items)
+        
+        let income = 0, expense = 0
+        items.forEach((tx: any) => {
+          const amt = Number(tx.amount)
+          if (tx.direction === 'in' || tx.transaction_type === 'refund') {
+            income += amt
+          } else {
+            expense += amt
+          }
+        })
+        setSummary({ income, expense })
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [bookId, date])
+
+  const formatDate = (d: string) => {
+    const [year, month, day] = d.split('-')
+    return `${parseInt(month)}月${parseInt(day)}日`
+  }
+
+  if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
+
+  return (
+    <div style={{ paddingBottom: 80 }}>
+      {/* 顶部栏 */}
+      <div style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        padding: '12px 16px',
+        background: 'var(--bg-card)',
+        borderBottom: '1px solid var(--border-light)',
+        margin: '-16px -16px 16px -16px',
+      }}>
+        <div 
+          onClick={() => navigate('/dashboard')}
+          style={{ 
+            width: 36, height: 36, borderRadius: 18, 
+            background: 'var(--bg-elevated)', 
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer',
+            marginRight: 12,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>←</span>
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+          {date ? formatDate(date) : '当日明细'}
+        </div>
+      </div>
+
+      {/* 当日汇总 */}
+      <div style={{ margin: '0 0 16px', borderRadius: 12, background: 'var(--bg-card)', padding: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-around' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>支出</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent-red)' }}>¥{summary.expense.toFixed(2)}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>收入</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent-green)' }}>¥{summary.income.toFixed(2)}</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 4 }}>结余</div>
+            <div style={{ fontSize: 20, fontWeight: 600, color: summary.income - summary.expense >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+              ¥{(summary.income - summary.expense).toFixed(2)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 流水列表 */}
+      <div>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>加载中...</div>
+        ) : transactions.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>当日无记录</div>
+        ) : (
+          transactions.map((tx, i) => (
+            <div 
+              key={tx.id || i}
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '12px 16px',
+                marginBottom: 8,
+                background: 'var(--bg-card)',
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
+                  {tx.merchant || tx.note || '-'}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  {tx.occurred_at?.split('T')[1]?.substring(0, 5) || ''}
+                </div>
+              </div>
+              <div style={{ 
+                fontSize: 16, 
+                fontWeight: 500,
+                color: tx.direction === 'in' || tx.transaction_type === 'refund' ? 'var(--accent-green)' : 'var(--accent-red)',
+              }}>
+                {tx.direction === 'in' || tx.transaction_type === 'refund' ? '+' : '-'}¥{Number(tx.amount).toFixed(2)}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 const TransactionsPage = () => {
   const { user, token } = useAuth()
