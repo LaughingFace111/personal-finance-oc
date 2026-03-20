@@ -590,6 +590,10 @@ const TransactionsPage = () => {
                   {item.has_refund && (
                     <span style={{ color: '#1890ff', fontSize: 12, marginRight: 4 }}>&lt;已退款&gt;</span>
                   )}
+                  {/* 退款交易显示 <退款> 标记 */}
+                  {item.transaction_type === 'refund' && (
+                    <span style={{ color: '#52c41a', fontSize: 12, marginRight: 4 }}>&lt;退款&gt;</span>
+                  )}
                   {getCategoryName(item.category_id) || item.merchant || item.note || '-'}
                 </div>
                 <div style={{ fontSize: 12, color: '#999' }}>

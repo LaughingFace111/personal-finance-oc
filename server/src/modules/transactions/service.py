@@ -381,8 +381,8 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         account_id=data.refund_account_id,
         category_id=original.category_id,
         merchant=original.merchant,
-        # 自动添加 <退款> 前缀
-        note=f"<退款> {data.note}" if data.note else "<退款>",
+        # 退款交易的备注由前端显示前缀，后端只保留用户输入的备注
+        note=data.note if data.note else None,
         related_transaction_id=data.original_transaction_id,
         business_key=f"refund:{data.original_transaction_id}:{datetime.utcnow().timestamp()}",
         source_type=SourceType.MANUAL.value,
