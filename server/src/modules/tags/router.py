@@ -9,7 +9,7 @@ from .service import (
     create_tag, get_tags, get_tag, update_tag, delete_tag,
     get_first_level_tags, get_tags_tree
 )
-from src.modules.books.service import get_default_book
+from src.modules.books.service import resolve_book_id
 
 
 def get_current_book_id(
@@ -18,13 +18,7 @@ def get_current_book_id(
     book_id: str = None
 ) -> str:
     """Get current book ID from user or parameter"""
-    if book_id:
-        return book_id
-    default_book = get_default_book(db, current_user.id)
-    if not default_book:
-        from src.modules.books.service import create_book
-        default_book = create_book(db, current_user.id, {"name": "默认账本"})
-    return default_book.id
+    return resolve_book_id(db, current_user.id, book_id)
 
 
 router = APIRouter(prefix="/tags", tags=["tags"])

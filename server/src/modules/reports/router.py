@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from src.core import get_db
 from src.core.auth import get_current_user
 from src.modules.auth.models import User
-from src.modules.books.service import get_default_book, create_book
+from src.modules.books.service import resolve_book_id
 
 from .service import get_overview, get_expense_by_category, get_accounts_summary, get_upcoming_debts
 
@@ -19,12 +19,7 @@ def get_current_book_id(
     book_id: str = None
 ) -> str:
     """Get current book ID from user or parameter"""
-    if book_id:
-        return book_id
-    default_book = get_default_book(db, current_user.id)
-    if not default_book:
-        default_book = create_book(db, current_user.id, {"name": "默认账本"})
-    return default_book.id
+    return resolve_book_id(db, current_user.id, book_id)
 
 
 @router.get("/overview")

@@ -1,4 +1,5 @@
 from typing import List
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -16,7 +17,7 @@ from .service import (
     create_transaction, create_transfer, create_refund,
     get_transactions, get_transaction, update_transaction, delete_transaction
 )
-from src.modules.books.service import get_default_book, create_book
+from src.modules.books.service import resolve_book_id
 from src.common.enums import TransactionType, TransactionDirection
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -24,9 +25,8 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 # Balance adjustment schema
 class BalanceAdjustCreate(BaseModel):
-    book_id: str
     account_id: str
-    amount: float
+    amount: Decimal
     direction: str  # 'in' or 'out'
     note: str = ""
 
@@ -37,12 +37,7 @@ def get_current_book_id(
     book_id: str = None
 ) -> str:
     """Get current book ID from user or parameter"""
-    if book_id:
-        return book_id
-    default_book = get_default_book(db, current_user.id)
-    if not default_book:
-        default_book = create_book(db, current_user.id, {"name": "默认账本"})
-    return default_book.id
+    return resolve_book_id(db, current_user.id, book_id)
 
 
 @router.post("", response_model=TransactionResponse)
@@ -57,7 +52,7 @@ def create(
     return create_transaction(db, bid, data)
 
 
-@router.post("/transfer", response_model=List[TransactionResponse])
+@router.post("/transfer", response_model=TransactionResponse)
 def transfer(
     data: TransferCreate, 
     current_user: User = Depends(get_current_user),
@@ -85,19 +80,17 @@ def refund(
 def adjust_balance(
     data: BalanceAdjustCreate, 
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    book_id: str = None
 ):
     """Adjust account balance (create adjustment transaction)"""
     from datetime import datetime
-    from decimal import Decimal
-    
-    # Use book_id from the request body
-    bid = data.book_id
+    bid = get_current_book_id(current_user, db, book_id)
     
     # Create an income or expense transaction based on direction
     tx_data = TransactionCreate(
         account_id=data.account_id,
-        amount=Decimal(str(data.amount)),
+        amount=data.amount,
         direction=TransactionDirection.IN if data.direction == 'in' else TransactionDirection.OUT,
         transaction_type=TransactionType.INCOME if data.direction == 'in' else TransactionType.EXPENSE,
         occurred_at=datetime.utcnow(),

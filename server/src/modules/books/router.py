@@ -8,7 +8,7 @@ from src.core.auth import get_current_user
 from src.modules.auth.models import User
 
 from .schemas import BookCreate, BookResponse, BookUpdate
-from .service import create_book, delete_book, get_book, get_books, update_book, get_default_book
+from .service import create_book, delete_book, get_book, get_books, update_book, get_default_book, resolve_book_id
 
 router = APIRouter(prefix="/books", tags=["books"])
 
@@ -19,14 +19,7 @@ def get_current_book_id(
     book_id: Optional[str] = None
 ) -> str:
     """Get current book ID from user or parameter"""
-    if book_id:
-        return book_id
-    # Get or create default book
-    default_book = get_default_book(db, current_user.id)
-    if not default_book:
-        # Create default book
-        default_book = create_book(db, current_user.id, {"name": "默认账本"})
-    return default_book.id
+    return resolve_book_id(db, current_user.id, book_id)
 
 
 @router.post("", response_model=BookResponse)

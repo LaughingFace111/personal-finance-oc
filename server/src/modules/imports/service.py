@@ -234,17 +234,23 @@ def get_import_batch(db: Session, batch_id: str, book_id: str) -> Optional[Impor
     ).first()
 
 
-def get_import_rows(db: Session, batch_id: str, confirm_status: str = None) -> List[ImportRow]:
+def get_import_rows(db: Session, batch_id: str, book_id: str, confirm_status: str = None) -> List[ImportRow]:
     """Get import rows"""
-    query = db.query(ImportRow).filter(ImportRow.batch_id == batch_id)
+    query = db.query(ImportRow).join(ImportBatch, ImportRow.batch_id == ImportBatch.id).filter(
+        ImportRow.batch_id == batch_id,
+        ImportBatch.book_id == book_id
+    )
     if confirm_status:
         query = query.filter(ImportRow.confirm_status == confirm_status)
     return query.order_by(ImportRow.row_no).all()
 
 
-def update_import_row(db: Session, row_id: str, data: UpdateImportRowRequest) -> ImportRow:
+def update_import_row(db: Session, row_id: str, book_id: str, data: UpdateImportRowRequest) -> ImportRow:
     """Update import row"""
-    row = db.query(ImportRow).filter(ImportRow.id == row_id).first()
+    row = db.query(ImportRow).join(ImportBatch, ImportRow.batch_id == ImportBatch.id).filter(
+        ImportRow.id == row_id,
+        ImportBatch.book_id == book_id
+    ).first()
     if not row:
         raise NotFoundException("Import row not found")
 
