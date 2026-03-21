@@ -1,61 +1,98 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { apiGet, apiPost } from '../services/api';
 
 interface Account {
-  id: number;
+  id: string;
   name: string;
-  type: string;
-  balance: number;
+  account_type: string;
+  current_balance: number;
 }
 
 interface Category {
-  id: number;
+  id: string;
   name: string;
-  type: string;
+  category_type: string;
+  parent_id?: string;
 }
 
 interface Tag {
-  id: number;
+  id: string;
   name: string;
-  color: string;
 }
-
-const mockAccounts: Account[] = [
-  { id: 1, name: '现金', type: 'fund', balance: 5000 },
-  { id: 2, name: '招商银行', type: 'fund', balance: 20000 },
-  { id: 3, name: '支付宝', type: 'fund', balance: 10000 },
-  { id: 4, name: '信用卡', type: 'credit', balance: -3000 },
-];
-
-const mockCategories: Category[] = [
-  { id: 1, name: '工资', type: 'income' },
-  { id: 2, name: '奖金', type: 'income' },
-  { id: 3, name: '餐饮', type: 'expense' },
-  { id: 4, name: '交通', type: 'expense' },
-  { id: 5, name: '购物', type: 'expense' },
-  { id: 6, name: '娱乐', type: 'expense' },
-];
-
-const mockTags: Tag[] = [
-  { id: 1, name: '西双版纳自驾游', color: '#10b981' },
-  { id: 2, name: '电脑硬件升级', color: '#3b82f6' },
-  { id: 3, name: '帕萨特专项', color: '#f59e0b' },
-];
 
 export default function AddTransactionPage() {
   const navigate = useNavigate();
-  const [direction, setDirection] = useState<'income' | 'expense'>('expense');
-  const [accountId, setAccountId] = useState<number>(0);
-  const [categoryId, setCategoryId] = useState<number>(0);
+  const [searchParams] = useSearchParams();
+  const initialType = searchParams.get('type') === 'income' ? 'income' : 'expense';
+  
+  const [direction, setDirection] = useState<'income' | 'expense'>(initialType);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  
+  const [accountId, setAccountId] = useState<string>('');
+  const [categoryId, setCategoryId] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [memo, setMemo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [tagIds, setTagIds] = useState<number[]>([]);
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const filteredCategories = mockCategories.filter(c => c.type === direction);
+  // 获取用户默认账本ID
+  const getBookId = async () => {
+    try {
+      const sessionRes = await fetch('/api/auth/me');
+      if (sessionRes.ok) {
+        const session = await sessionRes.json();
+        return session.default_book_id;
+      }
+    } catch {}
+    return null;
+  };
+
+  // 加载账户、分类、标签数据
+  useEffect(() => {
+    const loadData = async () => {
+      const bookId = await getBookId();
+      if (!bookId) return;
+      
+      try {
+        const [accountsData, categoriesData, tagsData] = await Promise.all([
+          apiGet(`/api/accounts?book_id=${bookId}`),
+          apiGet(`/api/categories?book_id=${bookId}`),
+          apiGet(`/api/tags?book_id=${bookId}`)
+        ]);
+        setAccounts(accountsData || []);
+        setCategories(categoriesData || []);
+        setTags(tagsData || []);
+      } catch (e) {
+        console.error('加载数据失败', e);
+      }
+    };
+    loadData();
+  }, []);
+
+  // 根据当前类型过滤分类
+  const filteredCategories = categories.filter(c => {
+    if (direction === 'income') {
+      return c.category_type === 'income' || c.category_type === 'income_expense';
+    }
+    return c.category_type === 'expense' || c.category_type === 'income_expense';
+  });
+
+  // 获取分类名称（支持二级分类）
+  const getCategoryName = (catId: string) => {
+    const cat = categories.find(c => c.id === catId);
+    if (!cat) return '';
+    if (cat.parent_id) {
+      const parent = categories.find(c => c.id === cat.parent_id);
+      return parent ? `${parent.name}-${cat.name}` : cat.name;
+    }
+    return cat.name;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,28 +105,32 @@ export default function AddTransactionPage() {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/transactions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accountId: Number(accountId),
-          categoryId: Number(categoryId),
-          amount: parseFloat(amount),
-          direction,
-          memo,
-          happenedAt: date,
-          tagIds,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.message || '创建失败');
+      const bookId = await getBookId();
+      if (!bookId) {
+        throw new Error('无法获取账本信息');
       }
 
-      navigate('/');
-    } catch (err) {
-      setError((err as Error).message);
+      const payload = {
+        transaction_type: direction === 'income' ? 'income' : 'expense',
+        direction: direction === 'income' ? 'in' : 'out',
+        amount: parseFloat(amount),
+        account_id: accountId,
+        category_id: categoryId,
+        note: memo,
+        occurred_at: new Date(date).toISOString(),
+        book_id: bookId,
+        tags: tagIds.length > 0 ? JSON.stringify(tagIds) : null
+      };
+
+      const response = await apiPost('/api/transactions', payload);
+
+      if (response) {
+        navigate('/dashboard');
+      } else {
+        throw new Error('创建失败');
+      }
+    } catch (err: any) {
+      setError(err.message || '创建失败');
     } finally {
       setLoading(false);
     }
@@ -97,6 +138,17 @@ export default function AddTransactionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
+      {/* 返回按钮 */}
+      <div className="mb-4 flex items-center">
+        <button
+          onClick={() => navigate(-1)}
+          className="flex items-center text-gray-600"
+        >
+          <span className="text-xl">←</span>
+          <span className="ml-1">返回</span>
+        </button>
+      </div>
+
       <div className="mx-auto max-w-md">
         {/* 顶部切换 */}
         <div className="mb-6 flex rounded-lg bg-white p-1 shadow">
@@ -127,17 +179,17 @@ export default function AddTransactionPage() {
         <form onSubmit={handleSubmit} className="space-y-4 rounded-xl bg-white p-4 shadow">
           {/* 账户选择 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">账户</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">账户 *</label>
             <select
               value={accountId}
-              onChange={e => setAccountId(Number(e.target.value))}
+              onChange={e => setAccountId(e.target.value)}
               className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
               required
             >
               <option value="">选择账户</option>
-              {mockAccounts.map(account => (
+              {accounts.map(account => (
                 <option key={account.id} value={account.id}>
-                  {account.name} (余额: {account.balance})
+                  {account.name} (余额: ¥{account.current_balance})
                 </option>
               ))}
             </select>
@@ -145,17 +197,17 @@ export default function AddTransactionPage() {
 
           {/* 类别选择 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">类别</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">类别 *</label>
             <select
               value={categoryId}
-              onChange={e => setCategoryId(Number(e.target.value))}
+              onChange={e => setCategoryId(e.target.value)}
               className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
               required
             >
               <option value="">选择类别</option>
               {filteredCategories.map(category => (
                 <option key={category.id} value={category.id}>
-                  {category.name}
+                  {getCategoryName(category.id)}
                 </option>
               ))}
             </select>
@@ -163,7 +215,7 @@ export default function AddTransactionPage() {
 
           {/* 金额 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">金额</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700">金额 *</label>
             <input
               type="number"
               step="0.01"
@@ -184,7 +236,6 @@ export default function AddTransactionPage() {
               value={date}
               onChange={e => setDate(e.target.value)}
               className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-              required
             />
           </div>
 
@@ -203,7 +254,11 @@ export default function AddTransactionPage() {
           {/* 标签 */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">标签</label>
-            <TagMultiSelect allTags={mockTags} value={tagIds} onChange={setTagIds} />
+            <TagMultiSelect 
+              allTags={tags.map(t => ({ id: t.id, name: t.name, color: '#3b82f6' }))} 
+              value={tagIds} 
+              onChange={setTagIds} 
+            />
           </div>
 
           {/* 错误提示 */}

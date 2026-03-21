@@ -2,7 +2,17 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, usePa
 import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
+
+// 懒加载新页面组件
+const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
+const OtherTransactionPage = lazy(() => import('./pages/OtherTransactionPage'))
+
+const LoadingFallback = () => (
+  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
+    加载中...
+  </div>
+)
 import { apiGet, apiPost, apiDelete, apiUpload, apiPatch } from './services/api'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 
@@ -171,9 +181,10 @@ function AppShell() {
 
   const handleFabClick = (action: string) => {
     setFabMenuOpen(false)
-    if (action === 'expense') navigate('/transactions/new?type=expense')
-    else if (action === 'income') navigate('/transactions/new?type=income')
+    if (action === 'expense') navigate('/add-transaction?type=expense')
+    else if (action === 'income') navigate('/add-transaction?type=income')
     else if (action === 'transfer') navigate('/transfer')
+    else if (action === 'other') navigate('/other')
     else if (action === 'import') navigate('/imports')
   }
 
@@ -182,12 +193,13 @@ function AppShell() {
     const path = location.pathname
     const buttons: { key: string; label: string; icon: React.ReactNode; action: () => void }[] = []
 
-    // 首页 /dashboard - 显示全部 4 个按钮
+    // 首页 /dashboard - 显示全部 5 个按钮
     if (path === '/dashboard') {
       buttons.push(
         { key: 'expense', label: '记支出', icon: <ArrowDownOutlined />, action: () => handleFabClick('expense') },
         { key: 'income', label: '记收入', icon: <ArrowUpOutlined />, action: () => handleFabClick('income') },
         { key: 'transfer', label: '转账', icon: <SwapOutlined />, action: () => handleFabClick('transfer') },
+        { key: 'other', label: '其他', icon: <TagsOutlined />, action: () => handleFabClick('other') },
         { key: 'import', label: '批量导入', icon: <ImportOutlined />, action: () => handleFabClick('import') }
       )
     }
@@ -272,6 +284,8 @@ function AppShell() {
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/transfer" element={<TransferPage />} />
+            <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
+            <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Content>
