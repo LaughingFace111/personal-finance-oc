@@ -4,17 +4,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core import settings, init_db
 from src.core.config import settings as app_settings
 
-from src.modules.auth import router as auth_router
-from src.modules.books import router as books_router
-from src.modules.accounts import router as accounts_router
-from src.modules.categories import router as categories_router
-from src.modules.transactions import router as transactions_router
-from src.modules.installments import router as installments_router
-from src.modules.loans import router as loans_router
-from src.modules.imports import router as imports_router
-from src.modules.rules import router as rules_router
-from src.modules.reports import router as reports_router
-from src.modules.tags import router as tags_router
+from src.modules.auth.router import router as auth_router
+from src.modules.books.router import router as books_router
+from src.modules.accounts.router import router as accounts_router
+from src.modules.categories.router import router as categories_router
+from src.modules.transactions.router import router as transactions_router
+from src.modules.installments.router import router as installments_router
+from src.modules.loans.router import router as loans_router
+from src.modules.imports.router import router as imports_router
+from src.modules.rules.router import router as rules_router
+from src.modules.reports.router import router as reports_router
+from src.modules.tags.router import router as tags_router
 
 # Create FastAPI app
 app = FastAPI(

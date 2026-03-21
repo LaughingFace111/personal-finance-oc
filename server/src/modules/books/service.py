@@ -56,6 +56,20 @@ def get_default_book(db: Session, user_id: str) -> Optional[Book]:
     ).first()
 
 
+def resolve_book_id(db: Session, user_id: str, book_id: Optional[str] = None) -> str:
+    """Resolve a book ID owned by the user, fallback to default book."""
+    if book_id:
+        book = get_book(db, book_id, user_id)
+        if not book:
+            raise NotFoundException("Book not found")
+        return book.id
+
+    default_book = get_default_book(db, user_id)
+    if not default_book:
+        default_book = create_book(db, user_id, BookCreate(name="默认账本"))
+    return default_book.id
+
+
 def update_book(db: Session, book_id: str, user_id: str, data: BookUpdate) -> Book:
     """Update book"""
     book = get_book(db, book_id, user_id)

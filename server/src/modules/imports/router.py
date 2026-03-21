@@ -15,7 +15,7 @@ from .service import (
     create_import_batch, get_import_batches, get_import_batch,
     get_import_rows, update_import_row, confirm_import
 )
-from src.modules.books.service import get_default_book
+from src.modules.books.service import resolve_book_id
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -26,15 +26,7 @@ def get_current_book_id(
     book_id: str = None
 ) -> str:
     """Get current book ID from user or parameter"""
-    if book_id:
-        return book_id
-    
-    # Get user's default book
-    book = get_default_book(db, current_user.id)
-    if not book:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="No default book found")
-    return book.id
+    return resolve_book_id(db, current_user.id, book_id)
 
 
 @router.post("/upload", response_model=ImportBatchResponse)
@@ -45,16 +37,11 @@ async def upload(
     current_user: User = Depends(get_current_user)
 ):
     """Upload CSV file for import"""
-    # Get user's default book
-    book = get_default_book(db, current_user.id)
-    if not book:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="No default book found")
-    
+    book_id = get_current_book_id(current_user, db)
     content = await file.read()
     
     # Pass content as bytes and filename to determine file type
-    batch = create_import_batch(db, book.id, file.filename, content, source_name)
+    batch = create_import_batch(db, book_id, file.filename, content, source_name)
     return batch
 
 
@@ -86,15 +73,29 @@ def get_batch(
 
 
 @router.get("/{batch_id}/rows", response_model=List[ImportRowResponse])
-def list_rows(batch_id: str, confirm_status: str = None, db: Session = Depends(get_db)):
+def list_rows(
+    batch_id: str,
+    confirm_status: str = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    book_id: str = None
+):
     """Get import rows"""
-    return get_import_rows(db, batch_id, confirm_status)
+    current_book_id = get_current_book_id(current_user, db, book_id)
+    return get_import_rows(db, batch_id, current_book_id, confirm_status)
 
 
 @router.patch("/rows/{row_id}", response_model=ImportRowResponse)
-def update_row(row_id: str, data: UpdateImportRowRequest, db: Session = Depends(get_db)):
+def update_row(
+    row_id: str,
+    data: UpdateImportRowRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    book_id: str = None
+):
     """Update import row"""
-    return update_import_row(db, row_id, data)
+    current_book_id = get_current_book_id(current_user, db, book_id)
+    return update_import_row(db, row_id, current_book_id, data)
 
 
 @router.post("/{batch_id}/confirm")
