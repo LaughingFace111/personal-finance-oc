@@ -258,3 +258,73 @@ def get_upcoming_debts(db: Session, book_id: str, days: int = 30) -> dict:
             for l in loans
         ]
     }
+
+
+def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date) -> dict:
+    """Get daily income and expense summary for calendar display"""
+    from datetime import time
+    
+    # 收入按日期统计
+    income_query = db.query(
+        func.date(Transaction.occurred_at).label('day'),
+        func.sum(Transaction.amount).label('total')
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.INCOME.value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= datetime.combine(date_from, time.min),
+        Transaction.occurred_at <= datetime.combine(date_to, time.max)
+    ).group_by(func.date(Transaction.occurred_at)).all()
+
+    # 支出按日期统计（包含 expense, fee, installment_purchase）
+    expense_query = db.query(
+        func.date(Transaction.occurred_at).label('day'),
+        func.sum(Transaction.amount).label('total')
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type.in_([
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value
+        ]),
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= datetime.combine(date_from, time.min),
+        Transaction.occurred_at <= datetime.combine(date_to, time.max)
+    ).group_by(func.date(Transaction.occurred_at)).all()
+
+    # 退款冲减按日期统计
+    refund_query = db.query(
+        func.date(Transaction.occurred_at).label('day'),
+        func.sum(Transaction.amount).label('total')
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.REFUND.value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= datetime.combine(date_from, time.min),
+        Transaction.occurred_at <= datetime.combine(date_to, time.max)
+    ).group_by(func.date(Transaction.occurred_at)).all()
+
+    # 构建映射
+    income_map = {str(q.day): float(q.total) for q in income_query}
+    expense_map = {str(q.day): float(q.total) for q in expense_query}
+    refund_map = {str(q.day): float(q.total) for q in refund_query}
+
+    # 生成每日数据
+    daily_data = {}
+    current = date_from
+    while current <= date_to:
+        date_str = str(current)
+        income = income_map.get(date_str, 0)
+        expense_raw = expense_map.get(date_str, 0)
+        refund = refund_map.get(date_str, 0)
+        expense = expense_raw - refund  # 净支出
+        net = income - expense
+        
+        daily_data[date_str] = {
+            "income": income,
+            "expense": expense,
+            "net_balance": net
+        }
+        current += timedelta(days=1)
+
+    return daily_data

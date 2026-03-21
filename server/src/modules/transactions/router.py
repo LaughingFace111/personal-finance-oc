@@ -123,13 +123,29 @@ def list_transactions(
     page_size: int = Query(50, ge=1, le=100)
 ):
     """Get transactions with filters"""
-    from datetime import datetime
+    from datetime import datetime, timedelta
 
     bid = get_current_book_id(current_user, db, book_id)
 
+    # 处理日期：如果只有日期（没有时间），自动调整为完整日期范围
+    dt_from = None
+    dt_to = None
+    
+    if date_from:
+        dt_from = datetime.fromisoformat(date_from)
+        # 如果日期字符串不包含时间部分，设置为当天开始
+        if len(date_from) <= 10:
+            dt_from = dt_from.replace(hour=0, minute=0, second=0)
+    
+    if date_to:
+        dt_to = datetime.fromisoformat(date_to)
+        # 如果日期字符串不包含时间部分，设置为当天结束
+        if len(date_to) <= 10:
+            dt_to = dt_to.replace(hour=23, minute=59, second=59)
+
     filters = {
-        "date_from": datetime.fromisoformat(date_from) if date_from else None,
-        "date_to": datetime.fromisoformat(date_to) if date_to else None,
+        "date_from": dt_from,
+        "date_to": dt_to,
         "account_id": account_id,
         "category_id": category_id,
         "transaction_type": transaction_type,
