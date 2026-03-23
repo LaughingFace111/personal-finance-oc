@@ -5,7 +5,6 @@ import {
   TransactionFormLayout,
   transactionFormFieldClass,
   transactionFormLabelClass,
-  transactionFormPrimaryButtonClass,
   transactionFormSectionClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';

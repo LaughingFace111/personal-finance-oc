@@ -168,7 +168,7 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
 
 function AppShell() {
   const navigate = useNavigate()
@@ -281,6 +281,7 @@ return (
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/rules" element={<MatchRulesPage />} />
           </Routes>
         </Content>
       </Layout>
@@ -2471,6 +2472,7 @@ const TagFormPage = () => {
 const SettingsPage = () => {
   const { user, logout } = useAuth()
   const { mode, setMode } = useTheme()
+  const navigate = useNavigate()
   
   return (
     <div>
@@ -2526,10 +2528,281 @@ const SettingsPage = () => {
           <List.Item>个人记账 Web 应用</List.Item>
         </List>
       </Card>
+
+      <Card title="导入匹配规则" style={{ marginBottom: 16 }}>
+        <div style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+          维护账户、类别、标签的一键匹配规则，并可自动补齐默认标签与常用规则。
+        </div>
+        <Button type="primary" onClick={() => navigate('/settings/rules')}>
+          进入规则维护
+        </Button>
+      </Card>
       
       <Button type="primary" danger block onClick={logout}>
         退出登录
       </Button>
+    </div>
+  )
+}
+
+const MatchRulesPage = () => {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const bookId = user?.default_book_id
+  const [rules, setRules] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [categories, setCategories] = useState<any[]>([])
+  const [tags, setTags] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [modalVisible, setModalVisible] = useState(false)
+  const [form, setForm] = useState({ match_value: '', target_type: 'account', target_id: '', priority: 100 })
+
+  const loadData = async () => {
+    if (!bookId) return
+    setLoading(true)
+    try {
+      await apiPost(`/api/rules/bootstrap-defaults?book_id=${bookId}`)
+      const [ruleList, accountList, categoryList, tagList] = await Promise.all([
+        apiGet(`/api/rules?book_id=${bookId}`),
+        apiGet(`/api/accounts?book_id=${bookId}`),
+        apiGet(`/api/categories?book_id=${bookId}`),
+        apiGet(`/api/tags?book_id=${bookId}`),
+      ])
+      setRules(ruleList || [])
+      setAccounts(accountList || [])
+      setCategories(categoryList || [])
+      setTags(tagList || [])
+    } catch {
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadData() }, [bookId])
+
+  const targetOptions =
+    form.target_type === 'account'
+      ? accounts
+      : form.target_type === 'category'
+        ? categories
+        : tags
+
+  const renderFormContent = () => (
+    <div style={{ display: 'grid', gap: 12 }}>
+      <Input
+        placeholder="输入匹配词，例如：淘宝、星巴克、招商银行"
+        value={form.match_value}
+        onChange={e => setForm(prev => ({ ...prev, match_value: e.target.value }))}
+      />
+      <Select
+        value={form.target_type}
+        onChange={value => setForm(prev => ({ ...prev, target_type: value, target_id: '' }))}
+        options={[
+          { value: 'account', label: '账户匹配' },
+          { value: 'category', label: '类别匹配' },
+          { value: 'tag', label: '标签匹配' },
+        ]}
+      />
+      <Select
+        placeholder="选择替换值"
+        value={form.target_id || undefined}
+        onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+        options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
+        showSearch
+        optionFilterProp="label"
+      />
+      <InputNumber
+        min={0}
+        value={form.priority}
+        onChange={value => setForm(prev => ({ ...prev, priority: Number(value || 0) }))}
+        style={{ width: '100%' }}
+        placeholder="优先级"
+      />
+    </div>
+  )
+
+  const resetForm = () => {
+    setEditingId(null)
+    setModalVisible(false)
+    setForm({ match_value: '', target_type: 'account', target_id: '', priority: 100 })
+  }
+
+  const openEditModal = (rule: any) => {
+    setEditingId(rule.id)
+    setForm({
+      match_value: rule.match_value || '',
+      target_type: rule.target_type || 'account',
+      target_id: rule.target_account_id || rule.target_category_id || rule.target_tag_id || '',
+      priority: rule.priority || 0,
+    })
+    setModalVisible(true)
+  }
+
+  const resolveTargetName = (rule: any) => {
+    if (rule.target_type === 'account') {
+      return accounts.find((item: any) => item.id === rule.target_account_id)?.name || '未知账户'
+    }
+    if (rule.target_type === 'category') {
+      return categories.find((item: any) => item.id === rule.target_category_id)?.name || '未知类别'
+    }
+    return tags.find((item: any) => item.id === rule.target_tag_id)?.name || '未知标签'
+  }
+
+  const handleSubmit = async () => {
+    if (!bookId) return
+    if (!form.match_value.trim()) {
+      message.error('请输入匹配词')
+      return
+    }
+    if (!form.target_id) {
+      message.error('请选择替换值')
+      return
+    }
+
+    const payload: any = {
+      rule_name: `${form.match_value.trim()} -> ${form.target_type}`,
+      match_field: 'combined',
+      match_type: 'contains',
+      match_value: form.match_value.trim(),
+      target_type: form.target_type,
+      priority: form.priority,
+    }
+    if (form.target_type === 'account') payload.target_account_id = form.target_id
+    if (form.target_type === 'category') payload.target_category_id = form.target_id
+    if (form.target_type === 'tag') payload.target_tag_id = form.target_id
+
+    setSaving(true)
+    try {
+      if (editingId) {
+        await apiPatch(`/api/rules/${editingId}?book_id=${bookId}`, payload)
+        message.success('规则已更新')
+      } else {
+        await apiPost(`/api/rules?book_id=${bookId}`, payload)
+        message.success('规则已创建')
+      }
+      resetForm()
+      loadData()
+    } catch {
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleEdit = (rule: any) => {
+    openEditModal(rule)
+  }
+
+  const toggleRule = async (rule: any) => {
+    if (!bookId) return
+    try {
+      await apiPatch(`/api/rules/${rule.id}?book_id=${bookId}`, { is_active: !rule.is_active })
+      message.success(rule.is_active ? '规则已停用' : '规则已启用')
+      loadData()
+    } catch {
+    }
+  }
+
+  const removeRule = async (ruleId: string) => {
+    if (!bookId) return
+    try {
+      await apiDelete(`/api/rules/${ruleId}?book_id=${bookId}`)
+      message.success('规则已删除')
+      if (editingId === ruleId) resetForm()
+      loadData()
+    } catch {
+    }
+  }
+
+  return (
+    <div>
+      {/* 编辑规则对话框 */}
+      <Modal
+        title={editingId ? '编辑规则' : '新建规则'}
+        open={modalVisible}
+        onCancel={resetForm}
+        footer={null}
+      >
+        {renderFormContent()}
+        <div style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Button onClick={resetForm}>取消</Button>
+          <Button type="primary" loading={saving} onClick={handleSubmit}>
+            {editingId ? '保存' : '创建'}
+          </Button>
+        </div>
+      </Modal>
+
+      <Card title="匹配规则维护" extra={<Button onClick={() => navigate('/settings')}>返回设置</Button>} style={{ marginBottom: 16 }}>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <Input
+            placeholder="输入匹配词，例如：淘宝、星巴克、招商银行"
+            value={form.match_value}
+            onChange={e => setForm(prev => ({ ...prev, match_value: e.target.value }))}
+          />
+          <Select
+            value={form.target_type}
+            onChange={value => setForm(prev => ({ ...prev, target_type: value, target_id: '' }))}
+            options={[
+              { value: 'account', label: '账户匹配' },
+              { value: 'category', label: '类别匹配' },
+              { value: 'tag', label: '标签匹配' },
+            ]}
+          />
+          <Select
+            placeholder="选择替换值"
+            value={form.target_id || undefined}
+            onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+            options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
+            showSearch
+            optionFilterProp="label"
+          />
+          <InputNumber
+            min={0}
+            value={form.priority}
+            onChange={value => setForm(prev => ({ ...prev, priority: Number(value || 0) }))}
+            style={{ width: '100%' }}
+            placeholder="优先级"
+          />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button type="primary" loading={saving} onClick={handleSubmit}>
+              {editingId ? '保存规则' : '新增规则'}
+            </Button>
+            {editingId && <Button onClick={resetForm}>取消编辑</Button>}
+          </div>
+        </div>
+      </Card>
+
+      <Card title="规则列表">
+        {loading ? <Spin /> : (
+          <List
+            dataSource={rules}
+            locale={{ emptyText: '暂无规则' }}
+            renderItem={(rule: any) => (
+              <List.Item
+                actions={[
+                  <Button key="edit" type="link" onClick={() => handleEdit(rule)}>编辑</Button>,
+                  <Button key="toggle" type="link" onClick={() => toggleRule(rule)}>
+                    {rule.is_active ? '停用' : '启用'}
+                  </Button>,
+                  <Button key="delete" type="link" danger onClick={() => removeRule(rule.id)}>删除</Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span>{rule.match_value}</span>
+                      <Tag color={rule.is_active ? 'green' : 'default'}>{rule.is_active ? '启用中' : '已停用'}</Tag>
+                      <Tag>{rule.target_type}</Tag>
+                    </div>
+                  }
+                  description={`替换为：${resolveTargetName(rule)} ｜ 优先级：${rule.priority}`}
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Card>
     </div>
   )
 }

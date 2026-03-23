@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { message } from 'antd';
+import { Select, message } from 'antd';
 import { apiGet, apiPost, apiUpload } from '../services/api';
+import { TagCreateModal } from './TagCreateModal';
+import { getDefaultBookId, TagOption } from '../pages/transactionFormSupport';
 
 type Account = {
   id: string;
@@ -12,6 +14,10 @@ type Category = {
   id: string;
   name: string;
   category_type: string;
+};
+
+type SelectTagOption = TagOption & {
+  displayLabel: string;
 };
 
 type ParsedItem = {
@@ -175,15 +181,50 @@ export function StagingImportTable() {
   const [billType, setBillType] = useState('alipay');
   const [parsing, setParsing] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [matchingTarget, setMatchingTarget] = useState<string | null>(null);
   const [rows, setRows] = useState<ParsedItem[]>([]);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [confirmResult, setConfirmResult] = useState<ConfirmResponse | null>(null);
+  const [bookId, setBookId] = useState<string | null>(null);
+  const [tags, setTags] = useState<SelectTagOption[]>([]);
+  const [tagSearchValues, setTagSearchValues] = useState<Record<string, string>>({});
+  const [tagCreateState, setTagCreateState] = useState<{ rowId: string; name: string } | null>(null);
 
   useEffect(() => {
     apiGet<Account[]>('/api/accounts').then(setAccounts).catch(() => setAccounts([]));
     apiGet<Category[]>('/api/categories').then(setCategories).catch(() => setCategories([]));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    getDefaultBookId()
+      .then((resolvedBookId) => {
+        if (!active) return;
+        setBookId(resolvedBookId);
+        const url = resolvedBookId ? `/api/tags?book_id=${resolvedBookId}` : '/api/tags';
+        return apiGet<TagOption[]>(url);
+      })
+      .then((tagList) => {
+        if (!active) return;
+        const list = tagList || [];
+        setTags(
+          list.map((tag) => {
+            const parent = list.find((item) => item.id === tag.parent_id);
+            return {
+              ...tag,
+              displayLabel: parent ? `${parent.name} / ${tag.name}` : tag.name,
+            };
+          }),
+        );
+      })
+      .catch(() => {
+        if (active) setTags([]);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -207,6 +248,12 @@ export function StagingImportTable() {
     accounts.forEach(account => map.set(account.id, account));
     return map;
   }, [accounts]);
+
+  const tagByName = useMemo(() => {
+    const map = new Map<string, SelectTagOption>();
+    tags.forEach((tag) => map.set(tag.name, tag));
+    return map;
+  }, [tags]);
 
   const rowIdKey = useMemo(() => rows.map(row => row.tempId).join('|'), [rows]);
 
@@ -276,6 +323,32 @@ export function StagingImportTable() {
     }
   };
 
+  const onApplyMatch = async (matchTarget: 'account' | 'category' | 'tag') => {
+    if (!parseId) {
+      message.warning('缺少 parseId，请先解析文件');
+      return;
+    }
+    setMatchingTarget(matchTarget);
+    try {
+      const res = await apiPost<ParseResponse>(`/api/bills/parse/${parseId}/match`, {
+        matchTarget,
+      });
+      setRows(res.items || []);
+      message.success(
+        matchTarget === 'account'
+          ? '账户匹配已完成'
+          : matchTarget === 'category'
+            ? '类别匹配已完成'
+            : '标签匹配已完成'
+      );
+    } catch (err) {
+      console.error('Match error:', err);
+      message.error('批量匹配失败');
+    } finally {
+      setMatchingTarget(null);
+    }
+  };
+
   const selectedCount = selectedRowIds.size;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
   const partiallySelected = selectedCount > 0 && selectedCount < rows.length;
@@ -316,13 +389,36 @@ export function StagingImportTable() {
         <div style={styles.card}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
             <div style={styles.title}>阶段二：缓冲确认（可编辑后再导入）</div>
-            <button
-              style={{ ...styles.buttonPrimary, background: '#52c41a', ...(confirming ? styles.buttonDisabled : {}) }}
-              disabled={confirming}
-              onClick={onConfirmImport}
-            >
-              {confirming ? '导入中...' : '确认导入'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                style={{ ...styles.buttonPrimary, background: '#52c41a', ...(confirming ? styles.buttonDisabled : {}) }}
+                disabled={confirming}
+                onClick={onConfirmImport}
+              >
+                {confirming ? '导入中...' : '确认导入'}
+              </button>
+              <button
+                style={{ ...styles.buttonPrimary, background: '#0f766e', ...(matchingTarget ? styles.buttonDisabled : {}) }}
+                disabled={!!matchingTarget}
+                onClick={() => onApplyMatch('account')}
+              >
+                {matchingTarget === 'account' ? '匹配中...' : '账户匹配'}
+              </button>
+              <button
+                style={{ ...styles.buttonPrimary, background: '#7c3aed', ...(matchingTarget ? styles.buttonDisabled : {}) }}
+                disabled={!!matchingTarget}
+                onClick={() => onApplyMatch('category')}
+              >
+                {matchingTarget === 'category' ? '匹配中...' : '类别匹配'}
+              </button>
+              <button
+                style={{ ...styles.buttonPrimary, background: '#c2410c', ...(matchingTarget ? styles.buttonDisabled : {}) }}
+                disabled={!!matchingTarget}
+                onClick={() => onApplyMatch('tag')}
+              >
+                {matchingTarget === 'tag' ? '匹配中...' : '标签匹配'}
+              </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
@@ -352,6 +448,11 @@ export function StagingImportTable() {
                 const categoryType = getCategoryTypeByDirection(row.direction);
                 return category.category_type === categoryType || category.category_type === 'income_expense';
               });
+              const tagSearchValue = tagSearchValues[row.tempId] || '';
+              const filteredTagOptions = tags.filter((tag) =>
+                tag.displayLabel.toLowerCase().includes(tagSearchValue.toLowerCase()) ||
+                tag.name.toLowerCase().includes(tagSearchValue.toLowerCase()),
+              );
 
               return (
                 <div
@@ -537,19 +638,99 @@ export function StagingImportTable() {
 
                     <div>
                       <div style={styles.label}>标签</div>
-                      <input
-                        style={styles.input}
-                        value={(row.tags || []).join(', ')}
-                        placeholder="逗号分隔"
-                        onChange={e =>
-                          updateRow(row.tempId, {
-                            tags: e.target.value
-                              .split(',')
-                              .map(value => value.trim())
-                              .filter(Boolean),
-                          })
+                      <Select
+                        showSearch
+                        value={undefined}
+                        searchValue={tagSearchValue}
+                        placeholder="搜索并选择标签"
+                        style={{ width: '100%' }}
+                        optionFilterProp="label"
+                        filterOption={false}
+                        onSearch={(value) =>
+                          setTagSearchValues((current) => ({ ...current, [row.tempId]: value }))
                         }
+                        onSelect={(value) => {
+                          const nextTagName = String(value);
+                          updateRow(row.tempId, (currentRow) => ({
+                            tags: currentRow.tags.includes(nextTagName)
+                              ? currentRow.tags
+                              : [...currentRow.tags, nextTagName],
+                          }));
+                          setTagSearchValues((current) => ({ ...current, [row.tempId]: '' }));
+                        }}
+                        options={filteredTagOptions.map((tag) => ({
+                          value: tag.name,
+                          label: tag.displayLabel,
+                        }))}
+                        dropdownRender={(menu) => (
+                          <div>
+                            {menu}
+                            <div
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() =>
+                                setTagCreateState({
+                                  rowId: row.tempId,
+                                  name: tagSearchValue.trim(),
+                                })
+                              }
+                              style={{
+                                borderTop: '1px solid var(--border-light)',
+                                padding: '10px 12px',
+                                color: 'var(--accent-color)',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                              }}
+                            >
+                              添加标签
+                              {tagSearchValue.trim() ? ` “${tagSearchValue.trim()}”` : ''}
+                            </div>
+                          </div>
+                        )}
                       />
+                      {(row.tags || []).length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                          {row.tags.map((tagName) => {
+                            const tag = tagByName.get(tagName);
+                            return (
+                              <span
+                                key={`${row.tempId}-${tagName}`}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  borderRadius: '999px',
+                                  border: '1px solid var(--border-color)',
+                                  background: 'var(--bg-card)',
+                                  padding: '4px 10px',
+                                  color: 'var(--text-primary)',
+                                  fontSize: '12px',
+                                }}
+                              >
+                                {tag?.displayLabel || tagName}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateRow(row.tempId, {
+                                      tags: row.tags.filter((item) => item !== tagName),
+                                    })
+                                  }
+                                  style={{
+                                    border: 'none',
+                                    background: 'transparent',
+                                    color: 'var(--text-tertiary)',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                    lineHeight: 1,
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div>
@@ -607,6 +788,36 @@ export function StagingImportTable() {
           导入结果: 成功 {confirmResult.importedRows}，重复 {confirmResult.duplicateRows}，跳过 {confirmResult.skippedRows}，失败 {confirmResult.errorRows}
         </div>
       )}
+
+      <TagCreateModal
+        open={!!tagCreateState}
+        bookId={bookId}
+        initialName={tagCreateState?.name || ''}
+        onCancel={() => setTagCreateState(null)}
+        onCreated={async (createdTag) => {
+          const url = bookId ? `/api/tags?book_id=${bookId}` : '/api/tags';
+          const latestTags = await apiGet<TagOption[]>(url).catch(() => []);
+          const list = latestTags || [];
+          setTags(
+            list.map((tag) => {
+              const parent = list.find((item) => item.id === tag.parent_id);
+              return {
+                ...tag,
+                displayLabel: parent ? `${parent.name} / ${tag.name}` : tag.name,
+              };
+            }),
+          );
+          if (tagCreateState) {
+            updateRow(tagCreateState.rowId, (currentRow) => ({
+              tags: currentRow.tags.includes(createdTag.name)
+                ? currentRow.tags
+                : [...currentRow.tags, createdTag.name],
+            }));
+            setTagSearchValues((current) => ({ ...current, [tagCreateState.rowId]: '' }));
+          }
+          setTagCreateState(null);
+        }}
+      />
     </div>
   );
 }

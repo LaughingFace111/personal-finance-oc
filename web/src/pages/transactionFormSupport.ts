@@ -17,6 +17,8 @@ export interface CategoryOption {
 export interface TagOption {
   id: string;
   name: string;
+  parent_id?: string;
+  color?: string;
 }
 
 interface SessionUser {
@@ -51,7 +53,7 @@ export function toTagOptions(tags: TagOption[]) {
   return tags.map((tag) => ({
     id: tag.id,
     name: tag.name,
-    color: '#3b82f6',
+    color: tag.color || '#3b82f6',
   }));
 }
 

@@ -1,7 +1,7 @@
 from .models import CategoryRule
 from .router import router
 from .schemas import CategoryRuleCreate, CategoryRuleResponse, CategoryRuleUpdate
-from .service import apply_rules, create_rule, delete_rule, get_rule, get_rules, update_rule
+from .service import apply_rules, bootstrap_default_rule_assets, create_rule, delete_rule, get_rule, get_rules, update_rule
 
 __all__ = [
     "CategoryRule",
@@ -15,4 +15,5 @@ __all__ = [
     "update_rule",
     "delete_rule",
     "apply_rules",
+    "bootstrap_default_rule_assets",
 ]

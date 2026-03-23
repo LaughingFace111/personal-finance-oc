@@ -66,6 +66,10 @@ class ParseBillResponse(BaseModel):
     items: List[ParsedBillItem]
 
 
+class MatchBillRequest(BaseModel):
+    matchTarget: str
+
+
 class ConfirmImportRequest(BaseModel):
     parseId: str
     confirmedItems: List[ParsedBillItem]

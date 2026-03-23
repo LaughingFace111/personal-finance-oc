@@ -11,6 +11,8 @@ from src.common.enums import ImportStatus, SourceType
 from src.core import IdempotencyException, NotFoundException, generate_uuid
 from src.modules.books.service import get_default_book
 from src.modules.imports.models import ImportBatch, ImportRow
+from src.modules.accounts.service import get_accounts
+from src.modules.categories.service import get_categories
 from src.modules.transactions.schemas import TransactionCreate
 from src.modules.transactions.service import create_transaction
 
@@ -22,6 +24,7 @@ from .schemas import (
     ParseBillResponse,
     ParsedBillItem,
 )
+from src.modules.rules.service import apply_rules
 
 
 def get_bill_parser(bill_type: str) -> BillParser:
@@ -100,6 +103,15 @@ def _build_parsed_item(record, account_matcher: AccountMatcher, category_matcher
         unresolvedReason="；".join(unresolved_reasons) if unresolved_reasons else None,
         warnings=warnings,
     )
+
+
+def _rebuild_unresolved_reason(item: ParsedBillItem) -> Optional[str]:
+    reasons: List[str] = []
+    if not item.matchedAccountId:
+        reasons.append("账户未匹配")
+    if not item.categoryId:
+        reasons.append("分类未匹配")
+    return "；".join(reasons) if reasons else None
 
 
 def parse_bill_file(
@@ -181,6 +193,72 @@ def get_parse_result(db: Session, user_id: str, parse_id: str) -> ParseBillRespo
         .all()
     )
     items = [ParsedBillItem(**json.loads(row.normalized_data or "{}")) for row in rows]
+    return ParseBillResponse(parseId=parse_id, items=items)
+
+
+def apply_match_rules_to_parse(
+    db: Session,
+    user_id: str,
+    parse_id: str,
+    match_target: str,
+) -> ParseBillResponse:
+    book = get_default_book(db, user_id)
+    if not book:
+        raise NotFoundException("未找到默认账本")
+
+    if match_target not in {"account", "category", "tag"}:
+        raise ValueError("不支持的匹配目标")
+
+    batch = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.id == parse_id, ImportBatch.book_id == book.id)
+        .first()
+    )
+    if not batch:
+        raise NotFoundException("parseId 不存在")
+
+    rows = (
+        db.query(ImportRow)
+        .filter(ImportRow.batch_id == parse_id)
+        .order_by(ImportRow.row_no.asc())
+        .all()
+    )
+    accounts = {account.id: account.name for account in get_accounts(db, book.id)}
+    categories = {category.id: category.name for category in get_categories(db, book.id)}
+
+    items: List[ParsedBillItem] = []
+    for row in rows:
+        item = ParsedBillItem(**json.loads(row.normalized_data or "{}"))
+        matched = apply_rules(
+            db=db,
+            book_id=book.id,
+            merchant=item.counterparty or "",
+            description=item.itemDesc or "",
+            counterparty=item.counterparty or "",
+            account=item.rawAccountName or "",
+            category=item.tradeCategory or "",
+            target_type=match_target,
+        )
+        if match_target == "account" and matched.get("account_id"):
+            item.matchedAccountId = matched["account_id"]
+            item.matchedAccountName = accounts.get(matched["account_id"])
+            item.accountMatchStatus = "MATCHED"
+        elif match_target == "category" and matched.get("category_id"):
+            item.categoryId = matched["category_id"]
+            item.categoryName = categories.get(matched["category_id"])
+            item.categoryMatchStatus = "MATCHED"
+        elif match_target == "tag" and matched.get("tag_name"):
+            next_tags = list(dict.fromkeys([*item.tags, matched["tag_name"]]))
+            item.tags = next_tags
+
+        item.unresolvedReason = _rebuild_unresolved_reason(item)
+        row.normalized_data = json.dumps(item.model_dump(mode="json"), ensure_ascii=False)
+        row.guessed_account_id = item.matchedAccountId
+        row.guessed_category_id = item.categoryId
+        row.error_message = item.unresolvedReason
+        items.append(item)
+
+    db.commit()
     return ParseBillResponse(parseId=parse_id, items=items)
 
 

@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { TagMultiSelect } from '../components/TagMultiSelect';
+import { HierarchyPickerModal } from '../components/HierarchyPickerModal';
 import {
   TransactionFormLayout,
   transactionFormFieldClass,
   transactionFormLabelClass,
-  transactionFormPrimaryButtonClass,
   transactionFormSectionClass,
   transactionFormTextareaClass,
   transactionFormToggleClass,
@@ -19,7 +18,6 @@ import {
   getDefaultBookId,
   loadTransactionFormData,
   toOccurredAt,
-  toTagOptions,
 } from './transactionFormSupport';
 
 export default function AddTransactionPage() {
@@ -40,6 +38,8 @@ export default function AddTransactionPage() {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [tagModalOpen, setTagModalOpen] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -58,13 +58,39 @@ export default function AddTransactionPage() {
     loadData();
   }, []);
 
-  // 根据当前类型过滤分类
-  const filteredCategories = categories.filter(c => {
-    if (direction === 'income') {
-      return c.category_type === 'income' || c.category_type === 'income_expense';
+  const filteredCategories = useMemo(
+    () =>
+      categories.filter(c => {
+        if (direction === 'income') {
+          return c.category_type === 'income' || c.category_type === 'income_expense';
+        }
+        return c.category_type === 'expense' || c.category_type === 'income_expense';
+      }),
+    [categories, direction],
+  );
+
+  useEffect(() => {
+    if (!categoryId) return;
+    const stillAvailable = filteredCategories.some((item) => item.id === categoryId);
+    if (!stillAvailable) {
+      setCategoryId('');
     }
-    return c.category_type === 'expense' || c.category_type === 'income_expense';
-  });
+  }, [categoryId, filteredCategories]);
+
+  const selectedCategoryLabel = categoryId ? getCategoryLabel(categories, categoryId) : '';
+  const selectedTagLabels = useMemo(
+    () =>
+      tagIds
+        .map((id) => {
+          const tag = tags.find((item) => item.id === id);
+          if (!tag) return '';
+          if (!tag.parent_id) return tag.name;
+          const parent = tags.find((item) => item.id === tag.parent_id);
+          return parent ? `${parent.name} / ${tag.name}` : tag.name;
+        })
+        .filter(Boolean),
+    [tagIds, tags],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +139,10 @@ export default function AddTransactionPage() {
       pageTitle="收入/支出"
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="rounded-2xl bg-slate-100 p-1">
+        <div
+          className="rounded-2xl p-1"
+          style={{ background: 'var(--bg-elevated)' }}
+        >
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -152,19 +181,22 @@ export default function AddTransactionPage() {
 
           <div>
             <label className={transactionFormLabelClass}>类别 *</label>
-            <select
-              value={categoryId}
-              onChange={e => setCategoryId(e.target.value)}
+            <button
+              type="button"
+              onClick={() => setCategoryModalOpen(true)}
               className={transactionFormFieldClass}
-              required
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                textAlign: 'left',
+              }}
             >
-              <option value="">选择类别</option>
-              {filteredCategories.map(category => (
-                <option key={category.id} value={category.id}>
-                  {getCategoryLabel(categories, category.id)}
-                </option>
-              ))}
-            </select>
+              <span style={{ color: selectedCategoryLabel ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                {selectedCategoryLabel || '点击选择类别'}
+              </span>
+              <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+            </button>
           </div>
 
           <div>
@@ -204,16 +236,57 @@ export default function AddTransactionPage() {
 
           <div>
             <label className={transactionFormLabelClass}>标签</label>
-            <TagMultiSelect
-              allTags={toTagOptions(tags)}
-              value={tagIds}
-              onChange={setTagIds}
-            />
+            <button
+              type="button"
+              onClick={() => setTagModalOpen(true)}
+              className={`${transactionFormFieldClass} h-auto min-h-11 py-3`}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '12px',
+                textAlign: 'left',
+              }}
+            >
+              <span
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px',
+                  color: selectedTagLabels.length > 0 ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                }}
+              >
+                {selectedTagLabels.length > 0
+                  ? selectedTagLabels.map((label) => (
+                      <span
+                        key={label}
+                        style={{
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '999px',
+                          background: 'var(--bg-elevated)',
+                          padding: '4px 10px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        {label}
+                      </span>
+                    ))
+                  : '点击选择标签'}
+              </span>
+              <span style={{ color: 'var(--text-tertiary)', lineHeight: '28px' }}>›</span>
+            </button>
           </div>
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div
+            className="rounded-xl border px-4 py-3 text-sm"
+            style={{
+              borderColor: 'rgba(255, 77, 79, 0.35)',
+              background: 'rgba(255, 77, 79, 0.08)',
+              color: '#ff7875',
+            }}
+          >
             {error}
           </div>
         )}
@@ -222,19 +295,52 @@ export default function AddTransactionPage() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            className="flex-1 rounded-xl border py-3 text-sm font-semibold transition"
+            style={{
+              borderColor: 'var(--border-color)',
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+            }}
           >
             取消
           </button>
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 rounded-xl py-3 text-sm font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60"
+            style={{ background: 'var(--accent-color)' }}
           >
             {loading ? '保存中...' : '保存'}
           </button>
         </div>
       </form>
+
+      <HierarchyPickerModal
+        open={categoryModalOpen}
+        title="选择类别"
+        items={filteredCategories}
+        value={categoryId}
+        emptyText="暂无可选类别"
+        onCancel={() => setCategoryModalOpen(false)}
+        onConfirm={(nextValue) => {
+          setCategoryId(typeof nextValue === 'string' ? nextValue : '');
+          setCategoryModalOpen(false);
+        }}
+      />
+
+      <HierarchyPickerModal
+        open={tagModalOpen}
+        title="选择标签"
+        items={tags}
+        value={tagIds}
+        multiple
+        emptyText="暂无可选标签"
+        onCancel={() => setTagModalOpen(false)}
+        onConfirm={(nextValue) => {
+          setTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : []);
+          setTagModalOpen(false);
+        }}
+      />
     </TransactionFormLayout>
   );
 }
