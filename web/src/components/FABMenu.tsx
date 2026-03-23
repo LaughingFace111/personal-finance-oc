@@ -37,18 +37,18 @@ export function FABMenu() {
   };
 
   return (
-    <div ref={menuRef} className="fixed bottom-6 right-6 z-50">
+    <div ref={menuRef} className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
       {/* 菜单项 */}
       <div
         className={`mb-3 space-y-2 transition-all duration-300 ease-in-out ${
-          isOpen ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
+          isOpen ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-4 opacity-0'
         }`}
       >
         {menuItems.map((item, index) => (
           <button
             key={item.label}
             onClick={() => handleItemClick(item.path)}
-            className={`flex w-full items-center justify-end gap-3 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg transition hover:scale-105 hover:shadow-xl ${item.color}`}
+            className={`flex min-w-[9.5rem] items-center justify-end gap-3 rounded-full px-4 py-2.5 text-sm font-medium text-white shadow-lg transition hover:scale-105 hover:shadow-xl ${item.color}`}
             style={{
               transitionDelay: isOpen ? `${index * 50}ms` : '0ms',
             }}

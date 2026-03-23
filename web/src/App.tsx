@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { Layout, Menu, Drawer, FloatButton, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
+import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
 const { Content } = Layout
-import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined, ImportOutlined, DeleteOutlined } from '@ant-design/icons'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
+import { StagingImportTable } from './components/StagingImportTable'
 
 // 懒加载新页面组件
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
@@ -13,7 +14,7 @@ const LoadingFallback = () => (
     加载中...
   </div>
 )
-import { apiGet, apiPost, apiDelete, apiUpload, apiPatch } from './services/api'
+import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 
 interface AuthContextType {
@@ -167,7 +168,7 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/settings': '设置' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置' }
 
 function AppShell() {
   const navigate = useNavigate()
@@ -181,11 +182,9 @@ function AppShell() {
 
   const handleFabClick = (action: string) => {
     setFabMenuOpen(false)
-    if (action === 'expense') navigate('/add-transaction?type=expense')
-    else if (action === 'income') navigate('/add-transaction?type=income')
+    if (action === 'income-expense') navigate('/add-transaction')
     else if (action === 'transfer') navigate('/transfer')
     else if (action === 'other') navigate('/other')
-    else if (action === 'import') navigate('/imports')
   }
 
   // 根据页面上下文动态生成 FAB 按钮
@@ -193,21 +192,12 @@ function AppShell() {
     const path = location.pathname
     const buttons: { key: string; label: string; icon: React.ReactNode; action: () => void }[] = []
 
-    // 首页 /dashboard - 显示全部 5 个按钮
-    if (path === '/dashboard') {
+    // 首页 /dashboard 和交易页 /transactions - 显示 3 个交易入口
+    if (path === '/dashboard' || path === '/transactions') {
       buttons.push(
-        { key: 'expense', label: '记支出', icon: <ArrowDownOutlined />, action: () => handleFabClick('expense') },
-        { key: 'income', label: '记收入', icon: <ArrowUpOutlined />, action: () => handleFabClick('income') },
+        { key: 'income-expense', label: '收入/支出', icon: <ArrowUpOutlined />, action: () => handleFabClick('income-expense') },
         { key: 'transfer', label: '转账', icon: <SwapOutlined />, action: () => handleFabClick('transfer') },
-        { key: 'other', label: '其他', icon: <TagsOutlined />, action: () => handleFabClick('other') },
-        { key: 'import', label: '批量导入', icon: <ImportOutlined />, action: () => handleFabClick('import') }
-      )
-    }
-    // 交易页 /transactions - 只显示 2 个按钮
-    else if (path === '/transactions') {
-      buttons.push(
-        { key: 'expense', label: '记支出', icon: <ArrowDownOutlined />, action: () => handleFabClick('expense') },
-        { key: 'income', label: '记收入', icon: <ArrowUpOutlined />, action: () => handleFabClick('income') }
+        { key: 'other', label: '其他', icon: <TagsOutlined />, action: () => handleFabClick('other') }
       )
     }
     // 账户页 /accounts - 只显示 1 个按钮
@@ -243,12 +233,16 @@ function AppShell() {
 
   const fabButtons = getFabButtons()
 
-  return (
+  const hideHeaderPaths = ['/add-transaction', '/transfer', '/other', '/transactions/new', '/transactions/'];
+const showHeader = !hideHeaderPaths.some(p => location.pathname.startsWith(p));
+
+return (
     <Layout style={{ minHeight: '100vh' }}>
+      {showHeader && (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: 'var(--bg-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', padding: '0 16px', zIndex: 100 }}>
         <Button type="text" icon={<MenuOutlined style={{ fontSize: 20 }} />} onClick={() => setDrawerOpen(true)} style={{ marginRight: 16 }} />
         <span style={{ fontSize: 18, fontWeight: 500 }}>{currentTitle}</span>
-      </div>
+      </div>)}
       <Drawer title={<span style={{ fontSize: 18, fontWeight: 600 }}>个人记账</span>} placement="left" onClose={() => setDrawerOpen(false)} open={drawerOpen} width={DRAWER_WIDTH} bodyStyle={{ padding: 0 }} extra={<Button type="text" icon={<CloseOutlined />} onClick={() => setDrawerOpen(false)} />}>
         <div style={{ padding: '16px 0' }}>
           <div style={{ padding: '0 24px 16px', borderBottom: '1px solid #f0f0f0', marginBottom: 8 }}>
@@ -261,7 +255,7 @@ function AppShell() {
           <Button block onClick={logout} icon={<SettingOutlined />}>退出登录</Button>
         </div>
       </Drawer>
-      <Layout style={{ marginTop: 56, marginBottom: 80 }}>
+      <Layout style={{ marginTop: showHeader ? 56 : 0, marginBottom: 80 }}>
         <Content style={{ padding: 16, maxWidth: 840, margin: '0 auto', width: '100%', overflow: 'auto' }}>
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -292,11 +286,73 @@ function AppShell() {
       </Layout>
       {/* 动态 FAB：按页面上下文显示不同按钮 */}
       {fabButtons.length > 0 && (
-        <FloatButton.Group trigger="click" style={{ right: 24, bottom: 24 }} icon={<PlusOutlined />} open={fabMenuOpen} onOpenChange={setFabMenuOpen}>
-          {fabButtons.map(btn => (
-            <FloatButton key={btn.key} tooltip={btn.label} icon={btn.icon} onClick={btn.action} />
-          ))}
-        </FloatButton.Group>
+        <div style={{ position: 'fixed', right: 24, bottom: 24, zIndex: 1000 }}>
+          {fabMenuOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 12, marginBottom: 12 }}>
+              {fabButtons.map(btn => (
+                <button
+                  key={btn.key}
+                  type="button"
+                  onClick={btn.action}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span
+                    style={{
+                      background: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      padding: '8px 12px',
+                      borderRadius: 999,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                      fontSize: 13,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {btn.label}
+                  </span>
+                  <span
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: '50%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: '#1677ff',
+                      color: '#fff',
+                      boxShadow: '0 6px 16px rgba(0,0,0,0.16)',
+                    }}
+                  >
+                    {btn.icon}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setFabMenuOpen((open) => !open)}
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: '50%',
+              border: 'none',
+              background: '#1677ff',
+              color: '#fff',
+              boxShadow: '0 8px 20px rgba(22,119,255,0.3)',
+              fontSize: 22,
+              cursor: 'pointer',
+            }}
+          >
+            {fabMenuOpen ? '×' : '+'}
+          </button>
+        </div>
       )}
     </Layout>
   )
@@ -506,6 +562,7 @@ const DateDetailPage = () => {
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState({ income: 0, expense: 0 })
   const [categories, setCategories] = useState<any[]>([])
+  const [tags, setTags] = useState<any[]>([])
   const bookId = user?.default_book_id
 
   // 加载分类数据
@@ -515,6 +572,21 @@ const DateDetailPage = () => {
       .then((data: any) => setCategories(data || []))
       .catch(() => {})
   }, [bookId])
+
+  // 加载标签数据
+  useEffect(() => {
+    if (!bookId) return
+    apiGet(`/api/tags?book_id=${bookId}`)
+      .then((data: any) => setTags(data || []))
+      .catch(() => {})
+  }, [bookId])
+
+  // 获取标签名称
+  const getTagName = (tagId: string) => {
+    if (!tagId) return ''
+    const tag = tags.find((t: any) => t.id === tagId)
+    return tag?.name || ''
+  }
 
   // 获取分类名称
   const getCategoryName = (categoryId: string) => {
@@ -643,11 +715,11 @@ const DateDetailPage = () => {
                   {tx.merchant || tx.note || '-'}
                 </div>
                 {/* 标签显示 */}
-                {tx.tags && tx.tags.length > 0 && (
+                {Array.isArray(tx.tags) && tx.tags.length > 0 && (
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {tx.tags.map((tag: string, idx: number) => (
+                    {tx.tags.map((tag: any, idx: number) => (
                       <span key={idx} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}>
-                        {tag}
+                        {getTagName(tag)}
                       </span>
                     ))}
                   </div>
@@ -1842,36 +1914,7 @@ const LoanFormPage = () => {
 }
 
 const ImportsPage = () => {
-  const { user, token } = useAuth()
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const bookId = user?.default_book_id
-  const [uploading, setUploading] = useState(false)
-
-  
-  useEffect(() => { if (!bookId) return; apiGet(`/api/imports?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUploading(true)
-    const formData = new FormData()
-    formData.append('file', file)
-    try {
-      // 使用专用上传函数 apiUpload
-      await apiUpload(`/api/imports/upload?book_id=${bookId}`, formData)
-      message.success('上传成功')
-      apiGet(`/api/imports?book_id=${bookId}`).then(setData)
-    } catch { /* error already handled by apiUpload */ }
-    finally { setUploading(false) }
-  }
-
-  return (
-    <div>
-      <Card style={{ marginBottom: 16 }}><input type="file" accept=".csv,.xlsx" onChange={handleUpload} disabled={uploading} /></Card>
-      {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无导入记录" /> : <List size="small" dataSource={data} renderItem={item => <List.Item><div><div>{item.filename}</div><div style={{ fontSize: 12, color: '#999' }}>{new Date(item.created_at).toLocaleString()}</div></div><Tag color={item.status === 'confirmed' ? 'green' : item.status === 'failed' ? 'red' : 'blue'}>{item.status}</Tag></List.Item>} />}
-    </div>
-  )
+  return <StagingImportTable />
 }
 
 const ReportsPage = () => {

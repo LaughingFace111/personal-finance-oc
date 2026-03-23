@@ -76,4 +76,5 @@ class CreateInstallmentRequest(BaseModel):
     total_periods: int = Field(..., gt=0, le=36)
     fee_per_period: Decimal = Field(default=Decimal("0"), ge=0)
     start_date: date
+    repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     plan_name: Optional[str] = None

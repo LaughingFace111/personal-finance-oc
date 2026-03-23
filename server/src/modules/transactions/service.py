@@ -213,11 +213,13 @@ def create_transaction(db: Session, book_id: str, data: TransactionCreate) -> Tr
             raise NotFoundException("Counterparty account not found")
 
     # Idempotency check for non-manual transactions
+    # 排除状态为 void 的交易，允许重新导入已删除的交易
     if data.business_key and data.source_type != SourceType.MANUAL:
         existing = db.query(Transaction).filter(
             Transaction.book_id == book_id,
             Transaction.source_type == data.source_type.value,
-            Transaction.business_key == data.business_key
+            Transaction.business_key == data.business_key,
+            Transaction.status != "void"
         ).first()
         if existing:
             raise IdempotencyException(f"Transaction already exists: {data.business_key}")
@@ -611,14 +613,11 @@ def update_transaction(db: Session, transaction_id: str, book_id: str, data: Tra
 
 
 def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
-    """Delete (void) transaction"""
+    """Delete transaction permanently"""
     txn = get_transaction(db, transaction_id, book_id)
     if not txn:
         raise NotFoundException("Transaction not found")
 
-    # Reverse transaction effects
-    _reverse_transaction_effects(db, txn)
-
-    # Mark as void
-    txn.status = TransactionStatus.VOID.value
+    # Delete the transaction permanently
+    db.delete(txn)
     db.commit()

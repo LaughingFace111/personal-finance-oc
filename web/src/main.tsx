@@ -5,6 +5,7 @@ import zhCN from 'antd/locale/zh_CN'
 import App from './App'
 import { ThemeProvider, useTheme } from './hooks/useTheme'
 import './index.css'
+import './styles.css'
 
 const ThemedApp = () => {
   const { theme: resolvedTheme, antdAlgorithm } = useTheme()

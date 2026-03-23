@@ -1,43 +1,143 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import {
+  TransactionFormLayout,
+  transactionFormFieldClass,
+  transactionFormLabelClass,
+  transactionFormPrimaryButtonClass,
+  transactionFormSectionClass,
+  transactionFormTextareaClass,
+  transactionFormToggleClass,
+} from '../components/TransactionFormLayout';
+import { apiPost } from '../services/api';
+import {
+  AccountOption,
+  CategoryOption,
+  TagOption,
+  getCategoryLabel,
+  getDefaultBookId,
+  loadTransactionFormData,
+  toOccurredAt,
+  toTagOptions,
+} from './transactionFormSupport';
 
 type SubType = 'installment' | 'lend' | 'borrow';
 
-interface Tag {
-  id: number;
-  name: string;
-  color: string;
-}
-
-const mockTags: Tag[] = [
-  { id: 1, name: '西双版纳自驾游', color: '#10b981' },
-  { id: 2, name: '电脑硬件升级', color: '#3b82f6' },
-  { id: 3, name: '帕萨特专项', color: '#f59e0b' },
-];
+const assetAccountTypes = ['cash', 'debit_card', 'ewallet', 'virtual'];
+const creditAccountTypes = ['credit_card', 'credit_line'];
 
 export default function OtherTransactionPage() {
   const navigate = useNavigate();
   const [subType, setSubType] = useState<SubType>('installment');
+  const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
+  const [tags, setTags] = useState<TagOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 分期付款字段
+  const [accountId, setAccountId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState('');
   const [periods, setPeriods] = useState(12);
-  const [dueDay, setDueDay] = useState(15);
-  const [interestRate, setInterestRate] = useState(0);
+  const [feePerPeriod, setFeePerPeriod] = useState('');
+  const [repaymentDay, setRepaymentDay] = useState(15);
 
-  // 借出/借入字段
   const [counterparty, setCounterparty] = useState('');
   const [loanAmount, setLoanAmount] = useState('');
   const [repaymentDate, setRepaymentDate] = useState('');
   const [reason, setReason] = useState('');
-  
-  // 通用字段
+
   const [memo, setMemo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [tagIds, setTagIds] = useState<number[]>([]);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const bookId = await getDefaultBookId();
+        if (!bookId) throw new Error('无法获取账本信息');
+
+        const formData = await loadTransactionFormData(bookId);
+        setAccounts(formData.accounts);
+        setCategories(formData.categories);
+        setTags(formData.tags);
+      } catch (err) {
+        setError((err as Error).message || '加载数据失败');
+      }
+    };
+
+    loadData();
+  }, []);
+
+  useEffect(() => {
+    setError('');
+    setAccountId('');
+    setCategoryId('');
+  }, [subType]);
+
+  const creditAccounts = useMemo(
+    () => accounts.filter((account) => creditAccountTypes.includes(account.account_type)),
+    [accounts],
+  );
+
+  const assetAccounts = useMemo(
+    () => accounts.filter((account) => assetAccountTypes.includes(account.account_type)),
+    [accounts],
+  );
+
+  const installmentCategories = useMemo(
+    () =>
+      categories.filter(
+        (category) =>
+          category.category_type === 'expense' || category.category_type === 'income_expense',
+      ),
+    [categories],
+  );
+
+  const submitInstallment = async (bookId: string) => {
+    if (!accountId || !amount || !merchant) {
+      throw new Error('请填写分期账户、金额和商户');
+    }
+
+    await apiPost('/api/installments', {
+      occurred_at: toOccurredAt(date),
+      book_id: bookId,
+      account_id: accountId,
+      merchant,
+      category_id: categoryId || null,
+      note: memo || null,
+      total_amount: parseFloat(amount),
+      total_periods: periods,
+      fee_per_period: feePerPeriod ? parseFloat(feePerPeriod) : 0,
+      start_date: date,
+      repayment_day: repaymentDay,
+      plan_name: merchant,
+    });
+  };
+
+  const submitDebtTransaction = async (bookId: string, transactionType: 'debt_lend' | 'debt_borrow') => {
+    if (!accountId || !loanAmount || !counterparty || !repaymentDate) {
+      throw new Error('请填写账户、金额、往来方和约定还款日');
+    }
+
+    await apiPost('/api/transactions', {
+      occurred_at: toOccurredAt(date),
+      book_id: bookId,
+      account_id: accountId,
+      transaction_type: transactionType,
+      direction: transactionType === 'debt_borrow' ? 'in' : 'out',
+      amount: parseFloat(loanAmount),
+      note: memo || null,
+      tags: tagIds.length > 0 ? JSON.stringify(tagIds) : null,
+      extra: JSON.stringify({
+        counterparty,
+        repayment_date: repaymentDate,
+        reason: reason || null,
+      }),
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,287 +145,287 @@ export default function OtherTransactionPage() {
     setLoading(true);
 
     try {
+      const bookId = await getDefaultBookId();
+      if (!bookId) throw new Error('无法获取账本信息');
+
       if (subType === 'installment') {
-        if (!amount || periods < 1) {
-          throw new Error('请填写必填字段');
-        }
-        const response = await fetch('/api/credit/installments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            amount: parseFloat(amount),
-            feeRate: interestRate / 100,
-            periods: parseInt(String(periods)),
-            dueDay: parseInt(String(dueDay)),
-            memo,
-            happenedAt: date,
-            tagIds,
-          }),
-        });
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.message || '创建失败');
-        }
+        await submitInstallment(bookId);
       } else if (subType === 'lend') {
-        if (!counterparty || !loanAmount || !repaymentDate) {
-          throw new Error('请填写必填字段');
-        }
-        const response = await fetch('/api/loans/lend', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            counterparty,
-            amount: parseFloat(loanAmount),
-            repaymentDate,
-            reason,
-            memo,
-            happenedAt: date,
-            tagIds,
-          }),
-        });
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.message || '创建失败');
-        }
-      } else if (subType === 'borrow') {
-        if (!counterparty || !loanAmount || !repaymentDate) {
-          throw new Error('请填写必填字段');
-        }
-        const response = await fetch('/api/loans/borrow', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            counterparty,
-            amount: parseFloat(loanAmount),
-            repaymentDate,
-            reason,
-            memo,
-            happenedAt: date,
-            tagIds,
-          }),
-        });
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.message || '创建失败');
-        }
+        await submitDebtTransaction(bookId, 'debt_lend');
+      } else {
+        await submitDebtTransaction(bookId, 'debt_borrow');
       }
 
-      navigate('/');
+      navigate('/dashboard');
     } catch (err) {
-      setError((err as Error).message);
+      setError((err as Error).message || '创建失败');
     } finally {
       setLoading(false);
     }
   };
 
-  const renderSubTypeForm = () => {
-    switch (subType) {
-      case 'installment':
-        return (
-          <>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">金额</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-                required
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">分期数</label>
-              <select
-                value={periods}
-                onChange={e => setPeriods(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-              >
-                <option value={3}>3期</option>
-                <option value={6}>6期</option>
-                <option value={9}>9期</option>
-                <option value={12}>12期</option>
-                <option value={18}>18期</option>
-                <option value={24}>24期</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">每期还款日</label>
-              <select
-                value={dueDay}
-                onChange={e => setDueDay(Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-              >
-                {[...Array(28)].map((_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {i + 1}日
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">手续费率 (%)</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={interestRate}
-                onChange={e => setInterestRate(Number(e.target.value))}
-                placeholder="0"
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-              />
-            </div>
-          </>
-        );
-      case 'lend':
-      case 'borrow':
-        return (
-          <>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                {subType === 'lend' ? '借款人' : '借出方'}
-              </label>
-              <input
-                type="text"
-                value={counterparty}
-                onChange={e => setCounterparty(e.target.value)}
-                placeholder={subType === 'lend' ? '请输入借款人姓名' : '请输入借出方姓名'}
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-                required
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">金额</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={loanAmount}
-                onChange={e => setLoanAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-                required
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">约定还款日</label>
-              <input
-                type="date"
-                value={repaymentDate}
-                onChange={e => setRepaymentDate(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-                required
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">理由</label>
-              <input
-                type="text"
-                value={reason}
-                onChange={e => setReason(e.target.value)}
-                placeholder="借款理由"
-                className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
-              />
-            </div>
-          </>
-        );
-    }
-  };
+  const renderInstallmentFields = () => (
+    <>
+      <div>
+        <label className={transactionFormLabelClass}>分期账户 *</label>
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          className={transactionFormFieldClass}
+          required
+        >
+          <option value="">选择信用卡/信用账户</option>
+          {creditAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>商户 *</label>
+        <input
+          type="text"
+          value={merchant}
+          onChange={(e) => setMerchant(e.target.value)}
+          placeholder="如：苹果官网、京东"
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>分类</label>
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          className={transactionFormFieldClass}
+        >
+          <option value="">选择分类</option>
+          {installmentCategories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {getCategoryLabel(categories, category.id)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>总金额 *</label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          placeholder="0.00"
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>分期期数 *</label>
+        <select
+          value={periods}
+          onChange={(e) => setPeriods(Number(e.target.value))}
+          className={transactionFormFieldClass}
+        >
+          {[3, 6, 9, 12, 18, 24, 36].map((period) => (
+            <option key={period} value={period}>
+              {period} 期
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>每期手续费</label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={feePerPeriod}
+          onChange={(e) => setFeePerPeriod(e.target.value)}
+          placeholder="0.00"
+          className={transactionFormFieldClass}
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>每月还款日</label>
+        <select
+          value={repaymentDay}
+          onChange={(e) => setRepaymentDay(Number(e.target.value))}
+          className={transactionFormFieldClass}
+        >
+          {Array.from({ length: 28 }, (_, index) => index + 1).map((day) => (
+            <option key={day} value={day}>
+              {day} 日
+            </option>
+          ))}
+        </select>
+      </div>
+    </>
+  );
+
+  const renderDebtFields = () => (
+    <>
+      <div>
+        <label className={transactionFormLabelClass}>资金账户 *</label>
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          className={transactionFormFieldClass}
+          required
+        >
+          <option value="">选择资产账户</option>
+          {assetAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {account.name} (余额: ¥{account.current_balance})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>
+          {subType === 'lend' ? '借款人' : '出借方'} *
+        </label>
+        <input
+          type="text"
+          value={counterparty}
+          onChange={(e) => setCounterparty(e.target.value)}
+          placeholder={subType === 'lend' ? '请输入借款人姓名' : '请输入出借方姓名'}
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>金额 *</label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={loanAmount}
+          onChange={(e) => setLoanAmount(e.target.value)}
+          placeholder="0.00"
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>约定还款日 *</label>
+        <input
+          type="date"
+          value={repaymentDate}
+          onChange={(e) => setRepaymentDate(e.target.value)}
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>原因</label>
+        <input
+          type="text"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="可选，记录借款原因"
+          className={transactionFormFieldClass}
+        />
+      </div>
+    </>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto max-w-md">
-        <h1 className="mb-6 text-xl font-semibold text-gray-800">其他交易</h1>
-
-        {/* 子类型切换 */}
-        <div className="mb-4 flex rounded-lg bg-white p-1 shadow">
-          <button
-            type="button"
-            onClick={() => setSubType('installment')}
-            className={`flex-1 rounded-md py-2 text-xs font-medium transition ${
-              subType === 'installment'
-                ? 'bg-indigo-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            分期付款
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubType('lend')}
-            className={`flex-1 rounded-md py-2 text-xs font-medium transition ${
-              subType === 'lend'
-                ? 'bg-orange-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            借出
-          </button>
-          <button
-            type="button"
-            onClick={() => setSubType('borrow')}
-            className={`flex-1 rounded-md py-2 text-xs font-medium transition ${
-              subType === 'borrow'
-                ? 'bg-blue-500 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            借入
-          </button>
+    <TransactionFormLayout
+      pageTitle="其他交易"
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div className="rounded-2xl bg-slate-100 p-1">
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setSubType('installment')}
+              className={transactionFormToggleClass(subType === 'installment')}
+            >
+              分期
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubType('lend')}
+              className={transactionFormToggleClass(subType === 'lend')}
+            >
+              借出
+            </button>
+            <button
+              type="button"
+              onClick={() => setSubType('borrow')}
+              className={transactionFormToggleClass(subType === 'borrow')}
+            >
+              借入
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-xl bg-white p-4 shadow">
-          {renderSubTypeForm()}
+        <div className={transactionFormSectionClass}>
+          {subType === 'installment' ? renderInstallmentFields() : renderDebtFields()}
 
-          {/* 日期 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">日期</label>
+            <label className={transactionFormLabelClass}>日期</label>
             <input
               type="date"
               value={date}
-              onChange={e => setDate(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
+              onChange={(e) => setDate(e.target.value)}
+              className={transactionFormFieldClass}
               required
             />
           </div>
 
-          {/* 备注 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">备注</label>
+            <label className={transactionFormLabelClass}>备注</label>
             <textarea
               value={memo}
-              onChange={e => setMemo(e.target.value)}
+              onChange={(e) => setMemo(e.target.value)}
               placeholder="添加备注..."
-              rows={2}
-              className="w-full rounded-lg border border-gray-300 p-2.5 text-sm"
+              rows={3}
+              className={transactionFormTextareaClass}
             />
           </div>
 
-          {/* 标签 */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">标签</label>
-            <TagMultiSelect allTags={mockTags} value={tagIds} onChange={setTagIds} />
+            <label className={transactionFormLabelClass}>标签</label>
+            <TagMultiSelect allTags={toTagOptions(tags)} value={tagIds} onChange={setTagIds} />
           </div>
+        </div>
 
-          {/* 错误提示 */}
-          {error && (
-            <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600">{error}</div>
-          )}
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+            {error}
+          </div>
+        )}
 
-          {/* 提交按钮 */}
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
+            取消
+          </button>
           <button
             type="submit"
             disabled={loading}
-            className={`w-full rounded-lg bg-indigo-500 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-600 ${
-              loading ? 'opacity-50' : ''
-            }`}
+            className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? '保存中...' : '保存'}
           </button>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </TransactionFormLayout>
   );
 }

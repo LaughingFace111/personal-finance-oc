@@ -1,22 +1,23 @@
 import { useMemo, useState } from 'react';
 
-type Tag = { id: number; name: string; color: string };
+type TagId = string | number;
+type Tag<T extends TagId> = { id: T; name: string; color: string };
 
-export function TagMultiSelect({ allTags, value, onChange }: { allTags: Tag[]; value: number[]; onChange: (v: number[]) => void }) {
+export function TagMultiSelect<T extends TagId>({ allTags, value, onChange }: { allTags: Tag<T>[]; value: T[]; onChange: (v: T[]) => void }) {
   const selected = useMemo(() => new Set(value), [value]);
   const [keyword, setKeyword] = useState('');
 
   const filtered = allTags.filter(t => t.name.toLowerCase().includes(keyword.toLowerCase()));
 
-  const toggle = (id: number) => {
+  const toggle = (id: T) => {
     if (selected.has(id)) onChange(value.filter(v => v !== id));
     else onChange([...value, id]);
   };
 
   return (
-    <div className='space-y-2'>
+    <div className='space-y-3'>
       <input
-        className='w-full rounded border p-2'
+        className='h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
         placeholder='搜索标签（如：西双版纳自驾游）'
         value={keyword}
         onChange={e => setKeyword(e.target.value)}
@@ -27,8 +28,8 @@ export function TagMultiSelect({ allTags, value, onChange }: { allTags: Tag[]; v
             type='button'
             key={tag.id}
             onClick={() => toggle(tag.id)}
-            className={`rounded-full border px-3 py-1 text-sm ${selected.has(tag.id) ? 'bg-indigo-600 text-white' : 'bg-white'}`}
-            style={{ borderColor: tag.color }}
+            className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${selected.has(tag.id) ? 'bg-blue-500 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'}`}
+            style={{ borderColor: selected.has(tag.id) ? '#3b82f6' : tag.color }}
           >
             #{tag.name}
           </button>
