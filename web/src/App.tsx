@@ -13,6 +13,8 @@ const MonthlySummaryPage = lazy(() => import('./pages/MonthlySummaryPage'))
 const ExpenseDistributionPage = lazy(() => import('./pages/ExpenseDistributionPage'))
 const IncomeDistributionPage = lazy(() => import('./pages/IncomeDistributionPage'))
 const MonthlyComparisonPage = lazy(() => import('./pages/MonthlyComparisonPage'))
+const TagDistributionPage = lazy(() => import('./pages/TagDistributionPage'))
+const TagDetailPage = lazy(() => import('./pages/TagDetailPage'))
 
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
@@ -173,7 +175,7 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
 
 const formatLocalDate = (value: Date) => {
   const year = value.getFullYear()
@@ -294,6 +296,8 @@ return (
             <Route path="/reports/expense-distribution" element={<Suspense fallback={<LoadingFallback />}><ExpenseDistributionPage /></Suspense>} />
             <Route path="/reports/income-distribution" element={<Suspense fallback={<LoadingFallback />}><IncomeDistributionPage /></Suspense>} />
             <Route path="/reports/monthly-comparison" element={<Suspense fallback={<LoadingFallback />}><MonthlyComparisonPage /></Suspense>} />
+            <Route path="/reports/tag-distribution" element={<Suspense fallback={<LoadingFallback />}><TagDistributionPage /></Suspense>} />
+            <Route path="/reports/tag-detail/:tagId" element={<Suspense fallback={<LoadingFallback />}><TagDetailPage /></Suspense>} />
             <Route path="/transfer" element={<TransferPage />} />
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />

@@ -1,4 +1,5 @@
-from datetime import date, datetime, timedelta
+import json
+from datetime import date, datetime, timedelta, time
 from decimal import Decimal
 from typing import Optional
 
@@ -6,10 +7,70 @@ from sqlalchemy import func, alias
 from sqlalchemy.orm import Session
 
 from src.common.enums import TransactionType
+from src.modules.categories.models import Category
+from src.modules.tags.models import Tag
 from src.modules.transactions.models import Transaction
 from src.modules.accounts.models import Account
 from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
 from src.modules.loans.models import LoanPlan, LoanSchedule
+
+
+def _datetime_range(date_from: date, date_to: date) -> tuple[datetime, datetime]:
+    return datetime.combine(date_from, time.min), datetime.combine(date_to, time.max)
+
+
+def _resolve_direction_types(direction: str) -> tuple[list[str], str]:
+    if direction == "expense":
+        return [
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value,
+        ], "out"
+    if direction == "income":
+        return [TransactionType.INCOME.value], "in"
+    raise ValueError("direction must be expense or income")
+
+
+def _load_report_transactions(
+    db: Session,
+    book_id: str,
+    date_from: date,
+    date_to: date,
+    direction: str,
+) -> list[Transaction]:
+    transaction_types, direction_value = _resolve_direction_types(direction)
+    dt_from, dt_to = _datetime_range(date_from, date_to)
+    return db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type.in_(transaction_types),
+        Transaction.direction == direction_value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+    ).order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc()).all()
+
+
+def _parse_tag_names(raw_tags: Optional[str]) -> list[str]:
+    if not raw_tags:
+        return []
+    try:
+        parsed = json.loads(raw_tags)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if not isinstance(item, str):
+            continue
+        name = item.strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+    return names
 
 
 def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> dict:
@@ -20,8 +81,6 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
     - 支出 = expense + fee + installment_purchase - refund冲减
     - 现金流 = income + expense(资产) + fee
     """
-    from datetime import time
-    
     # === 收入: 只计算 income 类型 ===
     income = db.query(func.sum(Transaction.amount)).filter(
         Transaction.book_id == book_id,
@@ -108,9 +167,6 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
     - 按原消费分类统计
     - 退款冲减按原消费分类扣减
     """
-    from datetime import time
-    from src.modules.categories.models import Category
-
     # === 支出查询：使用别名避免混淆 ===
     # 原始支出（毛支出）- 退款需要通过它找到原交易的分类
     OriginalTxn = alias(Transaction, name="original_txn")
@@ -263,8 +319,6 @@ def get_upcoming_debts(db: Session, book_id: str, days: int = 30) -> dict:
 
 def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date) -> dict:
     """Get daily income and expense summary for calendar display"""
-    from datetime import time
-    
     # 收入按日期统计
     income_query = db.query(
         func.date(Transaction.occurred_at).label('day'),
@@ -333,9 +387,6 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
 
 def get_income_by_category(db: Session, book_id: str, date_from: date, date_to: date) -> list:
     """Get income breakdown by category"""
-    from datetime import time
-    from src.modules.categories.models import Category
-
     # 收入查询
     income_query = db.query(
         Transaction.category_id,
@@ -369,7 +420,6 @@ def get_income_by_category(db: Session, book_id: str, date_from: date, date_to: 
 
 def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
     """Get monthly income/expense comparison for a year"""
-    from datetime import time
     from calendar import monthrange
 
     result = []
@@ -460,4 +510,159 @@ def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
         "total_income": total_income,
         "total_expense": total_expense,
         "total_net": total_net
+    }
+
+
+def get_tags_by_category(
+    db: Session,
+    book_id: str,
+    date_from: date,
+    date_to: date,
+    direction: str,
+) -> dict:
+    transactions = _load_report_transactions(db, book_id, date_from, date_to, direction)
+    tags = db.query(Tag).filter(Tag.book_id == book_id, Tag.is_active == True).all()
+    tags_by_name = {tag.name: tag for tag in tags}
+
+    total_direction_amount = sum((txn.amount for txn in transactions), Decimal("0"))
+    aggregate_map: dict[str, dict] = {}
+
+    for txn in transactions:
+        tag_names = _parse_tag_names(txn.tags)
+        for tag_name in tag_names:
+            tag = tags_by_name.get(tag_name)
+            if not tag:
+                continue
+            current = aggregate_map.setdefault(tag.id, {
+                "tag_id": tag.id,
+                "tag_name": tag.name,
+                "tag_color": tag.color or "#1677ff",
+                "parent_id": tag.parent_id,
+                "amount": Decimal("0"),
+                "transaction_count": 0,
+            })
+            current["amount"] += txn.amount
+            current["transaction_count"] += 1
+
+    items = []
+    for item in aggregate_map.values():
+        amount = item["amount"]
+        tx_count = item["transaction_count"]
+        items.append({
+            "tag_id": item["tag_id"],
+            "tag_name": item["tag_name"],
+            "tag_color": item["tag_color"],
+            "parent_id": item["parent_id"],
+            "amount": float(amount),
+            "transaction_count": tx_count,
+            "avg_amount": float(amount / tx_count) if tx_count else 0,
+            "ratio": float(amount / total_direction_amount) if total_direction_amount > 0 else 0,
+        })
+
+    items.sort(key=lambda item: (-item["amount"], item["tag_name"]))
+
+    return {
+        "direction": direction,
+        "date_from": str(date_from),
+        "date_to": str(date_to),
+        "total_direction_amount": float(total_direction_amount),
+        "items": items,
+        "note": "一笔交易可命中多个标签，标签金额按原值分别统计，因此标签金额之和可能大于总额。",
+    }
+
+
+def get_tag_detail(
+    db: Session,
+    book_id: str,
+    tag_id: str,
+    date_from: date,
+    date_to: date,
+    direction: str,
+) -> dict:
+    tag = db.query(Tag).filter(
+        Tag.id == tag_id,
+        Tag.book_id == book_id,
+        Tag.is_active == True,
+    ).first()
+    if not tag:
+        raise ValueError("Tag not found")
+
+    transactions = _load_report_transactions(db, book_id, date_from, date_to, direction)
+    matched_transactions = []
+    category_amounts: dict[str, Decimal] = {}
+    category_counts: dict[str, int] = {}
+    category_ids: set[str] = set()
+    total_direction_amount = sum((txn.amount for txn in transactions), Decimal("0"))
+    tag_total_amount = Decimal("0")
+
+    for txn in transactions:
+        tag_names = _parse_tag_names(txn.tags)
+        if tag.name not in tag_names:
+            continue
+        matched_transactions.append(txn)
+        tag_total_amount += txn.amount
+
+        category_id = txn.category_id or "uncategorized"
+        category_amounts[category_id] = category_amounts.get(category_id, Decimal("0")) + txn.amount
+        category_counts[category_id] = category_counts.get(category_id, 0) + 1
+        if txn.category_id:
+            category_ids.add(txn.category_id)
+
+    categories = {}
+    if category_ids:
+        categories = {
+            category.id: category
+            for category in db.query(Category).filter(Category.id.in_(category_ids)).all()
+        }
+
+    category_breakdown = []
+    for category_id, amount in category_amounts.items():
+        category = categories.get(category_id)
+        category_breakdown.append({
+            "category_id": None if category_id == "uncategorized" else category_id,
+            "category_name": category.name if category else "未分类",
+            "category_icon": category.icon if category else "🏷️",
+            "category_color": category.color if category else "#8c8c8c",
+            "amount": float(amount),
+            "transaction_count": category_counts.get(category_id, 0),
+            "ratio": float(amount / tag_total_amount) if tag_total_amount > 0 else 0,
+        })
+    category_breakdown.sort(key=lambda item: (-item["amount"], item["category_name"]))
+
+    detail_items = []
+    for txn in matched_transactions:
+        category = categories.get(txn.category_id) if txn.category_id else None
+        detail_items.append({
+            "id": txn.id,
+            "occurred_at": txn.occurred_at.isoformat(),
+            "amount": float(txn.amount),
+            "merchant": txn.merchant,
+            "note": txn.note,
+            "transaction_type": txn.transaction_type,
+            "category_id": txn.category_id,
+            "category_name": category.name if category else "未分类",
+            "category_icon": category.icon if category else "🏷️",
+            "category_color": category.color if category else "#8c8c8c",
+            "tags": _parse_tag_names(txn.tags),
+        })
+
+    return {
+        "direction": direction,
+        "date_from": str(date_from),
+        "date_to": str(date_to),
+        "tag": {
+            "id": tag.id,
+            "name": tag.name,
+            "color": tag.color or "#1677ff",
+            "parent_id": tag.parent_id,
+        },
+        "summary": {
+            "amount": float(tag_total_amount),
+            "transaction_count": len(matched_transactions),
+            "avg_amount": float(tag_total_amount / len(matched_transactions)) if matched_transactions else 0,
+            "ratio": float(tag_total_amount / total_direction_amount) if total_direction_amount > 0 else 0,
+        },
+        "category_breakdown": category_breakdown,
+        "transactions": detail_items,
+        "note": "一笔交易可命中多个标签，标签金额按原值分别统计，因此标签金额之和可能大于总额。",
     }

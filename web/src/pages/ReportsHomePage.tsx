@@ -30,6 +30,13 @@ const reports = [
     path: '/reports/monthly-comparison',
     icon: <DotChartOutlined style={{ fontSize: 32, color: '#722ed1' }} />,
     desc: '对比全年各月收支情况'
+  },
+  {
+    key: 'tag-distribution',
+    title: '标签分布图',
+    path: '/reports/tag-distribution',
+    icon: <PieChartOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
+    desc: '分析标签维度金额分布'
   }
 ]
 
