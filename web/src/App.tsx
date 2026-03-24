@@ -8,6 +8,11 @@ import { StagingImportTable } from './components/StagingImportTable'
 // 懒加载新页面组件
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
 const OtherTransactionPage = lazy(() => import('./pages/OtherTransactionPage'))
+const ReportsHomePage = lazy(() => import('./pages/ReportsHomePage'))
+const MonthlySummaryPage = lazy(() => import('./pages/MonthlySummaryPage'))
+const ExpenseDistributionPage = lazy(() => import('./pages/ExpenseDistributionPage'))
+const IncomeDistributionPage = lazy(() => import('./pages/IncomeDistributionPage'))
+const MonthlyComparisonPage = lazy(() => import('./pages/MonthlyComparisonPage'))
 
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
@@ -168,7 +173,14 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
+
+const formatLocalDate = (value: Date) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 function AppShell() {
   const navigate = useNavigate()
@@ -277,6 +289,11 @@ return (
             <Route path="/loans/new" element={<LoanFormPage />} />
             <Route path="/imports" element={<ImportsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/reports/home" element={<Suspense fallback={<LoadingFallback />}><ReportsHomePage /></Suspense>} />
+            <Route path="/reports/monthly-summary" element={<Suspense fallback={<LoadingFallback />}><MonthlySummaryPage /></Suspense>} />
+            <Route path="/reports/expense-distribution" element={<Suspense fallback={<LoadingFallback />}><ExpenseDistributionPage /></Suspense>} />
+            <Route path="/reports/income-distribution" element={<Suspense fallback={<LoadingFallback />}><IncomeDistributionPage /></Suspense>} />
+            <Route path="/reports/monthly-comparison" element={<Suspense fallback={<LoadingFallback />}><MonthlyComparisonPage /></Suspense>} />
             <Route path="/transfer" element={<TransferPage />} />
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />
@@ -379,8 +396,8 @@ const DashboardPage = () => {
   useEffect(() => {
     if (!bookId) return
     setLoading(true)
-    const firstDay = new Date(year, month, 1).toISOString().split('T')[0]
-    const lastDay = new Date(year, month + 1, 0).toISOString().split('T')[0]
+    const firstDay = formatLocalDate(new Date(year, month, 1))
+    const lastDay = formatLocalDate(new Date(year, month + 1, 0))
     
     // 使用新的 daily-summary 接口
     apiGet(`/api/reports/daily-summary?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`)
@@ -1919,21 +1936,14 @@ const ImportsPage = () => {
 }
 
 const ReportsPage = () => {
-  const { user, token } = useAuth()
-  const [overview, setOverview] = useState<any>({})
-  const [loading, setLoading] = useState(true)
-  const bookId = user?.default_book_id
-
+  const navigate = useNavigate()
   
+  // Redirect to the new reports home page
   useEffect(() => {
-    if (!bookId) return
-    const today = new Date()
-    const dateFrom = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-    const dateTo = today.toISOString().split('T')[0]
-    apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${dateFrom}&date_to=${dateTo}`).then(setOverview).catch(() => {}).finally(() => setLoading(false))
-  }, [bookId])
-
-  return loading ? <Spin /> : <Row gutter={16}><Col span={8}><Card>收入<br/><b style={{ fontSize: 20 }}>¥{(overview.income || 0).toFixed(2)}</b></Card></Col><Col span={8}><Card>支出<br/><b style={{ fontSize: 20 }}>¥{(overview.net_expense || 0).toFixed(2)}</b></Card></Col><Col span={8}><Card>结余<br/><b style={{ fontSize: 20 }}>¥{(overview.net || 0).toFixed(2)}</b></Card></Col></Row>
+    navigate('/reports/home', { replace: true })
+  }, [navigate])
+  
+  return <div style={{ textAlign: 'center', padding: 40 }}>加载中...</div>
 }
 
 const TransferPage = () => {

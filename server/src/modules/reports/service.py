@@ -124,6 +124,7 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
         Transaction.book_id == book_id,
         Transaction.transaction_type.in_([
             TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
             TransactionType.INSTALLMENT_PURCHASE.value
         ]),
         Transaction.status == "confirmed",
@@ -328,3 +329,135 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
         current += timedelta(days=1)
 
     return daily_data
+
+
+def get_income_by_category(db: Session, book_id: str, date_from: date, date_to: date) -> list:
+    """Get income breakdown by category"""
+    from datetime import time
+    from src.modules.categories.models import Category
+
+    # 收入查询
+    income_query = db.query(
+        Transaction.category_id,
+        func.sum(Transaction.amount).label("total_amount")
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.INCOME.value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= datetime.combine(date_from, time.min),
+        Transaction.occurred_at <= datetime.combine(date_to, time.max),
+        Transaction.category_id.isnot(None)
+    ).group_by(Transaction.category_id).all()
+
+    # 获取分类信息
+    category_ids = [q.category_id for q in income_query]
+    categories = {c.id: c for c in db.query(Category).filter(Category.id.in_(category_ids)).all()} if category_ids else {}
+
+    result = []
+    for q in income_query:
+        cat = categories.get(q.category_id)
+        result.append({
+            "id": q.category_id,
+            "name": cat.name if cat else "未知",
+            "icon": cat.icon if cat else "?",
+            "color": cat.color if cat else "#52c41a",
+            "amount": float(q.total_amount)
+        })
+
+    return result
+
+
+def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
+    """Get monthly income/expense comparison for a year"""
+    from datetime import time
+    from calendar import monthrange
+
+    result = []
+    total_income = 0
+    total_expense = 0
+    total_net = 0
+
+    for month in range(1, 13):
+        # 确定该月的起止日期
+        month_start = date(year, month, 1)
+        _, last_day = monthrange(year, month)
+        month_end = date(year, month, last_day)
+
+        # 只统计到今天之前的月份
+        today = date.today()
+        if month_end > today:
+            if month_start > today:
+                # 整个月都在未来，跳过
+                result.append({
+                    "month": month,
+                    "month_str": f"{month}月",
+                    "income": 0,
+                    "expense": 0,
+                    "net": 0
+                })
+                continue
+            else:
+                # 部分在未来，使用今天作为结束日期
+                month_end = today
+
+        # 收入统计
+        income = db.query(func.sum(Transaction.amount)).filter(
+            Transaction.book_id == book_id,
+            Transaction.transaction_type == TransactionType.INCOME.value,
+            Transaction.status == "confirmed",
+            Transaction.occurred_at >= datetime.combine(month_start, time.min),
+            Transaction.occurred_at <= datetime.combine(month_end, time.max)
+        ).scalar() or Decimal("0")
+
+        # 支出统计（毛支出）
+        expense_txns = db.query(func.sum(Transaction.amount)).filter(
+            Transaction.book_id == book_id,
+            Transaction.transaction_type.in_([
+                TransactionType.EXPENSE.value,
+                TransactionType.FEE.value,
+                TransactionType.INSTALLMENT_PURCHASE.value
+            ]),
+            Transaction.status == "confirmed",
+            Transaction.occurred_at >= datetime.combine(month_start, time.min),
+            Transaction.occurred_at <= datetime.combine(month_end, time.max)
+        ).scalar() or Decimal("0")
+
+        # 退款冲减
+        refunds = db.query(
+            Transaction.related_transaction_id,
+            func.sum(Transaction.amount).label('refund_amount')
+        ).filter(
+            Transaction.book_id == book_id,
+            Transaction.transaction_type == TransactionType.REFUND.value,
+            Transaction.status == "confirmed",
+            Transaction.occurred_at >= datetime.combine(month_start, time.min),
+            Transaction.occurred_at <= datetime.combine(month_end, time.max),
+            Transaction.related_transaction_id.isnot(None)
+        ).group_by(Transaction.related_transaction_id).all()
+
+        refund_deduction = sum(r.refund_amount for r in refunds)
+        net_expense = expense_txns - refund_deduction
+
+        income_val = float(income)
+        expense_val = float(net_expense)
+        net_val = income_val - expense_val
+
+        total_income += income_val
+        total_expense += expense_val
+        total_net += net_val
+
+        result.append({
+            "month": month,
+            "month_str": f"{month}月",
+            "income": income_val,
+            "expense": expense_val,
+            "net": net_val
+        })
+
+    return {
+        "year": year,
+        "months": result,
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "total_net": total_net
+    }
