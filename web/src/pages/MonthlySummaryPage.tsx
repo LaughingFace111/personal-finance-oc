@@ -5,6 +5,7 @@ import { LeftOutlined, RightOutlined, HomeOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { apiGet } from '../services/api'
 import { useAuth } from '../App'
+import CategoryMonthlyInsightCard from '../components/CategoryMonthlyInsightCard'
 
 export default function MonthlySummaryPage() {
   const { user } = useAuth()
@@ -256,19 +257,29 @@ export default function MonthlySummaryPage() {
               const percent = total > 0 ? (amount / total * 100).toFixed(1) : '0'
               return (
                 <div key={item.id || idx} style={{
-                  display: 'flex',
-                  alignItems: 'center',
                   padding: '12px 0',
                   borderBottom: idx < sortedData.length - 1 ? '1px solid var(--border-light)' : 'none'
                 }}>
-                  <span style={{ fontSize: 18, marginRight: 8 }}>{item.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 500 }}>{item.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{percent}%</div>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ fontSize: 18, marginRight: 8 }}>{item.icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 500 }}>{item.name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{percent}%</div>
+                    </div>
+                    <div style={{ fontWeight: 500, color: viewType === 'expense' ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                      ¥{amount.toFixed(2)}
+                    </div>
                   </div>
-                  <div style={{ fontWeight: 500, color: viewType === 'expense' ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-                    ¥{amount.toFixed(2)}
-                  </div>
+
+                  {viewType === 'expense' && item.id !== 'unlinked' && (
+                    <CategoryMonthlyInsightCard
+                      bookId={bookId}
+                      categoryId={item.id}
+                      year={year}
+                      month={month}
+                      direction="expense"
+                    />
+                  )}
                 </div>
               )
             }) : <Empty description="暂无数据" />}

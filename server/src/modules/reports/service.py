@@ -1,4 +1,5 @@
 import json
+from calendar import monthrange
 from datetime import date, datetime, timedelta, time
 from decimal import Decimal
 from typing import Optional
@@ -48,6 +49,277 @@ def _load_report_transactions(
         Transaction.occurred_at >= dt_from,
         Transaction.occurred_at <= dt_to,
     ).order_by(Transaction.occurred_at.desc(), Transaction.created_at.desc()).all()
+
+
+def _get_month_bounds(year: int, month: int) -> tuple[date, date]:
+    _, last_day = monthrange(year, month)
+    return date(year, month, 1), date(year, month, last_day)
+
+
+def _get_previous_month(year: int, month: int) -> tuple[int, int]:
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
+
+
+def _format_currency(amount: Decimal) -> str:
+    return f"¥{amount.quantize(Decimal('0.01'))}"
+
+
+def _format_rate(rate: Decimal) -> str:
+    normalized = rate.quantize(Decimal("0.1"))
+    text = format(normalized, "f").rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _build_category_tree(categories: list[Category]) -> tuple[dict[str, Category], dict[str, list[str]]]:
+    category_map = {category.id: category for category in categories}
+    children_map: dict[str, list[str]] = {}
+    for category in categories:
+        if category.parent_id:
+            children_map.setdefault(category.parent_id, []).append(category.id)
+    return category_map, children_map
+
+
+def _collect_descendant_ids(category_id: str, children_map: dict[str, list[str]]) -> set[str]:
+    collected: set[str] = set()
+    stack = [category_id]
+    while stack:
+        current = stack.pop()
+        if current in collected:
+            continue
+        collected.add(current)
+        stack.extend(children_map.get(current, []))
+    return collected
+
+
+def _get_category_amounts_for_period(
+    db: Session,
+    book_id: str,
+    category_ids: set[str],
+    date_from: date,
+    date_to: date,
+    direction: str,
+) -> dict[str, Decimal]:
+    if not category_ids:
+        return {}
+
+    dt_from, dt_to = _datetime_range(date_from, date_to)
+
+    if direction == "income":
+        rows = db.query(
+            Transaction.category_id,
+            func.sum(Transaction.amount).label("amount"),
+        ).filter(
+            Transaction.book_id == book_id,
+            Transaction.transaction_type == TransactionType.INCOME.value,
+            Transaction.status == "confirmed",
+            Transaction.occurred_at >= dt_from,
+            Transaction.occurred_at <= dt_to,
+            Transaction.category_id.in_(category_ids),
+        ).group_by(Transaction.category_id).all()
+        return {row.category_id: row.amount or Decimal("0") for row in rows if row.category_id}
+
+    OriginalTxn = alias(Transaction, name="original_txn")
+    RefundTxn = alias(Transaction, name="refund_txn")
+
+    expense_rows = db.query(
+        Transaction.category_id,
+        func.sum(Transaction.amount).label("gross_amount"),
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type.in_([
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value,
+        ]),
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+        Transaction.category_id.in_(category_ids),
+    ).group_by(Transaction.category_id).all()
+
+    refund_rows = db.query(
+        OriginalTxn.c.category_id,
+        func.sum(RefundTxn.c.amount).label("refund_amount"),
+    ).join(
+        RefundTxn, RefundTxn.c.related_transaction_id == OriginalTxn.c.id
+    ).filter(
+        OriginalTxn.c.book_id == book_id,
+        RefundTxn.c.transaction_type == TransactionType.REFUND.value,
+        RefundTxn.c.status == "confirmed",
+        RefundTxn.c.occurred_at >= dt_from,
+        RefundTxn.c.occurred_at <= dt_to,
+        OriginalTxn.c.category_id.in_(category_ids),
+    ).group_by(OriginalTxn.c.category_id).all()
+
+    amounts = {row.category_id: row.gross_amount or Decimal("0") for row in expense_rows if row.category_id}
+    for row in refund_rows:
+        if not row.category_id:
+            continue
+        amounts[row.category_id] = amounts.get(row.category_id, Decimal("0")) - (row.refund_amount or Decimal("0"))
+    return amounts
+
+
+def _sum_category_tree_amounts(
+    category_amounts: dict[str, Decimal],
+    category_ids: set[str],
+) -> Decimal:
+    return sum((category_amounts.get(category_id, Decimal("0")) for category_id in category_ids), Decimal("0"))
+
+
+def _pick_top_contributors(
+    category_map: dict[str, Category],
+    current_amounts: dict[str, Decimal],
+    previous_amounts: dict[str, Decimal],
+    child_ids: list[str],
+    children_map: dict[str, list[str]],
+    trend_type: str,
+) -> list[dict]:
+    contributors: list[dict] = []
+    for child_id in child_ids:
+        descendant_ids = _collect_descendant_ids(child_id, children_map)
+        current_amount = _sum_category_tree_amounts(current_amounts, descendant_ids)
+        previous_amount = _sum_category_tree_amounts(previous_amounts, descendant_ids)
+        change_amount = current_amount - previous_amount
+        contributors.append({
+            "categoryId": child_id,
+            "categoryName": category_map[child_id].name,
+            "monthAmount": float(current_amount),
+            "prevMonthAmount": float(previous_amount),
+            "changeAmount": float(change_amount),
+        })
+
+    if trend_type == "INCREASE":
+        ranked = [item for item in contributors if item["changeAmount"] > 0]
+        ranked.sort(key=lambda item: item["changeAmount"], reverse=True)
+    elif trend_type == "DECREASE":
+        ranked = [item for item in contributors if item["changeAmount"] < 0]
+        ranked.sort(key=lambda item: item["changeAmount"])
+    else:
+        ranked = [item for item in contributors if item["monthAmount"] > 0]
+        ranked.sort(key=lambda item: item["monthAmount"], reverse=True)
+
+    return ranked[:3]
+
+
+def _build_category_summary_text(
+    category_name: str,
+    direction: str,
+    month_amount: Decimal,
+    prev_month_amount: Decimal,
+    change_rate: Decimal,
+    trend_type: str,
+    top_contributors: list[dict],
+) -> str:
+    noun = "支出" if direction == "expense" else "收入"
+    contributor_names = "、".join(item["categoryName"] for item in top_contributors)
+
+    if trend_type == "NEW":
+        return f"本月新增{category_name}{noun}{_format_currency(month_amount)}"
+    if trend_type == "CLEARED":
+        return f"本月未产生{category_name}{noun}，上月为{_format_currency(prev_month_amount)}"
+    if trend_type == "STABLE":
+        text = f"本月{category_name}{noun}与上月基本持平"
+        if contributor_names:
+            text += f"，{noun}仍主要集中在{contributor_names}"
+        return f"{text}。"
+    if trend_type == "DECREASE":
+        text = f"本月{category_name}{noun}较上月下降{_format_rate(abs(change_rate))}%"
+        if contributor_names:
+            text += f"，主要减少来自{contributor_names}"
+        return f"{text}。"
+
+    text = f"本月{category_name}{noun}较上月上涨{_format_rate(abs(change_rate))}%"
+    if contributor_names:
+        text += f"，主要来自{contributor_names}"
+    return f"{text}。"
+
+
+def get_category_monthly_insight(
+    db: Session,
+    book_id: str,
+    category_id: str,
+    year: int,
+    month: int,
+    direction: str = "expense",
+) -> dict:
+    if month < 1 or month > 12:
+        raise ValueError("month must be between 1 and 12")
+    if direction not in {"expense", "income"}:
+        raise ValueError("direction must be expense or income")
+
+    categories = db.query(Category).filter(Category.book_id == book_id).all()
+    category_map, children_map = _build_category_tree(categories)
+    category = category_map.get(category_id)
+    if not category:
+        raise ValueError("Category not found")
+    if category.category_type != direction:
+        raise ValueError("Category direction mismatch")
+
+    current_start, current_end = _get_month_bounds(year, month)
+    prev_year, prev_month = _get_previous_month(year, month)
+    previous_start, previous_end = _get_month_bounds(prev_year, prev_month)
+
+    current_tree_ids = _collect_descendant_ids(category_id, children_map)
+    current_amounts = _get_category_amounts_for_period(db, book_id, current_tree_ids, current_start, current_end, direction)
+    previous_amounts = _get_category_amounts_for_period(db, book_id, current_tree_ids, previous_start, previous_end, direction)
+
+    month_amount = _sum_category_tree_amounts(current_amounts, current_tree_ids)
+    prev_month_amount = _sum_category_tree_amounts(previous_amounts, current_tree_ids)
+    change_amount = month_amount - prev_month_amount
+
+    amount_threshold = Decimal("10")
+    rate_threshold = Decimal("5")
+
+    if prev_month_amount > 0:
+        change_rate = (change_amount / prev_month_amount) * Decimal("100")
+    else:
+        change_rate = Decimal("0")
+
+    if abs(change_amount) < amount_threshold:
+        trend_type = "STABLE"
+    elif prev_month_amount == 0 and month_amount > 0:
+        trend_type = "NEW"
+    elif month_amount == 0 and prev_month_amount > 0:
+        trend_type = "CLEARED"
+    elif abs(change_rate) < rate_threshold:
+        trend_type = "STABLE"
+    elif change_amount > 0:
+        trend_type = "INCREASE"
+    elif change_amount < 0:
+        trend_type = "DECREASE"
+    else:
+        trend_type = "STABLE"
+
+    top_contributors = _pick_top_contributors(
+        category_map=category_map,
+        current_amounts=current_amounts,
+        previous_amounts=previous_amounts,
+        child_ids=children_map.get(category_id, []),
+        children_map=children_map,
+        trend_type=trend_type,
+    )
+
+    return {
+        "categoryId": category.id,
+        "categoryName": category.name,
+        "monthAmount": float(month_amount),
+        "prevMonthAmount": float(prev_month_amount),
+        "changeAmount": float(change_amount),
+        "changeRate": float(change_rate),
+        "trendType": trend_type,
+        "topContributors": top_contributors,
+        "summaryText": _build_category_summary_text(
+            category_name=category.name,
+            direction=direction,
+            month_amount=month_amount,
+            prev_month_amount=prev_month_amount,
+            change_rate=change_rate,
+            trend_type=trend_type,
+            top_contributors=top_contributors,
+        ),
+    }
 
 
 def _parse_tag_names(raw_tags: Optional[str]) -> list[str]:

@@ -14,6 +14,7 @@ from .service import (
     get_upcoming_debts,
     get_daily_summary,
     get_monthly_comparison,
+    get_category_monthly_insight,
     get_tags_by_category,
     get_tag_detail,
 )
@@ -175,6 +176,27 @@ def monthly_comparison(
         year = today.year
 
     return get_monthly_comparison(db, bid, year)
+
+
+@router.get("/category-insight")
+def category_insight(
+    category_id: str,
+    year: int,
+    month: int,
+    direction: str = "expense",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Get category monthly insight"""
+    bid = get_current_book_id(current_user, db, book_id)
+
+    try:
+        return get_category_monthly_insight(db, bid, category_id, year, month, direction)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail == "Category not found" else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/tags-by-category")
