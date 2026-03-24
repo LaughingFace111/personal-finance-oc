@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
 import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
 const { Content } = Layout
-import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined } from '@ant-design/icons'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
 
@@ -16,6 +16,8 @@ const IncomeDistributionPage = lazy(() => import('./pages/IncomeDistributionPage
 const MonthlyComparisonPage = lazy(() => import('./pages/MonthlyComparisonPage'))
 const TagDistributionPage = lazy(() => import('./pages/TagDistributionPage'))
 const TagDetailPage = lazy(() => import('./pages/TagDetailPage'))
+const ImportTemplatesPage = lazy(() => import('./pages/ImportTemplatesPage'))
+const RecurringRulesPage = lazy(() => import('./pages/RecurringRulesPage'))
 
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
@@ -177,7 +179,7 @@ const menuItems = [
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
 const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
-    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则' }
+    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
   const year = value.getFullYear()
@@ -305,6 +307,8 @@ return (
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/import-templates" element={<Suspense fallback={<LoadingFallback />}><ImportTemplatesPage /></Suspense>} />
+            <Route path="/settings/recurring-rules" element={<Suspense fallback={<LoadingFallback />}><RecurringRulesPage /></Suspense>} />
             <Route path="/settings/rules" element={<MatchRulesPage />} />
           </Routes>
         </Content>
@@ -2554,6 +2558,29 @@ const SettingsPage = () => {
           进入规则维护
         </Button>
       </Card>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} md={12}>
+          <Card title="导入模板管理">
+            <div style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+              维护账单导入模板，统一文件格式、列映射、日期格式和收支规则。
+            </div>
+            <Button type="primary" onClick={() => navigate('/settings/import-templates')}>
+              进入模板管理
+            </Button>
+          </Card>
+        </Col>
+        <Col xs={24} md={12}>
+          <Card title="周期记账">
+            <div style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+              配置固定周期的收入或支出规则，集中管理长期重复记账事项。
+            </div>
+            <Button type="primary" onClick={() => navigate('/settings/recurring-rules')}>
+              进入周期记账
+            </Button>
+          </Card>
+        </Col>
+      </Row>
       
       <Button type="primary" danger block onClick={logout}>
         退出登录
