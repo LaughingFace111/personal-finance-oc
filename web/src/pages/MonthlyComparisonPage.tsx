@@ -5,6 +5,7 @@ import { LeftOutlined, RightOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { apiGet } from '../services/api'
 import { useAuth } from '../App'
+import { buildComparisonText, getComparisonDisplayStyle, type ComparisonEntry } from '../components/PeriodComparison'
 
 export default function MonthlyComparisonPage() {
   const { user } = useAuth()
@@ -13,17 +14,25 @@ export default function MonthlyComparisonPage() {
 
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear())
   const [yearData, setYearData] = useState<any>({})
+  const [previousYearData, setPreviousYearData] = useState<any>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (!bookId) return
     setLoading(true)
 
-    apiGet(`/api/reports/monthly-comparison?book_id=${bookId}&year=${currentYear}`)
-      .then(data => {
+    Promise.all([
+      apiGet(`/api/reports/monthly-comparison?book_id=${bookId}&year=${currentYear}`),
+      apiGet(`/api/reports/monthly-comparison?book_id=${bookId}&year=${currentYear - 1}`)
+    ])
+      .then(([data, prevData]) => {
         setYearData(data || {})
+        setPreviousYearData(prevData || {})
       })
-      .catch(() => setYearData({}))
+      .catch(() => {
+        setYearData({})
+        setPreviousYearData({})
+      })
       .finally(() => setLoading(false))
   }, [bookId, currentYear])
 
@@ -34,6 +43,63 @@ export default function MonthlyComparisonPage() {
   const totalIncome = yearData.total_income || 0
   const totalExpense = yearData.total_expense || 0
   const totalNet = yearData.total_net || 0
+  const prevTotalIncome = previousYearData.total_income || 0
+  const prevTotalExpense = previousYearData.total_expense || 0
+  const prevTotalNet = previousYearData.total_net || 0
+
+  const createYearComparisonEntry = (currentValue: number, compareValue: number): ComparisonEntry => {
+    const changeAmount = currentValue - compareValue
+
+    if (compareValue === 0) {
+      return {
+        compare_value: compareValue,
+        change_amount: changeAmount,
+        change_rate: null,
+        trend_direction: changeAmount === 0 ? 'stable' : changeAmount > 0 ? 'new' : 'decrease',
+        label: changeAmount === 0 ? '持平' : changeAmount > 0 ? '新增' : '变化',
+      }
+    }
+
+    return {
+      compare_value: compareValue,
+      change_amount: changeAmount,
+      change_rate: changeAmount / compareValue * 100,
+      trend_direction: changeAmount > 0 ? 'up' : changeAmount < 0 ? 'down' : 'stable',
+      label: changeAmount > 0 ? '上升' : changeAmount < 0 ? '下降' : '持平',
+    }
+  }
+
+  const renderYearComparison = (entry: ComparisonEntry, inverted = false) => {
+    const style = getComparisonDisplayStyle(entry.trend_direction, inverted)
+
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        marginTop: 6,
+        fontSize: 11,
+      }}>
+        <span style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          padding: '1px 6px',
+          borderRadius: 999,
+          color: style.color,
+          background: style.bg,
+          fontWeight: 600,
+        }}>
+          <span>较去年</span>
+          <span>{style.arrow}</span>
+          <span>{buildComparisonText(entry)}</span>
+        </span>
+      </div>
+    )
+  }
+
+  const incomeComparison = createYearComparisonEntry(totalIncome, prevTotalIncome)
+  const expenseComparison = createYearComparisonEntry(totalExpense, prevTotalExpense)
+  const netComparison = createYearComparisonEntry(totalNet, prevTotalNet)
 
   // 横向条形图配置
   const getChartOption = () => {
@@ -170,6 +236,7 @@ export default function MonthlyComparisonPage() {
                 <div style={{ fontSize: 16, fontWeight: 600, color: '#ff4d4f' }}>
                   ¥{totalIncome.toFixed(2)}
                 </div>
+                {renderYearComparison(incomeComparison)}
               </Card>
             </Col>
             <Col span={8}>
@@ -178,6 +245,7 @@ export default function MonthlyComparisonPage() {
                 <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>
                   ¥{totalExpense.toFixed(2)}
                 </div>
+                {renderYearComparison(expenseComparison, true)}
               </Card>
             </Col>
             <Col span={8}>
@@ -186,6 +254,7 @@ export default function MonthlyComparisonPage() {
                 <div style={{ fontSize: 16, fontWeight: 600, color: totalNet >= 0 ? '#722ed1' : '#ff4d4f' }}>
                   ¥{totalNet.toFixed(2)}
                 </div>
+                {renderYearComparison(netComparison)}
               </Card>
             </Col>
           </Row>

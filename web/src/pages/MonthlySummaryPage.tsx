@@ -6,6 +6,7 @@ import ReactECharts from 'echarts-for-react'
 import { apiGet } from '../services/api'
 import { useAuth } from '../App'
 import CategoryMonthlyInsightCard from '../components/CategoryMonthlyInsightCard'
+import PeriodComparison, { type PeriodComparisonData } from '../components/PeriodComparison'
 
 export default function MonthlySummaryPage() {
   const { user } = useAuth()
@@ -15,6 +16,11 @@ export default function MonthlySummaryPage() {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [overview, setOverview] = useState<any>({})
   const [categoryData, setCategoryData] = useState<{ expense: any[]; income: any[] }>({ expense: [], income: [] })
+  const [comparisons, setComparisons] = useState<{
+    income: PeriodComparisonData | null
+    expense: PeriodComparisonData | null
+    balance: PeriodComparisonData | null
+  }>({ income: null, expense: null, balance: null })
   const [loading, setLoading] = useState(true)
   const [viewType, setViewType] = useState<'expense' | 'income'>('expense')
 
@@ -52,16 +58,25 @@ export default function MonthlySummaryPage() {
     Promise.all([
       apiGet(`/api/reports/overview?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`),
       apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`),
-      apiGet(`/api/reports/income-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`)
-    ]).then(([overviewData, expenseData, incomeData]) => {
+      apiGet(`/api/reports/income-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`),
+      apiGet<PeriodComparisonData>(`/api/reports/period-comparison?book_id=${bookId}&year=${year}&month=${month}&type=income`),
+      apiGet<PeriodComparisonData>(`/api/reports/period-comparison?book_id=${bookId}&year=${year}&month=${month}&type=expense`),
+      apiGet<PeriodComparisonData>(`/api/reports/period-comparison?book_id=${bookId}&year=${year}&month=${month}&type=balance`)
+    ]).then(([overviewData, expenseData, incomeData, incomeComparison, expenseComparison, balanceComparison]) => {
       setOverview(overviewData || {})
       // 合并支出和收入数据
       const expenseList = (expenseData || []).map((item: any) => ({ ...item, type: 'expense' }))
       const incomeList = (incomeData || []).map((item: any) => ({ ...item, type: 'income' }))
       setCategoryData({ expense: expenseList, income: incomeList })
+      setComparisons({
+        income: incomeComparison || null,
+        expense: expenseComparison || null,
+        balance: balanceComparison || null,
+      })
     }).catch(() => {
       setOverview({})
       setCategoryData({ expense: [], income: [] })
+      setComparisons({ income: null, expense: null, balance: null })
     }).finally(() => setLoading(false))
   }, [bookId, year, month])
 
@@ -185,14 +200,17 @@ export default function MonthlySummaryPage() {
                 <div style={{ fontSize: 20, fontWeight: 600, color: net >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
                   ¥{net.toFixed(2)}
                 </div>
+                <PeriodComparison data={comparisons.balance} compact />
               </div>
               <div style={{ textAlign: 'center', flex: 1 }}>
                 <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 4 }}>收入</div>
                 <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent-green)' }}>¥{income.toFixed(2)}</div>
+                <PeriodComparison data={comparisons.income} compact />
               </div>
               <div style={{ textAlign: 'center', flex: 1 }}>
                 <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 4 }}>支出</div>
                 <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent-red)' }}>¥{expense.toFixed(2)}</div>
+                <PeriodComparison data={comparisons.expense} compact inverted />
               </div>
             </div>
             {/* 收支比例条 */}

@@ -5,6 +5,7 @@ import { LeftOutlined, RightOutlined, HomeOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { apiGet } from '../services/api'
 import { useAuth } from '../App'
+import PeriodComparison, { type PeriodComparisonData } from '../components/PeriodComparison'
 
 export default function ExpenseDistributionPage() {
   const { user } = useAuth()
@@ -13,6 +14,7 @@ export default function ExpenseDistributionPage() {
 
   const [currentDate, setCurrentDate] = useState(new Date())
   const [categoryData, setCategoryData] = useState<any[]>([])
+  const [comparison, setComparison] = useState<PeriodComparisonData | null>(null)
   const [loading, setLoading] = useState(true)
 
   const year = currentDate.getFullYear()
@@ -46,15 +48,22 @@ export default function ExpenseDistributionPage() {
     const firstDay = formatLocalDate(new Date(year, month - 1, 1))
     const lastDay = formatLocalDate(new Date(year, month, 0))
 
-    apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`)
-      .then(data => {
+    Promise.all([
+      apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`),
+      apiGet<PeriodComparisonData>(`/api/reports/period-comparison?book_id=${bookId}&year=${year}&month=${month}&type=expense`)
+    ])
+      .then(([data, comparisonData]) => {
         const list = (data || []).map((item: any) => ({
           ...item,
           amount: Number(item.net_amount)
         }))
         setCategoryData(list)
+        setComparison(comparisonData || null)
       })
-      .catch(() => setCategoryData([]))
+      .catch(() => {
+        setCategoryData([])
+        setComparison(null)
+      })
       .finally(() => setLoading(false))
   }, [bookId, year, month])
 
@@ -166,14 +175,17 @@ export default function ExpenseDistributionPage() {
       {/* 统计概览 */}
       <div style={{
         display: 'flex',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         justifyContent: 'space-between',
         marginBottom: 16,
         padding: '12px 16px',
         background: 'var(--bg-card)',
         borderRadius: 12
       }}>
-        <span style={{ fontSize: 15, fontWeight: 500 }}>支出合计</span>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 500 }}>支出合计</div>
+          <PeriodComparison data={comparison} compact inverted />
+        </div>
         <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--accent-red)' }}>
           ¥{totalExpense.toFixed(2)}
         </span>

@@ -15,6 +15,7 @@ from .service import (
     get_upcoming_debts,
     get_daily_summary,
     get_monthly_comparison,
+    get_period_comparison,
     get_category_monthly_insight,
     get_tags_by_category,
     get_tag_detail,
@@ -196,6 +197,24 @@ def monthly_comparison(
         year = today.year
 
     return get_monthly_comparison(db, bid, year)
+
+
+@router.get("/period-comparison")
+def period_comparison(
+    year: int,
+    month: int,
+    type: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Get monthly MoM/YoY comparison for a metric"""
+    bid = get_current_book_id(current_user, db, book_id)
+
+    try:
+        return get_period_comparison(db, bid, year, month, type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/category-insight")

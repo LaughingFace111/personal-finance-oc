@@ -81,6 +81,107 @@ def _format_rate(rate: Decimal) -> str:
     return text or "0"
 
 
+def _decimal_to_float(value: Decimal) -> float:
+    return float(value.quantize(Decimal("0.01")))
+
+
+def _get_period_metrics(db: Session, book_id: str, date_from: date, date_to: date) -> dict[str, Decimal]:
+    dt_from, dt_to = _datetime_range(date_from, date_to)
+
+    income = db.query(func.sum(Transaction.amount)).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.INCOME.value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+    ).scalar() or Decimal("0")
+
+    gross_expense = db.query(func.sum(Transaction.amount)).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type.in_([
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value,
+        ]),
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+    ).scalar() or Decimal("0")
+
+    refunds = db.query(
+        Transaction.related_transaction_id,
+        func.sum(Transaction.amount).label("refund_amount"),
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.REFUND.value,
+        Transaction.status == "confirmed",
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+        Transaction.related_transaction_id.isnot(None),
+    ).group_by(Transaction.related_transaction_id).all()
+
+    refund_deduction = sum((refund.refund_amount for refund in refunds), Decimal("0"))
+    net_expense = gross_expense - refund_deduction
+    balance = income - net_expense
+    total = income + net_expense
+
+    return {
+        "income": income,
+        "gross_expense": gross_expense,
+        "refund_deduction": refund_deduction,
+        "expense": net_expense,
+        "net_expense": net_expense,
+        "balance": balance,
+        "net": balance,
+        "total": total,
+    }
+
+
+def _resolve_compare_value(metrics: dict[str, Decimal], compare_type: str) -> Decimal:
+    if compare_type not in {"total", "income", "expense", "balance"}:
+        raise ValueError("compare_type must be one of total, income, expense, balance")
+    if compare_type == "balance":
+        return metrics["balance"]
+    return metrics[compare_type]
+
+
+def _build_comparison_entry(current_value: Decimal, compare_value: Decimal) -> dict:
+    change_amount = current_value - compare_value
+
+    if compare_value == 0:
+        if current_value == 0:
+            trend_direction = "stable"
+            change_rate = None
+            label = "持平"
+        elif current_value > 0:
+            trend_direction = "new"
+            change_rate = None
+            label = "新增"
+        else:
+            trend_direction = "decrease"
+            change_rate = None
+            label = "变化"
+    else:
+        change_rate = (change_amount / compare_value) * Decimal("100")
+        if change_amount > 0:
+            trend_direction = "up"
+            label = "上升"
+        elif change_amount < 0:
+            trend_direction = "down"
+            label = "下降"
+        else:
+            trend_direction = "stable"
+            label = "持平"
+
+    return {
+        "compare_value": _decimal_to_float(compare_value),
+        "change_amount": _decimal_to_float(change_amount),
+        "change_rate": float(change_rate) if change_rate is not None else None,
+        "trend_direction": trend_direction,
+        "label": label,
+    }
+
+
 def _build_category_tree(categories: list[Category]) -> tuple[dict[str, Category], dict[str, list[str]]]:
     category_map = {category.id: category for category in categories}
     children_map: dict[str, list[str]] = {}
@@ -362,46 +463,11 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
     - 支出 = expense + fee + installment_purchase - refund冲减
     - 现金流 = income + expense(资产) + fee
     """
-    # === 收入: 只计算 income 类型 ===
-    income = db.query(func.sum(Transaction.amount)).filter(
-        Transaction.book_id == book_id,
-        Transaction.transaction_type == TransactionType.INCOME.value,
-        Transaction.status == "confirmed",
-        Transaction.occurred_at >= datetime.combine(date_from, time.min),
-        Transaction.occurred_at <= datetime.combine(date_to, time.max)
-    ).scalar() or Decimal("0")
-
-    # === 支出: expense + fee + installment_purchase (毛支出) ===
-    expense_txns = db.query(func.sum(Transaction.amount)).filter(
-        Transaction.book_id == book_id,
-        Transaction.transaction_type.in_([
-            TransactionType.EXPENSE.value,
-            TransactionType.FEE.value,
-            TransactionType.INSTALLMENT_PURCHASE.value
-        ]),
-        Transaction.status == "confirmed",
-        Transaction.occurred_at >= datetime.combine(date_from, time.min),
-        Transaction.occurred_at <= datetime.combine(date_to, time.max)
-    ).scalar() or Decimal("0")
-
-    # === 退款冲减: 通过 related_transaction_id 关联 ===
-    # 查找该期间内有退款关联的消费
-    refunds = db.query(
-        Transaction.related_transaction_id,
-        func.sum(Transaction.amount).label('refund_amount')
-    ).filter(
-        Transaction.book_id == book_id,
-        Transaction.transaction_type == TransactionType.REFUND.value,
-        Transaction.status == "confirmed",
-        Transaction.occurred_at >= datetime.combine(date_from, time.min),
-        Transaction.occurred_at <= datetime.combine(date_to, time.max),
-        Transaction.related_transaction_id.isnot(None)
-    ).group_by(Transaction.related_transaction_id).all()
-
-    refund_deduction = sum(r.refund_amount for r in refunds)
-
-    # 净支出 = 毛支出 - 退款冲减
-    net_expense = expense_txns - refund_deduction
+    metrics = _get_period_metrics(db, book_id, date_from, date_to)
+    income = metrics["income"]
+    expense_txns = metrics["gross_expense"]
+    refund_deduction = metrics["refund_deduction"]
+    net_expense = metrics["net_expense"]
 
     # === 资产账户余额 ===
     asset_accounts = db.query(Account).filter(
@@ -433,7 +499,7 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
         "gross_expense": expense_txns,
         "refund_deduction": refund_deduction,
         "net_expense": net_expense,
-        "net": income - net_expense,
+        "net": metrics["net"],
         "total_assets": total_asset,
         "total_credit_debt": total_credit_debt,
         "total_loan_debt": total_loan_debt,
@@ -731,47 +797,10 @@ def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
                 # 部分在未来，使用今天作为结束日期
                 month_end = today
 
-        # 收入统计
-        income = db.query(func.sum(Transaction.amount)).filter(
-            Transaction.book_id == book_id,
-            Transaction.transaction_type == TransactionType.INCOME.value,
-            Transaction.status == "confirmed",
-            Transaction.occurred_at >= datetime.combine(month_start, time.min),
-            Transaction.occurred_at <= datetime.combine(month_end, time.max)
-        ).scalar() or Decimal("0")
-
-        # 支出统计（毛支出）
-        expense_txns = db.query(func.sum(Transaction.amount)).filter(
-            Transaction.book_id == book_id,
-            Transaction.transaction_type.in_([
-                TransactionType.EXPENSE.value,
-                TransactionType.FEE.value,
-                TransactionType.INSTALLMENT_PURCHASE.value
-            ]),
-            Transaction.status == "confirmed",
-            Transaction.occurred_at >= datetime.combine(month_start, time.min),
-            Transaction.occurred_at <= datetime.combine(month_end, time.max)
-        ).scalar() or Decimal("0")
-
-        # 退款冲减
-        refunds = db.query(
-            Transaction.related_transaction_id,
-            func.sum(Transaction.amount).label('refund_amount')
-        ).filter(
-            Transaction.book_id == book_id,
-            Transaction.transaction_type == TransactionType.REFUND.value,
-            Transaction.status == "confirmed",
-            Transaction.occurred_at >= datetime.combine(month_start, time.min),
-            Transaction.occurred_at <= datetime.combine(month_end, time.max),
-            Transaction.related_transaction_id.isnot(None)
-        ).group_by(Transaction.related_transaction_id).all()
-
-        refund_deduction = sum(r.refund_amount for r in refunds)
-        net_expense = expense_txns - refund_deduction
-
-        income_val = float(income)
-        expense_val = float(net_expense)
-        net_val = income_val - expense_val
+        metrics = _get_period_metrics(db, book_id, month_start, month_end)
+        income_val = float(metrics["income"])
+        expense_val = float(metrics["expense"])
+        net_val = float(metrics["balance"])
 
         total_income += income_val
         total_expense += expense_val
@@ -791,6 +820,49 @@ def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
         "total_income": total_income,
         "total_expense": total_expense,
         "total_net": total_net
+    }
+
+
+def get_period_comparison(
+    db: Session,
+    book_id: str,
+    year: int,
+    month: int,
+    compare_type: str,
+) -> dict:
+    if month < 1 or month > 12:
+        raise ValueError("month must be between 1 and 12")
+
+    current_start, current_end = _get_month_bounds(year, month)
+    prev_year, prev_month = _get_previous_month(year, month)
+    prev_start, prev_end = _get_month_bounds(prev_year, prev_month)
+    yoy_year = year - 1
+    yoy_start, yoy_end = _get_month_bounds(yoy_year, month)
+
+    current_metrics = _get_period_metrics(db, book_id, current_start, current_end)
+    prev_metrics = _get_period_metrics(db, book_id, prev_start, prev_end)
+    yoy_metrics = _get_period_metrics(db, book_id, yoy_start, yoy_end)
+
+    current_value = _resolve_compare_value(current_metrics, compare_type)
+    prev_value = _resolve_compare_value(prev_metrics, compare_type)
+    yoy_value = _resolve_compare_value(yoy_metrics, compare_type)
+
+    return {
+        "book_id": book_id,
+        "year": year,
+        "month": month,
+        "type": compare_type,
+        "current_value": _decimal_to_float(current_value),
+        "month_over_month": {
+            "year": prev_year,
+            "month": prev_month,
+            **_build_comparison_entry(current_value, prev_value),
+        },
+        "year_over_year": {
+            "year": yoy_year,
+            "month": month,
+            **_build_comparison_entry(current_value, yoy_value),
+        },
     }
 
 
