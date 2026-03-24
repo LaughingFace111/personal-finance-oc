@@ -12,11 +12,17 @@ from src.modules.transactions import router as transactions_router
 from src.modules.installments import router as installments_router
 from src.modules.loans import router as loans_router
 from src.modules.imports import router as imports_router
+from src.modules.import_templates import router as import_templates_router
 from src.modules.rules import router as rules_router
+from src.modules.recurring_rules import router as recurring_rules_router
+from src.modules.recurring_pending import router as recurring_pending_router
 from src.modules.reports import router as reports_router
 from src.modules.tags import router as tags_router
 from src.modules.bills import router as bills_router
 from src.modules.account_balance_snapshots import AccountBalanceSnapshot  # noqa: F401
+from src.modules.import_templates import ImportTemplate  # noqa: F401
+from src.modules.recurring_rules import RecurringRule  # noqa: F401
+from src.modules.recurring_pending import PendingItem  # noqa: F401
 
 # Create FastAPI app
 app = FastAPI(
@@ -50,7 +56,10 @@ app.include_router(transactions_router, prefix="/api")
 app.include_router(installments_router, prefix="/api")
 app.include_router(loans_router, prefix="/api")
 app.include_router(imports_router, prefix="/api")
+app.include_router(import_templates_router, prefix="/api")
 app.include_router(rules_router, prefix="/api")
+app.include_router(recurring_rules_router, prefix="/api")
+app.include_router(recurring_pending_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
 app.include_router(bills_router, prefix="/api")
