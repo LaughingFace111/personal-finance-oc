@@ -1,19 +1,28 @@
 import json
 from calendar import monthrange
+from collections import defaultdict
 from datetime import date, datetime, timedelta, time
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func, alias
+from sqlalchemy import alias, func, or_
 from sqlalchemy.orm import Session
 
-from src.common.enums import TransactionType
+from src.common.enums import AccountType, TransactionType, TransactionStatus
 from src.modules.categories.models import Category
 from src.modules.tags.models import Tag
 from src.modules.transactions.models import Transaction
 from src.modules.accounts.models import Account
 from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
 from src.modules.loans.models import LoanPlan, LoanSchedule
+
+
+ASSET_ACCOUNT_TYPES = {
+    AccountType.CASH.value,
+    AccountType.DEBIT_CARD.value,
+    AccountType.EWALLET.value,
+    AccountType.VIRTUAL.value,
+}
 
 
 def _datetime_range(date_from: date, date_to: date) -> tuple[datetime, datetime]:
@@ -937,4 +946,252 @@ def get_tag_detail(
         "category_breakdown": category_breakdown,
         "transactions": detail_items,
         "note": "一笔交易可命中多个标签，标签金额按原值分别统计，因此标签金额之和可能大于总额。",
+    }
+
+
+def _is_asset_account_type(account_type: str) -> bool:
+    return account_type in ASSET_ACCOUNT_TYPES
+
+
+def _validate_balance_trend_range(days: int) -> int:
+    if days not in (7, 30, 365):
+        raise ValueError("range must be 7, 30, or 365")
+    return days
+
+
+def _format_change_rate(change_amount: Decimal, start_balance: Decimal) -> tuple[Optional[float], str]:
+    if start_balance == 0:
+        if change_amount == 0:
+            return 0.0, "0.00%"
+        return None, "新增"
+
+    change_rate = (change_amount / start_balance) * Decimal("100")
+    return float(change_rate), f"{change_rate.quantize(Decimal('0.01'))}%"
+
+
+def _get_balance_effect_for_transaction(txn: Transaction, tracked_account_ids: set[str], asset_account_ids: set[str]) -> Decimal:
+    amount = txn.amount or Decimal("0")
+    effect = Decimal("0")
+    tx_type = txn.transaction_type
+
+    source_account_id = txn.account_id
+    counterparty_account_id = txn.counterparty_account_id
+
+    if source_account_id in tracked_account_ids and source_account_id in asset_account_ids:
+        if tx_type == TransactionType.INCOME.value:
+            effect += amount
+        elif tx_type in {
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.REPAYMENT_CREDIT_CARD.value,
+            TransactionType.REPAYMENT_LOAN.value,
+            TransactionType.INSTALLMENT_REPAYMENT.value,
+            TransactionType.DEBT_LEND.value,
+            TransactionType.DEBT_PAY_BACK.value,
+        }:
+            effect -= amount
+        elif tx_type == TransactionType.TRANSFER.value:
+            effect -= amount
+        elif tx_type in {
+            TransactionType.REFUND.value,
+            TransactionType.DEBT_BORROW.value,
+            TransactionType.DEBT_RECEIVE_BACK.value,
+        }:
+            effect += amount
+
+    if (
+        tx_type == TransactionType.TRANSFER.value
+        and counterparty_account_id in tracked_account_ids
+        and counterparty_account_id in asset_account_ids
+    ):
+        effect += amount
+
+    return effect
+
+
+def _build_daily_balance_points(
+    start_date: date,
+    end_date: date,
+    ending_balance: Decimal,
+    effects_by_day: dict[date, Decimal],
+) -> list[dict]:
+    balances_by_day = {end_date: ending_balance}
+    cursor = end_date
+    while cursor > start_date:
+        previous_day = cursor - timedelta(days=1)
+        balances_by_day[previous_day] = balances_by_day[cursor] - effects_by_day.get(cursor, Decimal("0"))
+        cursor = previous_day
+
+    points = []
+    cursor = start_date
+    while cursor <= end_date:
+        points.append({
+            "date": cursor.isoformat(),
+            "label": cursor.strftime("%m-%d"),
+            "balance": float(balances_by_day[cursor]),
+        })
+        cursor += timedelta(days=1)
+    return points
+
+
+def _month_key(value: date) -> str:
+    return value.strftime("%Y-%m")
+
+
+def _month_label(value: date) -> str:
+    return value.strftime("%Y/%m")
+
+
+def _build_month_sequence(end_date: date, total_months: int) -> list[date]:
+    months: list[date] = []
+    year = end_date.year
+    month = end_date.month
+    for _ in range(total_months):
+        months.append(date(year, month, 1))
+        if month == 1:
+            year -= 1
+            month = 12
+        else:
+            month -= 1
+    months.reverse()
+    return months
+
+
+def _build_monthly_balance_points(
+    end_date: date,
+    ending_balance: Decimal,
+    effects_by_month: dict[str, Decimal],
+) -> list[dict]:
+    months = _build_month_sequence(end_date, 12)
+    current_month = date(end_date.year, end_date.month, 1)
+    balances_by_month = {current_month: ending_balance}
+
+    for index in range(len(months) - 1, 0, -1):
+        current = months[index]
+        previous = months[index - 1]
+        balances_by_month[previous] = balances_by_month[current] - effects_by_month.get(_month_key(current), Decimal("0"))
+
+    return [
+        {
+            "date": month.isoformat(),
+            "label": _month_label(month),
+            "balance": float(balances_by_month[month]),
+        }
+        for month in months
+    ]
+
+
+def get_account_balance_trend(
+    db: Session,
+    book_id: str,
+    account_id: Optional[str] = None,
+    days: int = 30,
+):
+    days = _validate_balance_trend_range(days)
+
+    all_accounts = db.query(Account).filter(
+        Account.book_id == book_id,
+        Account.is_active == True,
+    ).order_by(Account.created_at.asc(), Account.name.asc()).all()
+    asset_accounts = [account for account in all_accounts if _is_asset_account_type(account.account_type)]
+    asset_account_ids = {account.id for account in asset_accounts}
+
+    if account_id:
+        target_account = next((account for account in asset_accounts if account.id == account_id), None)
+        if not target_account:
+            if any(account.id == account_id for account in all_accounts):
+                raise ValueError("Only asset accounts support balance trend")
+            raise ValueError("Account not found")
+        tracked_accounts = [target_account]
+        tracked_account_ids = {target_account.id}
+        view_type = "account"
+        current_balance = target_account.current_balance or Decimal("0")
+    else:
+        tracked_accounts = asset_accounts
+        tracked_account_ids = asset_account_ids
+        view_type = "total"
+        current_balance = sum(
+            ((account.current_balance or Decimal("0")) for account in tracked_accounts),
+            Decimal("0"),
+        )
+
+    end_date = date.today()
+    granularity = "month" if days == 365 else "day"
+    start_date = (
+        _build_month_sequence(end_date, 12)[0]
+        if granularity == "month"
+        else end_date - timedelta(days=days - 1)
+    )
+
+    points: list[dict]
+    if tracked_account_ids:
+        query = db.query(Transaction).filter(
+            Transaction.book_id == book_id,
+            Transaction.status == TransactionStatus.CONFIRMED.value,
+            Transaction.occurred_at >= datetime.combine(start_date, time.min),
+            Transaction.occurred_at <= datetime.combine(end_date, time.max),
+            or_(
+                Transaction.account_id.in_(tracked_account_ids),
+                Transaction.counterparty_account_id.in_(tracked_account_ids),
+            ),
+        )
+        transactions = query.all()
+    else:
+        transactions = []
+
+    if granularity == "day":
+        effects_by_day: dict[date, Decimal] = defaultdict(lambda: Decimal("0"))
+        for txn in transactions:
+            txn_date = txn.occurred_at.date()
+            effects_by_day[txn_date] += _get_balance_effect_for_transaction(
+                txn,
+                tracked_account_ids,
+                asset_account_ids,
+            )
+        points = _build_daily_balance_points(start_date, end_date, current_balance, effects_by_day)
+    else:
+        effects_by_month: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+        for txn in transactions:
+            month_start = date(txn.occurred_at.year, txn.occurred_at.month, 1)
+            effects_by_month[_month_key(month_start)] += _get_balance_effect_for_transaction(
+                txn,
+                tracked_account_ids,
+                asset_account_ids,
+            )
+        points = _build_monthly_balance_points(end_date, current_balance, effects_by_month)
+
+    start_balance = Decimal(str(points[0]["balance"])) if points else current_balance
+    change_amount = current_balance - start_balance
+    change_rate, change_rate_label = _format_change_rate(change_amount, start_balance)
+
+    return {
+        "view_type": view_type,
+        "range": days,
+        "granularity": granularity,
+        "account": (
+            {
+                "id": tracked_accounts[0].id,
+                "name": tracked_accounts[0].name,
+                "account_type": tracked_accounts[0].account_type,
+            }
+            if account_id and tracked_accounts
+            else None
+        ),
+        "accounts": [
+            {
+                "id": account.id,
+                "name": account.name,
+                "account_type": account.account_type,
+                "current_balance": float(account.current_balance or Decimal("0")),
+            }
+            for account in asset_accounts
+        ],
+        "summary": {
+            "current_balance": float(current_balance),
+            "start_balance": float(start_balance),
+            "change_amount": float(change_amount),
+            "change_rate": change_rate,
+            "change_rate_label": change_rate_label,
+        },
+        "points": points,
     }

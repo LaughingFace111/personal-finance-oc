@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { Card, Row, Col } from 'antd'
-import { PieChartOutlined, DotChartOutlined, TableOutlined } from '@ant-design/icons'
+import { PieChartOutlined, DotChartOutlined, TableOutlined, LineChartOutlined } from '@ant-design/icons'
 
 const reports = [
   {
@@ -37,6 +37,13 @@ const reports = [
     path: '/reports/tag-distribution',
     icon: <PieChartOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
     desc: '分析标签维度金额分布'
+  },
+  {
+    key: 'account-balance-trend',
+    title: '账户余额趋势',
+    path: '/reports/account-balance-trend',
+    icon: <LineChartOutlined style={{ fontSize: 32, color: '#13c2c2' }} />,
+    desc: '查看账户资产变化趋势'
   }
 ]
 

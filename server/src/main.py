@@ -16,6 +16,7 @@ from src.modules.rules import router as rules_router
 from src.modules.reports import router as reports_router
 from src.modules.tags import router as tags_router
 from src.modules.bills import router as bills_router
+from src.modules.account_balance_snapshots import AccountBalanceSnapshot  # noqa: F401
 
 # Create FastAPI app
 app = FastAPI(

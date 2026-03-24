@@ -7,6 +7,7 @@ from src.modules.auth.models import User
 from src.modules.books.service import get_default_book, create_book
 
 from .service import (
+    get_account_balance_trend,
     get_overview,
     get_expense_by_category,
     get_income_by_category,
@@ -97,6 +98,25 @@ def accounts_summary(
     """Get accounts summary"""
     bid = get_current_book_id(current_user, db, book_id)
     return get_accounts_summary(db, bid)
+
+
+@router.get("/account-balance-trend")
+def account_balance_trend(
+    range: int = 30,
+    account_id: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Get account balance trend report"""
+    bid = get_current_book_id(current_user, db, book_id)
+
+    try:
+        return get_account_balance_trend(db, bid, account_id=account_id, days=range)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 404 if detail == "Account not found" else 400
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/upcoming-debts")
