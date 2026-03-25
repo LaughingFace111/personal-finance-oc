@@ -1015,59 +1015,66 @@ const TransactionsPage = () => {
           dataSource={data} 
           renderItem={item => (
             <List.Item 
-              style={{ padding: '12px 0', cursor: 'pointer', background: selectedIds.includes(item.id) ? 'var(--bg-elevated)' : undefined }}
+              style={{ padding: '12px 16px', cursor: 'pointer', background: selectedIds.includes(item.id) ? 'var(--bg-elevated)' : undefined }}
               onClick={() => handleItemClick(item)}
             >
               {selectionMode !== 'none' && (
                 <Checkbox 
                   checked={selectedIds.includes(item.id)} 
                   onChange={() => toggleSelect(item.id)}
-                  style={{ marginRight: 8 }}
+                  style={{ marginRight: 12 }}
                   onClick={e => e.stopPropagation()}
                 />
               )}
-              <div style={{ flex: 1 }}>
-                <div>
-                  {/* 已退款的原交易显示 <已退款> 标记 */}
-                  {item.has_refund && (
-                    <span style={{ color: '#1890ff', fontSize: 12, marginRight: 4 }}>&lt;已退款&gt;</span>
-                  )}
-                  {/* 退款交易显示 <退款> 标记 */}
-                  {item.transaction_type === 'refund' && (
-                    <span style={{ color: '#52c41a', fontSize: 12, marginRight: 4 }}>&lt;退款&gt;</span>
-                  )}
-                  {getCategoryName(item.category_id) || item.merchant || item.note || '-'}
+              {/* 左侧信息区 */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* 第一层：二级分类名称 - 最醒目 */}
+                <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {getCategoryName(item.category_id) || item.merchant || '-'}
                 </div>
-                <div style={{ fontSize: 12, color: '#999' }}>
-                  {new Date(item.occurred_at).toLocaleDateString()}
-                  {/* 显示标签（使用继承颜色） */}
-                  {(() => {
-                    let tagNames: string[] = []
-                    if (item.tags) {
-                      try {
-                        tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags
-                      } catch {}
-                    }
-                    if (tagNames.length > 0) {
-                      return tagNames.map((name: string, idx: number) => {
-                        // 查找标签所属的一级标签颜色
-                        const tag = tags.find((t: any) => t.name === name)
-                        let color = tag?.color || 'blue'
-                        // 如果是二级标签，查找其父级颜色
-                        if (tag?.parent_id) {
-                          const parent = tags.find((t: any) => t.id === tag.parent_id)
-                          if (parent?.color) color = parent.color
-                        }
-                        return <Tag key={idx} color={color} style={{ marginLeft: 4 }}>{name}</Tag>
-                      })
-                    }
-                    return null
-                  })()}
-                </div>
+                {/* 第二层：备注 - 浅色小字，单行省略 */}
+                {item.note && (
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {item.note}
+                  </div>
+                )}
+                {/* 第三层：标签区 - 紧凑展示 */}
+                {(() => {
+                  let tagNames: string[] = []
+                  if (item.tags) {
+                    try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
+                  }
+                  if (tagNames.length > 0) {
+                    const displayTags = tagNames.slice(0, 2)
+                    const remainingCount = tagNames.length - 2
+                    return (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {displayTags.map((name: string, idx: number) => {
+                          const tag = tags.find((t: any) => t.name === name)
+                          let color = tag?.color || 'blue'
+                          if (tag?.parent_id) {
+                            const parent = tags.find((t: any) => t.id === tag.parent_id)
+                            if (parent?.color) color = parent.color
+                          }
+                          return <Tag key={idx} color={color} style={{ fontSize: 12, padding: '0 6px', margin: 0 }}>{name}</Tag>
+                        })}
+                        {remainingCount > 0 && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>+{remainingCount}</span>}
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
-              <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 500 }}>
-                {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
-                {/* 退款交易不再额外显示标签，因为备注已包含 <退款> */}
+              {/* 右侧金额区 */}
+              <div style={{ textAlign: 'right', marginLeft: 16, flexShrink: 0 }}>
+                {/* 第一层：金额 - 大字，右对齐 */}
+                <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 600, fontSize: 16, lineHeight: 1.4 }}>
+                  {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
+                </div>
+                {/* 第二层：账户 - 浅色小字，右对齐 */}
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.account_name || item.account_id?.slice(0, 8) || '-'}
+                </div>
               </div>
             </List.Item>
           )} 
