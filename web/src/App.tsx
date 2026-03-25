@@ -783,6 +783,7 @@ const TransactionsPage = () => {
   // 标签筛选
   const [tags, setTags] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
   
   // 批量操作状态
@@ -790,15 +791,17 @@ const TransactionsPage = () => {
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
 
-  // 加载标签和分类列表
+  // 加载标签、分类和账户列表
   useEffect(() => {
     if (!bookId) return
     Promise.all([
       apiGet(`/api/tags?book_id=${bookId}`),
-      apiGet(`/api/categories?book_id=${bookId}`)
-    ]).then(([t, c]) => { 
+      apiGet(`/api/categories?book_id=${bookId}`),
+      apiGet(`/api/accounts?book_id=${bookId}`)
+    ]).then(([t, c, a]) => { 
       setTags(t || [])
       setCategories(c || [])
+      setAccounts(a || [])
     }).catch(() => {})
   }, [bookId])
 
@@ -812,6 +815,13 @@ const TransactionsPage = () => {
       return parent ? `${parent.name}-${cat.name}` : cat.name
     }
     return cat.name
+  }
+
+  // 获取账户名称
+  const getAccountName = (accountId: string) => {
+    if (!accountId) return ''
+    const acc = accounts.find((a: any) => a.id === accountId)
+    return acc?.name || ''
   }
 
   const loadData = () => {
@@ -1073,7 +1083,7 @@ const TransactionsPage = () => {
                 </div>
                 {/* 第二层：账户 - 浅色小字，右对齐 */}
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {item.account_name || item.account_id?.slice(0, 8) || '-'}
+                  {getAccountName(item.account_id) || item.account_id?.slice(0, 8) || '-'}
                 </div>
               </div>
             </List.Item>
