@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from src.core import get_db, success_response
 from src.core.auth import get_current_user
+from src.core.logger import log_audit, log_business
 
 from .schemas import LoginRequest, LoginResponse, UserCreate, UserResponse
 from .service import authenticate_user, create_user, create_token, get_user_by_id, update_user
@@ -20,7 +21,7 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginRequest, db: Session = Depends(get_db), request: Request = None):
     """Login user"""
     user = authenticate_user(db, data.email, data.password)
     token = create_token(user)
@@ -28,6 +29,16 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     default_book = get_default_book(db, user.id)
     if default_book:
         user.default_book_id = default_book.id
+    
+    # 记录审计日志
+    log_audit(
+        action="login",
+        user_id=user.id,
+        resource_type="user",
+        resource_id=user.id,
+        details={"email": user.email},
+    )
+    
     return LoginResponse(
         access_token=token,
         user=user

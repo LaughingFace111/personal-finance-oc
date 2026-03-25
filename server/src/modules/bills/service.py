@@ -273,6 +273,22 @@ def _direction_to_type(direction: str) -> str:
     return "income" if direction == "in" else "expense"
 
 
+def _validate_parsed_item(item: ParsedBillItem) -> List[str]:
+    """校验 ParsedBillItem，返回错误列表"""
+    errors = []
+    if not item.billDate:
+        errors.append("日期不能为空")
+    if not item.amount or item.amount <= 0:
+        errors.append("金额必须大于0")
+    if not item.matchedAccountId:
+        errors.append("账户未匹配")
+    if not item.categoryId:
+        errors.append("分类未匹配")
+    if not item.direction:
+        errors.append("方向不能为空")
+    return errors
+
+
 def confirm_import(
     db: Session,
     user_id: str,
@@ -306,6 +322,15 @@ def confirm_import(
         if not row:
             skipped_rows += 1
             warnings.append(f"{item.tempId} 未找到对应缓冲记录，已跳过")
+            continue
+
+        # 预校验
+        validation_errors = _validate_parsed_item(item)
+        if validation_errors:
+            row.confirm_status = "skipped"
+            row.error_message = f"数据校验失败: {'; '.join(validation_errors)}"
+            skipped_rows += 1
+            warnings.append(f"{item.tempId} 校验失败: {'; '.join(validation_errors)}")
             continue
 
         row.normalized_data = json.dumps(item.model_dump(mode="json"), ensure_ascii=False)

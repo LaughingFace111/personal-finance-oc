@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from src.core import get_db
 from src.core.auth import get_current_user
+from src.core.logger import log_audit, log_business
 from src.modules.auth.models import User
 
 from .schemas import BillImportResponse, ConfirmImportRequest, ConfirmImportResponse, MatchBillRequest, ParseBillResponse
@@ -81,9 +82,32 @@ def confirm_bills_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return confirm_import(
+    result = confirm_import(
         db=db,
         user_id=current_user.id,
         parse_id=data.parseId,
         confirmed_items=data.confirmedItems,
     )
+    
+    # 记录审计日志
+    log_audit(
+        action="bill_import",
+        user_id=current_user.id,
+        resource_type="bill_import",
+        resource_id=data.parseId,
+        details={
+            "total_items": result.totalItems,
+            "imported_rows": result.importedRows,
+            "duplicate_rows": result.duplicateRows,
+            "skipped_rows": result.skippedRows,
+            "error_rows": result.errorRows,
+        },
+    )
+    
+    log_business(
+        action="bill_import",
+        message=f"导入账单: 导入 {result.importedRows} 条，跳过 {result.skippedRows} 条",
+        user_id=current_user.id,
+    )
+    
+    return result

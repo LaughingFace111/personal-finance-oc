@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from src.core import get_db
 from src.core.auth import get_current_user
+from src.core.logger import log_audit, log_business
 from src.modules.auth.models import User
 
 from .schemas import (
@@ -54,7 +55,22 @@ def create(
 ):
     """Create new transaction"""
     bid = get_current_book_id(current_user, db, book_id)
-    return create_transaction(db, bid, data)
+    result = create_transaction(db, bid, data)
+    
+    # 记录审计日志
+    log_audit(
+        action="create_transaction",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=result.id,
+        details={
+            "amount": str(result.amount),
+            "direction": result.direction.value if hasattr(result.direction, 'value') else str(result.direction),
+            "merchant": result.merchant,
+        },
+    )
+    
+    return result
 
 
 @router.post("/transfer", response_model=List[TransactionResponse])

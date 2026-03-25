@@ -2,11 +2,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from src.common.enums import TransactionType, TransactionDirection, TransactionStatus, SourceType
 
 
 class TransactionBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # 禁止额外字段
+
     occurred_at: datetime
     posted_at: Optional[datetime] = None
     transaction_type: TransactionType
@@ -30,11 +32,15 @@ class TransactionBase(BaseModel):
 
 
 class TransactionCreate(TransactionBase):
+    model_config = ConfigDict(extra="forbid")  # 禁止额外字段
+
     account_id: str
     counterparty_account_id: Optional[str] = None
 
 
 class TransactionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # 禁止额外字段
+
     occurred_at: Optional[datetime] = None
     posted_at: Optional[datetime] = None
     amount: Optional[Decimal] = Field(None, gt=0)
