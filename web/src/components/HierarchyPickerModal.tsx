@@ -20,6 +20,15 @@ interface HierarchyPickerModalProps {
   onConfirm: (nextValue: string | string[]) => void;
 }
 
+// 将数组按每3个一组分组
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
+
 export function HierarchyPickerModal({
   open,
   title,
@@ -71,10 +80,15 @@ export function HierarchyPickerModal({
   // 切换选中状态
   const toggleSelect = (id: string, isChild: boolean = false) => {
     if (multiple) {
-      // 多选模式（标签）
-      setDraftValue((current) =>
-        current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-      );
+      // 多选模式（标签）- 只有点击二级标签才切换选中状态
+      if (isChild) {
+        setDraftValue((current) =>
+          current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+        );
+      } else {
+        // 点击一级标签只展开/收起，不选中
+        toggleExpand(id);
+      }
     } else {
       // 单选模式（分类）- 只有点击二级分类才选中并关闭
       if (isChild) {
@@ -87,42 +101,50 @@ export function HierarchyPickerModal({
     }
   };
 
-  // 渲染一级分类卡片（分类模式）
-  const renderCategoryParentCard = (item: HierarchyItem, isExpanded: boolean) => {
+  // 渲染一级分类卡片
+  const renderParentCard = (item: HierarchyItem, isExpanded: boolean) => {
     const isSelected = draftValue.includes(item.id);
+    const tagColor = item.color || 'blue';
+    
     return (
       <button
         key={item.id}
         type="button"
         onClick={() => toggleSelect(item.id, false)}
         style={{
-          minWidth: '80px',
-          padding: '10px 16px',
-          border: isSelected ? '1.5px solid var(--accent-color)' : '1px solid var(--border-color)',
+          flex: '1 1 0',
+          minWidth: 0,
+          padding: '10px 8px',
+          border: isSelected ? `1.5px solid ${isTagMode ? tagColor : 'var(--accent-color)'}` : '1px solid var(--border-color)',
           borderRadius: '12px',
-          background: isSelected ? 'rgba(22, 119, 255, 0.12)' : 'var(--bg-elevated)',
+          background: isSelected ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)') : 'var(--bg-elevated)',
           color: 'var(--text-primary)',
           cursor: 'pointer',
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: 600,
           transition: 'all 0.2s ease',
-          display: 'inline-flex',
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 6,
+          gap: 4,
         }}
       >
-        {item.name}
-        <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
+        {isTagMode && (
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
+        )}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
           {isExpanded ? '▼' : '▶'}
         </span>
       </button>
     );
   };
 
-  // 渲染二级分类卡片（分类模式）
-  const renderCategoryChildCard = (item: HierarchyItem) => {
+  // 渲染二级分类卡片
+  const renderChildCard = (item: HierarchyItem) => {
     const isSelected = draftValue.includes(item.id);
+    const tagColor = item.color || 'blue';
+    
     return (
       <button
         key={item.id}
@@ -130,75 +152,10 @@ export function HierarchyPickerModal({
         onClick={() => toggleSelect(item.id, true)}
         style={{
           minWidth: '70px',
-          padding: '8px 14px',
-          border: isSelected ? '1.5px solid var(--accent-color)' : '1px solid var(--border-color)',
+          padding: '8px 12px',
+          border: isSelected ? `1.5px solid ${isTagMode ? tagColor : 'var(--accent-color)'}` : '1px solid var(--border-color)',
           borderRadius: '10px',
-          background: isSelected ? 'rgba(22, 119, 255, 0.12)' : 'var(--bg-card)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer',
-          fontSize: 13,
-          fontWeight: 500,
-          transition: 'all 0.2s ease',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {item.name}
-      </button>
-    );
-  };
-
-  // 渲染父标签卡片（标签模式）
-  const renderTagParentCard = (item: HierarchyItem, isExpanded: boolean) => {
-    const isSelected = draftValue.includes(item.id);
-    const tagColor = item.color || 'blue';
-    return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => toggleSelect(item.id, false)}
-        style={{
-          minWidth: '70px',
-          padding: '8px 14px',
-          border: isSelected ? `1.5px solid ${tagColor}` : '1px solid var(--border-color)',
-          borderRadius: '12px',
-          background: isSelected ? `${tagColor}15` : 'var(--bg-elevated)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer',
-          fontSize: 13,
-          fontWeight: 600,
-          transition: 'all 0.2s ease',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 6,
-        }}
-      >
-        <span style={{ width: 10, height: 10, borderRadius: '50%', background: tagColor }} />
-        {item.name}
-        <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>
-          {isExpanded ? '▼' : '▶'}
-        </span>
-      </button>
-    );
-  };
-
-  // 渲染子标签卡片（标签模式）
-  const renderTagChildCard = (item: HierarchyItem) => {
-    const isSelected = draftValue.includes(item.id);
-    const tagColor = item.color || 'blue';
-    return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => toggleSelect(item.id, true)}
-        style={{
-          minWidth: '60px',
-          padding: '6px 12px',
-          border: isSelected ? `1.5px solid ${tagColor}` : '1px solid var(--border-color)',
-          borderRadius: '10px',
-          background: isSelected ? `${tagColor}15` : 'var(--bg-card)',
+          background: isSelected ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)') : 'var(--bg-card)',
           color: 'var(--text-primary)',
           cursor: 'pointer',
           fontSize: 12,
@@ -211,12 +168,24 @@ export function HierarchyPickerModal({
         }}
       >
         {isSelected && (
-          <span style={{ color: tagColor, fontSize: 10 }}>✓</span>
+          <span style={{ color: isTagMode ? tagColor : 'var(--accent-color)', fontSize: 10, fontWeight: 'bold' }}>✓</span>
         )}
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor }} />
-        {item.name}
+        {isTagMode && (
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
+        )}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
       </button>
     );
+  };
+
+  // 将有二级的一级分类按每3个一组分组
+  const groupedRows = useMemo(() => {
+    return chunkArray(groups, 3);
+  }, [groups]);
+
+  // 检查某个parentId是否在当前行中
+  const isParentInRow = (row: typeof groups, parentId: string) => {
+    return row.some(g => g.parent.id === parentId);
   };
 
   // 渲染内容
@@ -238,94 +207,66 @@ export function HierarchyPickerModal({
       );
     }
 
-    // 渲染一级分类卡片容器（带展开效果）
-    const renderCards = (parentCards: React.ReactNode[], childContainers: React.ReactNode[]) => {
-      return parentCards.map((card, idx) => (
-        <div key={idx}>
-          {card}
-          {childContainers[idx]}
-        </div>
-      ));
-    };
-
-    const parentCards: React.ReactNode[] = [];
-    const childContainers: React.ReactNode[] = [];
-
-    // 有二级的一级分类
-    groups.forEach(({ parent, children }) => {
-      parentCards.push(
-        isTagMode
-          ? renderTagParentCard(parent, expandedParentId === parent.id)
-          : renderCategoryParentCard(parent, expandedParentId === parent.id)
-      );
-      
-      if (expandedParentId === parent.id && children.length > 0) {
-        childContainers.push(
-          <div
-            key={parent.id}
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 8,
-              padding: 12,
-              background: 'var(--bg-card)',
-              borderRadius: 12,
-              marginTop: 8,
-              marginBottom: 8,
-              animation: 'fadeIn 0.2s ease',
-            }}
-          >
-            {children.map((child) =>
-              isTagMode ? renderTagChildCard(child) : renderCategoryChildCard(child)
-            )}
-          </div>
-        );
-      } else {
-        childContainers.push(null);
-      }
-    });
-
-    // 无二级的一级分类（平铺）
-    if (singles.length > 0) {
-      const singleCards = singles.map((item) =>
-        isTagMode ? renderTagParentCard(item, false) : renderCategoryParentCard(item, false)
-      );
-      
-      if (isTagMode) {
-        parentCards.push(
-          <div key="singles" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {singleCards}
-          </div>
-        );
-        childContainers.push(null);
-      } else {
-        parentCards.push(
-          <div key="singles" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {singleCards}
-          </div>
-        );
-        childContainers.push(null);
-      }
-    }
-
-    // 未分组的二级标签
-    if (orphans.length > 0 && isTagMode) {
-      parentCards.push(
-        <div key="orphans" style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {orphans.map((item) => renderTagChildCard(item))}
-        </div>
-      );
-      childContainers.push(null);
-    }
-
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {parentCards.map((card, idx) => (
-          <div key={idx}>
-            {card}
-            {childContainers[idx]}
+        {/* 有二级的一级分类 - 每3个一行 */}
+        {groupedRows.map((row, rowIdx) => {
+          const hasExpandedInRow = row.some(g => g.parent.id === expandedParentId);
+          
+          return (
+            <div key={`row-${rowIdx}`}>
+              {/* 一级分类行 */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                }}
+              >
+                {row.map(({ parent, children }) => 
+                  renderParentCard(parent, expandedParentId === parent.id)
+                )}
+              </div>
+              
+              {/* 展开的二级分类容器 - 出现在包含展开项的行下方 */}
+              {hasExpandedInRow && expandedParentId && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 8,
+                    padding: 12,
+                    background: 'var(--bg-card)',
+                    borderRadius: 12,
+                    marginTop: 8,
+                    border: '1px solid var(--border-light)',
+                    animation: 'fadeIn 0.2s ease',
+                  }}
+                >
+                  {groups
+                    .find(g => g.parent.id === expandedParentId)
+                    ?.children.map(child => renderChildCard(child))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* 无二级的一级分类 - 每3个一行 */}
+        {singles.length > 0 && (() => {
+          const singleRows = chunkArray(singles, 3);
+          return singleRows.map((row, rowIdx) => (
+            <div key={`single-${rowIdx}`} style={{ display: 'flex', gap: 8 }}>
+              {row.map(item => renderParentCard(item, false))}
+            </div>
+          ));
+        })()}
+
+        {/* 未分组的二级标签 */}
+        {orphans.length > 0 && isTagMode && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {orphans.map(item => renderChildCard(item))}
           </div>
-        ))}
+        )}
       </div>
     );
   };
@@ -350,7 +291,7 @@ export function HierarchyPickerModal({
           </div>
         ) : null
       }
-      width={420}
+      width={440}
       closable={!multiple}
       maskClosable={!multiple}
     >
