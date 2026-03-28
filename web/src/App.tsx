@@ -1376,15 +1376,15 @@ const AccountsPage = () => {
   // 判断是否为信用类账户
   const isCreditAccount = (type: string) => ['credit_card', 'credit_line'].includes(type)
   
-  // 计算信用账户剩余额度
+  // 计算信用账户可用额度
   const getCreditDisplay = (item: any) => {
     if (isCreditAccount(item.account_type)) {
       const limit = Number(item.credit_limit || 0)
-      // 剩余额度 = 信用额度 - 当前欠款 - 初始欠款(opening_balance)
+      // 可用额度 = 信用额度 - 当前欠款(debt_amount) - 初始欠款(opening_balance)
+      // 注：新建账户时 initial_debt 存入 debt_amount，所以直接用 debt_amount
       const debt = Number(item.debt_amount || 0)
-      const initialDebt = Number(item.opening_balance || 0)
-      const remaining = limit - debt - initialDebt
-      return { remaining, limit, debt, initialDebt }
+      const remaining = limit - debt
+      return { remaining, limit, debt }
     }
     return null
   }
@@ -1528,7 +1528,7 @@ const AccountDetailPage = () => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
               <span style={{ color: 'var(--text-secondary)' }}>可用额度:</span>
-              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.opening_balance || 0)).toFixed(2)}</span>
+              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
             </div>
             {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
