@@ -317,7 +317,7 @@ export function TransactionBottomDrawer({
             paddingBottom: 24
           }}>
             {/* 支出/收入切换 */}
-            <div style={{ display: 'flex', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'center', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
               <div
                 onClick={() => { setForm(f => ({ ...f, type: 'expense' })); setErrors({}) }}
                 style={{
