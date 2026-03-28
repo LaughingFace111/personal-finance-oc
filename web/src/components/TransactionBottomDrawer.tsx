@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
-import { apiPatch } from '../services/api'
+import { apiPatch, apiDelete, apiPost } from '../services/api'
 import { HierarchyPickerModal } from './HierarchyPickerModal'
 
 interface TransactionBottomDrawerProps {
@@ -160,12 +160,13 @@ export function TransactionBottomDrawer({
     if (!confirm('确定要删除这条交易吗？')) return
     setLoading(true)
     try {
-      await (window as any).apiDelete(`/api/transactions/${transaction.id}?book_id=${bookId}`)
+      await apiDelete(`/api/transactions/${transaction.id}?book_id=${bookId}`)
       message.success('删除成功')
       onRefresh()
       onClose()
-    } catch {
-      message.error('删除失败')
+    } catch (err: any) {
+      console.error('删除失败详细:', err)
+      message.error('删除失败: ' + (err?.message || err?.detail || '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -181,7 +182,7 @@ export function TransactionBottomDrawer({
     if (!confirm(`确定要退款 ¥${Number(transaction.amount).toFixed(2)} 吗？`)) return
     setLoading(true)
     try {
-      await (window as any).apiPost('/api/transactions/refund', {
+      await apiPost('/api/transactions/refund', {
         book_id: bookId,
         original_transaction_id: transaction.id,
         refund_account_id: transaction.account_id,
@@ -191,8 +192,9 @@ export function TransactionBottomDrawer({
       message.success('退款成功')
       onRefresh()
       onClose()
-    } catch {
-      message.error('退款失败')
+    } catch (err: any) {
+      console.error('退款失败详细:', err)
+      message.error('退款失败: ' + (err?.message || err?.detail || '未知错误'))
     } finally {
       setLoading(false)
     }
@@ -208,21 +210,24 @@ export function TransactionBottomDrawer({
         : null
       const payload = {
         transaction_type: form.type === 'income' ? 'income' : 'expense',
-        amount: Number(form.amount),
         direction: form.type === 'income' ? 'in' : 'out',
+        amount: parseFloat(form.amount),
         account_id: form.account_id,
         category_id: form.category_id || null,
         note: form.note,
         occurred_at: new Date().toISOString(),
-        book_id: bookId,
+        include_in_expense: true,
+        include_in_income: true,
+        include_in_cashflow: true,
         tags: tagsJson
       }
-      await (window as any).apiPost('/api/transactions', payload)
+      await apiPost('/api/transactions?book_id=' + bookId, payload)
       message.success('已复制到今天')
       onRefresh()
       onClose()
-    } catch {
-      message.error('复制失败')
+    } catch (err: any) {
+      console.error('复制失败详细:', err)
+      message.error('复制失败: ' + (err?.message || err?.detail || '未知错误'))
     } finally {
       setSubmitting(false)
     }
