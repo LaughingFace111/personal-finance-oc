@@ -1412,7 +1412,7 @@ const AccountsPage = () => {
                   <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
                   {creditInfo ? (
                     <div style={{ marginTop: 8 }}>
-                      <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>剩余 ¥{creditInfo.remaining.toFixed(2)}</div>
+                      <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>可用 ¥{creditInfo.remaining.toFixed(2)}</div>
                       <div style={{ fontSize: 12, color: '#999' }}>额度: ¥{creditInfo.limit.toFixed(2)}</div>
                     </div>
                   ) : (
@@ -1527,8 +1527,8 @@ const AccountDetailPage = () => {
               <span style={{ color: 'var(--accent-red)', fontWeight: 500 }}>¥{Number(account.debt_amount || 0).toFixed(2)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>剩余额度:</span>
-              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>可用额度:</span>
+              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.opening_balance || 0)).toFixed(2)}</span>
             </div>
             {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
