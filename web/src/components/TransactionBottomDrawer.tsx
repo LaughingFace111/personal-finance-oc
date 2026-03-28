@@ -130,15 +130,13 @@ export function TransactionBottomDrawer({
       const tagsJson = selectedTagIds.length > 0
         ? JSON.stringify(selectedTagIds.map(id => tags.find((t: any) => t.id === id)?.name || '').filter(Boolean))
         : null
+      // 只发送 TransactionUpdate schema 中允许的字段
       const payload = {
-        transaction_type: form.type === 'income' ? 'income' : 'expense',
         amount: Number(form.amount),
-        direction: form.type === 'income' ? 'in' : 'out',
         account_id: form.account_id,
         category_id: form.category_id || null,
         note: form.note,
         occurred_at: form.occurred_at ? new Date(form.occurred_at).toISOString() : new Date().toISOString(),
-        book_id: bookId,
         tags: tagsJson
       }
       await (window as any).apiPatch(`/api/transactions/${transaction.id}`, payload)

@@ -116,7 +116,9 @@ export default function AddTransactionPage() {
         category_id: categoryId,
         note: memo,
         occurred_at: toOccurredAt(date),
-        book_id: bookId,
+        include_in_expense: true,
+        include_in_income: true,
+        include_in_cashflow: true,
         tags: tagIds.length > 0 ? JSON.stringify(tagIds) : null
       };
 
