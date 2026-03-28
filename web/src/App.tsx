@@ -46,18 +46,17 @@ const AuthContext = createContext<AuthContextType>({
 export const useAuth = () => useContext(AuthContext)
 
 const LoginPage = () => {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState<{email?: string; password?: string}>({})
+  const [errors, setErrors] = useState<{username?: string; password?: string}>({})
   const { login } = useAuth()
   const navigate = useNavigate()
   const from = (useLocation().state as any)?.from?.pathname || '/dashboard'
 
   const validate = () => {
-    const newErrors: {email?: string; password?: string} = {}
-    if (!email.trim()) newErrors.email = '请输入邮箱'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = '邮箱格式错误'
+    const newErrors: {username?: string; password?: string} = {}
+    if (!username.trim()) newErrors.username = '请输入用户名'
     if (!password) newErrors.password = '请输入密码'
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -70,7 +69,7 @@ const LoginPage = () => {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ username, password }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -90,8 +89,8 @@ const LoginPage = () => {
       <Card style={{ width: '100%', maxWidth: 400, borderRadius: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
         <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: 24 }}>个人记账</h2>
         <div style={{ marginBottom: 16 }}>
-          <input style={{ width: '100%', padding: '12px', borderRadius: 8, border: errors.email ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="邮箱" value={email} onChange={e => { setEmail(e.target.value); setErrors({...errors, email: undefined}) }} />
-          {errors.email && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.email}</div>}
+          <input style={{ width: '100%', padding: '12px', borderRadius: 8, border: errors.username ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="用户名" value={username} onChange={e => { setUsername(e.target.value); setErrors({...errors, username: undefined}) }} />
+          {errors.username && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.username}</div>}
         </div>
         <div style={{ marginBottom: 24 }}>
           <input type="password" style={{ width: '100%', padding: '12px', borderRadius: 8, border: errors.password ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="密码" value={password} onChange={e => { setPassword(e.target.value); setErrors({...errors, password: undefined}) }} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
@@ -105,18 +104,17 @@ const LoginPage = () => {
 }
 
 const RegisterPage = () => {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPwd, setConfirmPwd] = useState('')
   const [nickname, setNickname] = useState('')
   const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState<{email?: string; password?: string; confirmPwd?: string}>({})
+  const [errors, setErrors] = useState<{username?: string; password?: string; confirmPwd?: string}>({})
   const navigate = useNavigate()
 
   const validate = () => {
     const newErrors: typeof errors = {}
-    if (!email.trim()) newErrors.email = '请输入邮箱'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) newErrors.email = '邮箱格式错误'
+    if (!username.trim()) newErrors.username = '请输入用户名'
     if (!password) newErrors.password = '请输入密码'
     else if (password.length < 6) newErrors.password = '密码至少6位'
     if (password !== confirmPwd) newErrors.confirmPwd = '两次密码不一致'
@@ -128,7 +126,7 @@ const RegisterPage = () => {
     if (!validate()) return
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, nickname: nickname || undefined }) })
+      const res = await fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, nickname: nickname || undefined }) })
       const data = await res.json()
       if (res.ok) { message.success('注册成功，请登录'); navigate('/login') }
       else { message.error(data.detail || '注册失败') }
@@ -140,8 +138,8 @@ const RegisterPage = () => {
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <Card style={{ width: '100%', maxWidth: 400, borderRadius: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
         <h2 style={{ textAlign: 'center', marginBottom: 24, fontSize: 24 }}>注册账号</h2>
-        <input style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 8, border: errors.email ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="邮箱" value={email} onChange={e => { setEmail(e.target.value); setErrors({...errors, email: undefined}) }} />
-        {errors.email && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: -8, marginBottom: 8 }}>{errors.email}</div>}
+        <input style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 8, border: errors.username ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="用户名" value={username} onChange={e => { setUsername(e.target.value); setErrors({...errors, username: undefined}) }} />
+        {errors.username && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: -8, marginBottom: 8 }}>{errors.username}</div>}
         <input style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 8, border: '1px solid #d9d9d9' }} placeholder="昵称（可选）" value={nickname} onChange={e => setNickname(e.target.value)} />
         <input type="password" style={{ width: '100%', padding: '12px', marginBottom: 12, borderRadius: 8, border: errors.password ? '1px solid #ff4d4f' : '1px solid #d9d9d9' }} placeholder="密码（至少6位）" value={password} onChange={e => { setPassword(e.target.value); setErrors({...errors, password: undefined}) }} />
         {errors.password && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: -8, marginBottom: 8 }}>{errors.password}</div>}
