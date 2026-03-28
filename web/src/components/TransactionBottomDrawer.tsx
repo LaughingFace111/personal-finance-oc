@@ -267,7 +267,7 @@ export function TransactionBottomDrawer({
       onClose={onClose}
       placement="bottom"
       height="80vh"
-      styles={{ body: { padding: 0 } }}
+      styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
       onOpenChange={(open) => !open && onClose()}
       // 禁止左右滑动，只能上下滑动
       push={{ distance: 0 }}
@@ -277,13 +277,14 @@ export function TransactionBottomDrawer({
         <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
       ) : (
         <>
-          {/* 顶部操作按钮 */}
+          {/* Header 区域 - 固定不滚动 */}
           <div style={{ 
             display: 'flex', 
             justifyContent: 'space-between', 
             alignItems: 'center',
             padding: '12px 16px',
-            borderBottom: '1px solid var(--border-light)'
+            borderBottom: '1px solid var(--border-light)',
+            flexShrink: 0
           }}>
             <span style={{ fontWeight: 500 }}>编辑交易</span>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -307,8 +308,14 @@ export function TransactionBottomDrawer({
             </div>
           </div>
 
-          {/* 表单内容 */}
-          <div style={{ padding: 16, paddingBottom: 80, maxHeight: 'calc(80vh - 60px)', overflowX: 'hidden', overflowY: 'auto' }}>
+          {/* Body 滚动区域 - 自适应高度 */}
+          <div style={{ 
+            flex: 1, 
+            overflowX: 'hidden', 
+            overflowY: 'auto',
+            padding: 16,
+            paddingBottom: 24
+          }}>
             {/* 支出/收入切换 */}
             <div style={{ display: 'flex', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
               <div
@@ -466,14 +473,13 @@ export function TransactionBottomDrawer({
             </div>
           </div>
 
-          {/* 底部按钮 */}
+          {/* Footer 区域 - 固定不滚动 */}
           <div style={{ 
             display: 'flex', 
             gap: 12, 
             padding: 16, 
             borderTop: '1px solid var(--border-light)',
-            position: 'sticky',
-            bottom: 0,
+            flexShrink: 0,
             background: 'var(--bg-primary)'
           }}>
             <Button 
