@@ -204,25 +204,33 @@ def get_year_range(
     book_id: str = None
 ):
     """Get the year range (min year and max year) for transactions"""
-    from sqlalchemy import func
-    
     bid = get_current_book_id(current_user, db, book_id)
     
-    # 获取最早交易年份
-    min_year = db.query(func.min(func.extract('year', Transaction.occurred_at))).filter(
+    # 使用更兼容的方式获取年份范围
+    # 通过 strftime 获取年份字符串，然后排序
+    from sqlalchemy import func, cast, String
+    
+    # 获取最小年份
+    min_year_row = db.query(
+        func.min(func.cast(func.strftime('%Y', Transaction.occurred_at), String))
+    ).filter(
         Transaction.book_id == bid,
-        Transaction.status != 'void'
+        Transaction.status != 'void',
+        Transaction.occurred_at.isnot(None)
     ).scalar()
     
-    # 获取最晚交易年份
-    max_year = db.query(func.max(func.extract('year', Transaction.occurred_at))).filter(
+    # 获取最大年份
+    max_year_row = db.query(
+        func.max(func.cast(func.strftime('%Y', Transaction.occurred_at), String))
+    ).filter(
         Transaction.book_id == bid,
-        Transaction.status != 'void'
+        Transaction.status != 'void',
+        Transaction.occurred_at.isnot(None)
     ).scalar()
     
     return {
-        "min_year": int(min_year) if min_year else None,
-        "max_year": int(max_year) if max_year else None
+        "min_year": int(min_year_row) if min_year_row else None,
+        "max_year": int(max_year_row) if max_year_row else None
     }
 
 
