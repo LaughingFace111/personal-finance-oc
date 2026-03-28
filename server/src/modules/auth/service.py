@@ -58,45 +58,25 @@ def create_user(db: Session, data: UserCreate) -> User:
     # Create default categories
     from src.modules.categories.models import Category
     from src.common.enums import CategoryType as CatType
+    from src.modules.categories.service import get_default_categories
     
-    default_categories = [
-        # 支出分类
-        {"name": "餐饮", "category_type": CatType.EXPENSE, "icon": "🍽️", "color": "#FF6B6B", "children": [
-            {"name": "早饭", "category_type": CatType.EXPENSE, "icon": "🍳"},
-            {"name": "午饭", "category_type": CatType.EXPENSE, "icon": "🍱"},
-            {"name": "晚饭", "category_type": CatType.EXPENSE, "icon": "🍲"},
-            {"name": "饮料", "category_type": CatType.EXPENSE, "icon": "🥤"},
-            {"name": "零食", "category_type": CatType.EXPENSE, "icon": "🍪"},
-            {"name": "外卖", "category_type": CatType.EXPENSE, "icon": "🛵"},
-        ]},
-        {"name": "交通", "category_type": CatType.EXPENSE, "icon": "🚗", "color": "#4ECDC4", "children": [
-            {"name": "公交地铁", "category_type": CatType.EXPENSE, "icon": "🚌"},
-            {"name": "打车", "category_type": CatType.EXPENSE, "icon": "🚕"},
-            {"name": "油费", "category_type": CatType.EXPENSE, "icon": "⛽"},
-        ]},
-        {"name": "购物", "category_type": CatType.EXPENSE, "icon": "🛍️", "color": "#95E1D3", "children": [
-            {"name": "日用品", "category_type": CatType.EXPENSE, "icon": "🧴"},
-            {"name": "服饰鞋包", "category_type": CatType.EXPENSE, "icon": "👔"},
-            {"name": "数码产品", "category_type": CatType.EXPENSE, "icon": "📱"},
-        ]},
-        # 收入分类
-        {"name": "工资收入", "category_type": CatType.INCOME, "icon": "💰", "color": "#45B7D1", "children": [
-            {"name": "基本工资", "category_type": CatType.INCOME, "icon": "💵"},
-            {"name": "奖金", "category_type": CatType.INCOME, "icon": "🎁"},
-        ]},
-        {"name": "副业收入", "category_type": CatType.INCOME, "icon": "💼", "color": "#96CEB4", "children": [
-            {"name": "兼职", "category_type": CatType.INCOME, "icon": "📝"},
-            {"name": "咨询", "category_type": CatType.INCOME, "icon": "🎯"},
-        ]},
-    ]
+    # 使用统一的默认分类配置
+    default_categories = get_default_categories()
 
     parent_ids = {}
     for cat in default_categories:
+        # 处理 category_type (可能是字符串或枚举)
+        cat_type = cat["category_type"]
+        if hasattr(cat_type, 'value'):
+            cat_type_value = cat_type.value
+        else:
+            cat_type_value = cat_type
+            
         parent = Category(
             id=generate_uuid(),
             book_id=default_book.id,
             name=cat["name"],
-            category_type=cat["category_type"].value,
+            category_type=cat_type_value,
             icon=cat.get("icon"),
             color=cat.get("color"),
             is_system=True,
@@ -108,17 +88,26 @@ def create_user(db: Session, data: UserCreate) -> User:
 
         # Create children
         for child in cat.get("children", []):
+            child_type = child["category_type"]
+            if hasattr(child_type, 'value'):
+                child_type_value = child_type.value
+            else:
+                child_type_value = child_type
+                
             child_cat = Category(
                 id=generate_uuid(),
                 book_id=default_book.id,
                 parent_id=parent.id,
                 name=child["name"],
-                category_type=child["category_type"].value,
+                category_type=child_type_value,
                 icon=child.get("icon"),
                 is_system=True,
                 is_active=True,
             )
             db.add(child_cat)
+
+    # 设置用户的默认账本ID
+    user.default_book_id = default_book.id
 
     db.commit()
     db.refresh(user)

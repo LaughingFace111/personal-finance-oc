@@ -19,6 +19,7 @@ class User(Base):
     timezone = Column(String(50), default="Asia/Shanghai")
     currency_default = Column(String(3), default="CNY")
     status = Column(String(20), default="active")
+    default_book_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
