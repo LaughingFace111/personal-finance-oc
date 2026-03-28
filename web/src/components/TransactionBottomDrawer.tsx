@@ -240,6 +240,9 @@ export function TransactionBottomDrawer({
       height="80vh"
       styles={{ body: { padding: 0 } }}
       onOpenChange={(open) => !open && onClose()}
+      // 禁止左右滑动，只能上下滑动
+      push={{ distance: 0 }}
+      motion={null}
     >
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
