@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { Drawer, Button, Select, Input, message, Spin, Tag } from 'antd'
+import { useState, useEffect, useMemo } from 'react'
+import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
+import { HierarchyPickerModal } from './HierarchyPickerModal'
 
 interface TransactionBottomDrawerProps {
   visible: boolean
@@ -11,6 +12,22 @@ interface TransactionBottomDrawerProps {
   categories: any[]
   tags: any[]
   bookId: string
+}
+
+interface CategoryOption {
+  id: string
+  name: string
+  icon?: string
+  parent_id?: string
+  category_type?: string
+  color?: string
+}
+
+interface TagOption {
+  id: string
+  name: string
+  parent_id?: string
+  color?: string
 }
 
 export function TransactionBottomDrawer({
@@ -36,6 +53,10 @@ export function TransactionBottomDrawer({
   const [submitting, setSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
+  // 弹窗状态
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false)
+  const [tagModalOpen, setTagModalOpen] = useState(false)
+
   // 加载交易数据
   useEffect(() => {
     if (!transaction || !visible) return
@@ -59,13 +80,39 @@ export function TransactionBottomDrawer({
     }
   }, [transaction, visible, tags])
 
-  const groupedTags = (() => {
-    const parents = tags.filter((t: any) => !t.parent_id)
-    return parents.map(p => ({
-      ...p,
-      children: tags.filter((t: any) => t.parent_id === p.id)
-    })).filter(g => g.children.length > 0)
-  })()
+  // 过滤分类
+  const filteredCategories = useMemo(() => {
+    return categories.filter((c: any) => {
+      if (form.type === 'income') {
+        return c.category_type === 'income' || c.category_type === 'income_expense'
+      }
+      return c.category_type === 'expense' || c.category_type === 'income_expense'
+    })
+  }, [categories, form.type])
+
+  // 获取分类显示名称
+  const getCategoryLabel = (categoryId: string) => {
+    const cat = categories.find((c: any) => c.id === categoryId)
+    if (!cat) return ''
+    if (cat.parent_id) {
+      const parent = categories.find((c: any) => c.id === cat.parent_id)
+      return parent ? `${parent.name} / ${cat.name}` : cat.name
+    }
+    return cat.name
+  }
+
+  // 获取标签显示名称
+  const selectedTagLabels = useMemo(() => {
+    return selectedTagIds
+      .map((id) => {
+        const tag = tags.find((item: any) => item.id === id)
+        if (!tag) return ''
+        if (!tag.parent_id) return tag.name
+        const parent = tags.find((item: any) => item.id === tag.parent_id)
+        return parent ? `${parent.name} / ${tag.name}` : tag.name
+      })
+      .filter(Boolean)
+  }, [selectedTagIds, tags])
 
   const validate = () => {
     const errs: Record<string, string> = {}
@@ -157,7 +204,6 @@ export function TransactionBottomDrawer({
       const tagsJson = selectedTagIds.length > 0
         ? JSON.stringify(selectedTagIds.map(id => tags.find((t: any) => t.id === id)?.name || '').filter(Boolean))
         : null
-      const today = new Date().toISOString().split('T')[0]
       const payload = {
         transaction_type: form.type === 'income' ? 'income' : 'expense',
         amount: Number(form.amount),
@@ -285,33 +331,43 @@ export function TransactionBottomDrawer({
 
             {/* 账户选择 */}
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>账户</div>
-              <Select
-                placeholder="选择账户"
-                value={form.account_id || undefined}
-                onChange={v => { setForm(f => ({ ...f, account_id: v || '' })); setErrors(prev => ({ ...prev, account_id: '' })) }}
-                style={{ width: '100%' }}
-                status={errors.account_id ? 'error' : undefined}
+              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>账户 *</div>
+              <select
+                value={form.account_id}
+                onChange={e => { setForm(f => ({ ...f, account_id: e.target.value })); setErrors(prev => ({ ...prev, account_id: '' })) }}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: 8,
+                  border: errors.account_id ? '1px solid #ff4d4f' : '1px solid var(--border-color)',
+                  fontSize: 15, background: 'var(--bg-input)', color: 'var(--text-primary)',
+                }}
               >
-                {accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}
-              </Select>
+                <option value="">选择账户</option>
+                {accounts.map((a: any) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
               {errors.account_id && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.account_id}</div>}
             </div>
 
-            {/* 分类选择 */}
+            {/* 分类选择 - 弹窗选择 */}
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>分类</div>
-              <Select
-                placeholder="选择分类（可选）"
-                value={form.category_id || undefined}
-                onChange={v => setForm(f => ({ ...f, category_id: v || '' }))}
-                style={{ width: '100%' }}
-                allowClear
+              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>类别</div>
+              <button
+                type="button"
+                onClick={() => setCategoryModalOpen(true)}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: 8,
+                  border: '1px solid var(--border-color)', fontSize: 15,
+                  background: 'var(--bg-input)', color: 'var(--text-primary)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  cursor: 'pointer', textAlign: 'left'
+                }}
               >
-                {categories.filter(c => c.category_type === form.type).map(c => (
-                  <Select.Option key={c.id} value={c.id}>{c.icon ? c.icon + ' ' : ''}{c.name}</Select.Option>
-                ))}
-              </Select>
+                <span style={{ color: form.category_id ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                  {form.category_id ? getCategoryLabel(form.category_id) : '点击选择类别'}
+                </span>
+                <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+              </button>
             </div>
 
             {/* 日期选择 */}
@@ -329,28 +385,42 @@ export function TransactionBottomDrawer({
               />
             </div>
 
-            {/* 标签选择 */}
+            {/* 标签选择 - 弹窗选择 */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>标签</div>
-              <Select
-                mode="multiple"
-                placeholder="选择标签（可选）"
-                value={selectedTagIds}
-                onChange={setSelectedTagIds}
-                style={{ width: '100%' }}
-                allowClear
-                maxTagCount={3}
+              <button
+                type="button"
+                onClick={() => setTagModalOpen(true)}
+                style={{
+                  width: '100%', padding: '10px 12px', borderRadius: 8,
+                  border: '1px solid var(--border-color)', fontSize: 15,
+                  background: 'var(--bg-input)', color: 'var(--text-primary)',
+                  display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                  cursor: 'pointer', textAlign: 'left', minHeight: '42px'
+                }}
               >
-                {groupedTags.map(group => (
-                  <Select.OptGroup key={group.id} label={<span><Tag color={group.color} style={{ marginRight: 4, fontSize: 12 }}>{group.name}</Tag></span>}>
-                    {group.children.map((child: any) => (
-                      <Select.Option key={child.id} value={child.id}>
-                        <Tag color={group.color} style={{ fontSize: 12 }}>{child.name}</Tag>
-                      </Select.Option>
-                    ))}
-                  </Select.OptGroup>
-                ))}
-              </Select>
+                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>
+                  {selectedTagLabels.length > 0 ? (
+                    selectedTagLabels.map((label) => (
+                      <span
+                        key={label}
+                        style={{
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '999px',
+                          background: 'var(--bg-elevated)',
+                          padding: '2px 10px',
+                          fontSize: 12,
+                        }}
+                      >
+                        {label}
+                      </span>
+                    ))
+                  ) : (
+                    <span style={{ color: 'var(--text-tertiary)' }}>点击选择标签</span>
+                  )}
+                </span>
+                <span style={{ color: 'var(--text-tertiary)', lineHeight: '24px' }}>›</span>
+              </button>
             </div>
 
             {/* 备注输入 */}
@@ -393,6 +463,35 @@ export function TransactionBottomDrawer({
               onClick={handleSave}
             >保存</Button>
           </div>
+
+          {/* 分类选择弹窗 */}
+          <HierarchyPickerModal
+            open={categoryModalOpen}
+            title="选择类别"
+            items={filteredCategories as any}
+            value={form.category_id}
+            emptyText="暂无可选类别"
+            onCancel={() => setCategoryModalOpen(false)}
+            onConfirm={(nextValue) => {
+              setForm(f => ({ ...f, category_id: typeof nextValue === 'string' ? nextValue : '' }))
+              setCategoryModalOpen(false)
+            }}
+          />
+
+          {/* 标签选择弹窗 */}
+          <HierarchyPickerModal
+            open={tagModalOpen}
+            title="选择标签"
+            items={tags as any}
+            value={selectedTagIds}
+            multiple
+            emptyText="暂无可选标签"
+            onCancel={() => setTagModalOpen(false)}
+            onConfirm={(nextValue) => {
+              setSelectedTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : [])
+              setTagModalOpen(false)
+            }}
+          />
         </>
       )}
     </Drawer>
