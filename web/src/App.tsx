@@ -995,31 +995,71 @@ const TransactionsPage = () => {
                   >
                     {/* 左侧信息 */}
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', marginBottom: 4 }}>
-                        {getCategoryName(item.category_id) || item.merchant || '-'}
+                      {/* 分类名称和标签在同一行 */}
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                        <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', flexShrink: 0 }}>
+                          {getCategoryName(item.category_id) || item.merchant || '-'}
+                        </span>
+                        {/* 标签容器 - 横向滚动 */}
+                        {(() => {
+                          let tagNames: string[] = []
+                          if (item.tags) {
+                            try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
+                          }
+                          // 过滤掉无法映射的标签
+                          const validTags = tagNames.filter((name: string) => {
+                            const tag = tags.find((t: any) => t.name === name)
+                            return tag && tag.id // 只有能映射到有效标签的才显示
+                          }).slice(0, 2) // 最多显示2个
+                          
+                          if (validTags.length > 0) {
+                            return (
+                              <div style={{ 
+                                flex: 1, 
+                                overflowX: 'auto', 
+                                whiteSpace: 'nowrap', 
+                                marginLeft: 8,
+                                paddingLeft: 4,
+                                scrollbarWidth: 'none',
+                                msOverflowStyle: 'none'
+                              }}>
+                                <style>{`::-webkit-scrollbar { display: none; }`}</style>
+                                {validTags.map((name: string, idx: number) => {
+                                  const tag = tags.find((t: any) => t.name === name)
+                                  return (
+                                    <Tag 
+                                      key={idx} 
+                                      color={tag?.color || 'blue'} 
+                                      style={{ 
+                                        fontSize: 11, 
+                                        padding: '0 6px', 
+                                        margin: 0,
+                                        display: 'inline-block'
+                                      }}
+                                    >
+                                      {name}
+                                    </Tag>
+                                  )
+                                })}
+                              </div>
+                            )
+                          }
+                          return null
+                        })()}
                       </div>
-                      {item.note && (
-                        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {item.note}
-                        </div>
-                      )}
-                      {(() => {
-                        let tagNames: string[] = []
-                        if (item.tags) {
-                          try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
-                        }
-                        if (tagNames.length > 0) {
-                          return (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                              {tagNames.slice(0, 2).map((name: string, idx: number) => {
-                                const tag = tags.find((t: any) => t.name === name)
-                                return <Tag key={idx} color={tag?.color || 'blue'} style={{ fontSize: 12, padding: '0 6px', margin: 0 }}>{name}</Tag>
-                              })}
-                            </div>
-                          )
-                        }
-                        return null
-                      })()}
+                      
+                      {/* 备注 - 设置固定高度保持行高一致 */}
+                      <div style={{ 
+                        fontSize: 13, 
+                        color: 'var(--text-secondary)', 
+                        minHeight: 20,
+                        lineHeight: '20px',
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis', 
+                        whiteSpace: 'nowrap' 
+                      }}>
+                        {item.note || ''}
+                      </div>
                     </div>
                     
                     {/* 右侧金额 */}
