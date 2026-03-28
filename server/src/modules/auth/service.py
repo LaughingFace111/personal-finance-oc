@@ -20,16 +20,16 @@ from .schemas import UserCreate, UserUpdate, UserResponse
 
 def create_user(db: Session, data: UserCreate) -> User:
     """Create new user with default book and categories"""
-    # Check if email exists
-    existing = db.query(User).filter(User.email == data.email).first()
+    # Check if username exists
+    existing = db.query(User).filter(User.email == data.username).first()
     if existing:
-        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="Email already registered")
+        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="用户名已存在")
 
     user = User(
         id=generate_uuid(),
-        email=data.email,
+        email=data.username,  # 使用username作为email
         password_hash=get_password_hash(data.password),
-        nickname=data.nickname,
+        nickname=data.nickname or data.username,
     )
     db.add(user)
     db.flush()  # Get user ID
@@ -117,14 +117,14 @@ def create_user(db: Session, data: UserCreate) -> User:
     return user
 
 
-def authenticate_user(db: Session, email: str, password: str) -> User:
-    """Authenticate user with email and password"""
-    user = db.query(User).filter(User.email == email).first()
+def authenticate_user(db: Session, username: str, password: str) -> User:
+    """Authenticate user with username and password"""
+    user = db.query(User).filter(User.email == username).first()
     if not user:
-        raise UnauthorizedException("Invalid email or password")
+        raise UnauthorizedException("用户名或密码错误")
 
     if not verify_password(password, user.password_hash):
-        raise UnauthorizedException("Invalid email or password")
+        raise UnauthorizedException("用户名或密码错误")
 
     return user
 

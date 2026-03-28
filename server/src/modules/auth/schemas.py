@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 # User schemas
 class UserBase(BaseModel):
-    email: EmailStr
+    username: str = Field(..., min_length=2, max_length=50)
     nickname: Optional[str] = None
 
 
@@ -38,7 +38,7 @@ class UserResponse(UserBase):
 
 # Auth schemas
 class LoginRequest(BaseModel):
-    email: EmailStr
+    username: str
     password: str
 
 
