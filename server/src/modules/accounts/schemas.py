@@ -13,6 +13,7 @@ class AccountBase(BaseModel):
     card_last4: Optional[str] = None
     credit_limit: Optional[Decimal] = Field(default=Decimal("0"), ge=0)
     billing_day: Optional[int] = Field(default=None, ge=1, le=31)
+    billing_day_rule: Optional[str] = Field(default="current_cycle")  # "current_cycle" or "next_cycle"
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     opening_balance: Decimal = Field(default=Decimal("0"))
     current_balance: Decimal = Field(default=Decimal("0"))
@@ -30,6 +31,7 @@ class AccountUpdate(BaseModel):
     card_last4: Optional[str] = None
     credit_limit: Optional[Decimal] = None
     billing_day: Optional[int] = Field(default=None, ge=1, le=31)
+    billing_day_rule: Optional[str] = None
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     note: Optional[str] = None
     is_active: Optional[bool] = None

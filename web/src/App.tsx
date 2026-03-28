@@ -1380,9 +1380,11 @@ const AccountsPage = () => {
   const getCreditDisplay = (item: any) => {
     if (isCreditAccount(item.account_type)) {
       const limit = Number(item.credit_limit || 0)
+      // 剩余额度 = 信用额度 - 当前欠款 - 初始欠款(opening_balance)
       const debt = Number(item.debt_amount || 0)
-      const remaining = limit - debt
-      return { remaining, limit, debt }
+      const initialDebt = Number(item.opening_balance || 0)
+      const remaining = limit - debt - initialDebt
+      return { remaining, limit, debt, initialDebt }
     }
     return null
   }
@@ -1663,6 +1665,7 @@ const AccountEditPage = () => {
           // 信用类字段
           credit_limit: acc.credit_limit,
           billing_day: acc.billing_day,
+          billing_day_rule: acc.billing_day_rule || 'current_cycle',
           repayment_day: acc.repayment_day,
           card_last_four: acc.card_last4,
           initial_debt: acc.debt_amount,  // 加载当前欠款/已用额度
@@ -1690,6 +1693,7 @@ const AccountEditPage = () => {
         payload.note = values.note || ''
         payload.credit_limit = values.credit_limit || 0
         payload.billing_day = values.billing_day || null
+        payload.billing_day_rule = values.billing_day_rule || 'current_cycle'
         payload.repayment_day = values.repayment_day || null
         payload.card_last4 = values.card_last_four || null
         // 信用账户使用 debt_amount 表示已用额度
@@ -1729,6 +1733,12 @@ const AccountEditPage = () => {
         </Form.Item>
         <Form.Item name="billing_day" label="账单日（每月）">
           <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
+        </Form.Item>
+        <Form.Item name="billing_day_rule" label="账单日当天交易记入">
+          <Radio.Group defaultValue="current_cycle">
+            <Radio value="current_cycle">本期账单</Radio>
+            <Radio value="next_cycle">下期账单</Radio>
+          </Radio.Group>
         </Form.Item>
         <Form.Item name="repayment_day" label="还款日（每月）">
           <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
@@ -2045,6 +2055,7 @@ const AccountFormPage = () => {
         // 信用类：额度、账单日、还款日
         payload.credit_limit = values.credit_limit || 0
         payload.billing_day = values.billing_day || null
+        payload.billing_day_rule = values.billing_day_rule || 'current_cycle'
         payload.repayment_day = values.repayment_day || null
         payload.card_last4 = values.card_last_four || null
         payload.current_balance = 0  // 信用卡使用 debt_amount
@@ -2099,6 +2110,12 @@ const AccountFormPage = () => {
             </Form.Item>
             <Form.Item name="billing_day" label="账单日（每月）">
               <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="billing_day_rule" label="账单日当天交易记入">
+              <Radio.Group defaultValue="current_cycle">
+                <Radio value="current_cycle">本期账单</Radio>
+                <Radio value="next_cycle">下期账单</Radio>
+              </Radio.Group>
             </Form.Item>
             <Form.Item name="repayment_day" label="还款日（每月）">
               <InputNumber style={{ width: "100%" }} min={1} max={31} placeholder="1-31" />

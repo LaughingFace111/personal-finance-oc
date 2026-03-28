@@ -29,6 +29,7 @@ def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
         card_last4=data.card_last4,
         credit_limit=data.credit_limit or Decimal("0"),
         billing_day=str(data.billing_day) if data.billing_day else None,
+        billing_day_rule=data.billing_day_rule or "current_cycle",
         repayment_day=str(data.repayment_day) if data.repayment_day else None,
         opening_balance=data.opening_balance or Decimal("0"),
         current_balance=data.opening_balance or Decimal("0"),

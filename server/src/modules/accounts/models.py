@@ -18,6 +18,7 @@ class Account(Base):
     card_last4 = Column(String(4))
     credit_limit = Column(Numeric(15, 2), default=0)
     billing_day = Column(String(10))  # Store as string to allow None
+    billing_day_rule = Column(String(20), default="current_cycle")  # "current_cycle" or "next_cycle"
     repayment_day = Column(String(10))
     opening_balance = Column(Numeric(15, 2), default=0)
     current_balance = Column(Numeric(15, 2), default=0)
