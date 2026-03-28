@@ -308,7 +308,7 @@ export function TransactionBottomDrawer({
           </div>
 
           {/* 表单内容 */}
-          <div style={{ padding: 16, maxHeight: 'calc(80vh - 120px)', overflowX: 'hidden', overflowY: 'auto' }}>
+          <div style={{ padding: 16, paddingBottom: 80, maxHeight: 'calc(80vh - 60px)', overflowX: 'hidden', overflowY: 'auto' }}>
             {/* 支出/收入切换 */}
             <div style={{ display: 'flex', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
               <div
