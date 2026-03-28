@@ -23,7 +23,7 @@ def register(data: UserCreate, db: Session = Depends(get_db)):
 @router.post("/login", response_model=LoginResponse)
 def login(data: LoginRequest, db: Session = Depends(get_db), request: Request = None):
     """Login user"""
-    user = authenticate_user(db, data.email, data.password)
+    user = authenticate_user(db, data.username, data.password)
     token = create_token(user)
     # Get default book for the user
     default_book = get_default_book(db, user.id)
