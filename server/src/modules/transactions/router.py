@@ -206,31 +206,19 @@ def get_year_range(
     """Get the year range (min year and max year) for transactions"""
     bid = get_current_book_id(current_user, db, book_id)
     
-    # 使用更兼容的方式获取年份范围
-    # 通过 strftime 获取年份字符串，然后排序
-    from sqlalchemy import func, cast, String
+    # 使用原始 SQL 查询以避免 SQLAlchemy 函数兼容性问题
+    from sqlalchemy import text
     
-    # 获取最小年份
-    min_year_row = db.query(
-        func.min(func.cast(func.strftime('%Y', Transaction.occurred_at), String))
-    ).filter(
-        Transaction.book_id == bid,
-        Transaction.status != 'void',
-        Transaction.occurred_at.isnot(None)
-    ).scalar()
-    
-    # 获取最大年份
-    max_year_row = db.query(
-        func.max(func.cast(func.strftime('%Y', Transaction.occurred_at), String))
-    ).filter(
-        Transaction.book_id == bid,
-        Transaction.status != 'void',
-        Transaction.occurred_at.isnot(None)
-    ).scalar()
+    result = db.execute(text("""
+        SELECT MIN(CAST(STRFTIME('%Y', occurred_at) AS TEXT)), 
+               MAX(CAST(STRFTIME('%Y', occurred_at) AS TEXT))
+        FROM transactions 
+        WHERE book_id = :book_id AND status != 'void' AND occurred_at IS NOT NULL
+    """), {"book_id": bid}).fetchone()
     
     return {
-        "min_year": int(min_year_row) if min_year_row else None,
-        "max_year": int(max_year_row) if max_year_row else None
+        "min_year": int(result[0]) if result[0] else None,
+        "max_year": int(result[1]) if result[1] else None
     }
 
 
