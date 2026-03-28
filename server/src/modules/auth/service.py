@@ -20,14 +20,22 @@ from .schemas import UserCreate, UserUpdate, UserResponse
 
 def create_user(db: Session, data: UserCreate) -> User:
     """Create new user with default book and categories"""
-    # Check if username exists
-    existing = db.query(User).filter(User.email == data.username).first()
-    if existing:
-        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="用户名已存在")
+    # Check if username already exists
+    if data.username:
+        existing = db.query(User).filter(User.username == data.username).first()
+        if existing:
+            raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="用户名已存在")
+
+    # Check if email already exists (if provided)
+    if data.email:
+        existing = db.query(User).filter(User.email == data.email).first()
+        if existing:
+            raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="邮箱已被注册")
 
     user = User(
         id=generate_uuid(),
-        email=data.username,  # 使用username作为email
+        email=data.email or f"{data.username}@local",  # 使用邮箱或生成虚拟邮箱
+        username=data.username,
         password_hash=get_password_hash(data.password),
         nickname=data.nickname or data.username,
     )
@@ -119,7 +127,10 @@ def create_user(db: Session, data: UserCreate) -> User:
 
 def authenticate_user(db: Session, username: str, password: str) -> User:
     """Authenticate user with username and password"""
-    user = db.query(User).filter(User.email == username).first()
+    # Try to find user by username first, then by email
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        user = db.query(User).filter(User.email == username).first()
     if not user:
         raise UnauthorizedException("用户名或密码错误")
 
