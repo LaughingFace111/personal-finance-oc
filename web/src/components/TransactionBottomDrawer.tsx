@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
+import { apiPatch } from '../services/api'
 import { HierarchyPickerModal } from './HierarchyPickerModal'
 
 interface TransactionBottomDrawerProps {
@@ -139,12 +140,13 @@ export function TransactionBottomDrawer({
         occurred_at: form.occurred_at ? new Date(form.occurred_at).toISOString() : new Date().toISOString(),
         tags: tagsJson
       }
-      await (window as any).apiPatch(`/api/transactions/${transaction.id}`, payload)
+      await apiPatch(`/api/transactions/${transaction.id}?book_id=${bookId}`, payload)
       message.success('更新成功')
       onRefresh()
       onClose()
-    } catch {
-      message.error('更新失败')
+    } catch (err: any) {
+      console.error('更新失败:', err)
+      message.error(err?.message || err?.detail || '更新失败')
     } finally {
       setSubmitting(false)
     }
