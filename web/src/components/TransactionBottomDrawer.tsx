@@ -131,22 +131,24 @@ export function TransactionBottomDrawer({
       const tagsJson = selectedTagIds.length > 0
         ? JSON.stringify(selectedTagIds.map(id => tags.find((t: any) => t.id === id)?.name || '').filter(Boolean))
         : null
-      // 只发送 TransactionUpdate schema 中允许的字段
+      // 只发送 TransactionUpdate schema 中允许的字段，确保类型正确
       const payload = {
-        amount: Number(form.amount),
+        amount: parseFloat(form.amount),
         account_id: form.account_id,
         category_id: form.category_id || null,
-        note: form.note,
+        note: form.note || null,
         occurred_at: form.occurred_at ? new Date(form.occurred_at).toISOString() : new Date().toISOString(),
         tags: tagsJson
       }
+      console.log('PATCH payload:', JSON.stringify(payload))
       await apiPatch(`/api/transactions/${transaction.id}?book_id=${bookId}`, payload)
       message.success('更新成功')
       onRefresh()
       onClose()
     } catch (err: any) {
-      console.error('更新失败:', err)
-      message.error(err?.message || err?.detail || '更新失败')
+      console.error('更新失败详细:', err)
+      const errMsg = err?.message || err?.detail || err?.data?.detail || JSON.stringify(err) || '更新失败'
+      message.error('更新失败: ' + errMsg)
     } finally {
       setSubmitting(false)
     }
