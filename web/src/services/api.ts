@@ -57,11 +57,15 @@ export async function apiJson<T = any>(url: string, options: FetchOptions = {}):
     try {
       const errorData = await response.json();
       errorMsg = errorData.detail || errorData.message || errorMsg;
+      // 将详细信息保存在 response 属性中便于调试
+      (window as any).__lastError = errorData;
     } catch {
       errorMsg = `请求失败 (${response.status})`;
     }
     message.error(errorMsg);
-    throw new Error(errorMsg);
+    const err = new Error(errorMsg);
+    (err as any).detail = errorMsg;
+    throw err;
   }
 
   return response.json();

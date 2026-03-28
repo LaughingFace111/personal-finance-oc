@@ -146,8 +146,8 @@ export function TransactionBottomDrawer({
       onRefresh()
       onClose()
     } catch (err: any) {
-      console.error('更新失败详细:', err)
-      const errMsg = err?.message || err?.detail || err?.data?.detail || JSON.stringify(err) || '更新失败'
+      console.error('更新失败详细:', err, window.__lastError)
+      const errMsg = err?.message || err?.detail || window.__lastError?.detail || (typeof err === 'object' ? JSON.stringify(err) : String(err)) || '更新失败'
       message.error('更新失败: ' + errMsg)
     } finally {
       setSubmitting(false)
