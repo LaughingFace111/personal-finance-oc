@@ -773,6 +773,8 @@ const DateDetailPage = () => {
 }
 
 
+import { TransactionBottomDrawer } from './components/TransactionBottomDrawer'
+
 const TransactionsPage = () => {
   const { user, token } = useAuth()
   const [data, setData] = useState<any[]>([])
@@ -780,28 +782,45 @@ const TransactionsPage = () => {
   const navigate = useNavigate()
   const bookId = user?.default_book_id
   
-  // 标签筛选
-  const [tags, setTags] = useState<any[]>([])
+  // 分类和账户
   const [categories, setCategories] = useState<any[]>([])
   const [accounts, setAccounts] = useState<any[]>([])
-  const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
+  const [tags, setTags] = useState<any[]>([])
   
-  // 批量操作状态
-  const [selectionMode, setSelectionMode] = useState<'none' | 'delete' | 'refund'>('none')
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [submitting, setSubmitting] = useState(false)
+  // 时间筛选状态
+  const [yearRange, setYearRange] = useState({ min_year: null as number | null, max_year: null as number | null })
+  const [selectedYear, setSelectedYear] = useState<number | null>(null)
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
+  
+  // 底部Drawer状态
+  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
 
-  // 加载标签、分类和账户列表
+  // 加载年份范围
+  useEffect(() => {
+    if (!bookId) return
+    apiGet(`/api/transactions/year-range?book_id=${bookId}`)
+      .then(res => {
+        setYearRange(res || { min_year: null, max_year: null })
+        if (res?.max_year) {
+          setSelectedYear(res.max_year)
+          setSelectedMonth(new Date().getMonth() + 1)
+        }
+      })
+      .catch(() => {})
+  }, [bookId])
+
+  // 加载分类、账户和标签
   useEffect(() => {
     if (!bookId) return
     Promise.all([
-      apiGet(`/api/tags?book_id=${bookId}`),
       apiGet(`/api/categories?book_id=${bookId}`),
-      apiGet(`/api/accounts?book_id=${bookId}`)
-    ]).then(([t, c, a]) => { 
-      setTags(t || [])
+      apiGet(`/api/accounts?book_id=${bookId}`),
+      apiGet(`/api/tags?book_id=${bookId}`)
+    ]).then(([c, a, t]) => { 
       setCategories(c || [])
       setAccounts(a || [])
+      setTags(t || [])
     }).catch(() => {})
   }, [bookId])
 
@@ -824,15 +843,12 @@ const TransactionsPage = () => {
     return acc?.name || ''
   }
 
+  // 加载数据
   const loadData = () => {
-    if (!bookId) return
-    let url = `/api/transactions?book_id=${bookId}&page=1&page_size=50`
-    // 将 tag ID 转换为 tag name（后端按名称筛选）
-    if (selectedTagId) {
-      const tag = tags.find((t: any) => t.id === selectedTagId)
-      if (tag) {
-        url += `&tag=${encodeURIComponent(tag.name)}`
-      }
+    if (!bookId || !selectedYear) return
+    let url = `/api/transactions?book_id=${bookId}&year=${selectedYear}`
+    if (selectedMonth) {
+      url += `&month=${selectedMonth}`
     }
     apiGet(url)
       .then(res => setData(res.items || []))
@@ -841,255 +857,199 @@ const TransactionsPage = () => {
   }
 
   useEffect(() => {
-    // 不再依赖 tags，避免无限循环
-    loadData()
-  }, [bookId, selectedTagId])
-
-  // 切换选择模式
-  const enterSelectionMode = (mode: 'delete' | 'refund') => {
-    setSelectionMode(mode)
-    setSelectedIds([])
-  }
-
-  const cancelSelectionMode = () => {
-    setSelectionMode('none')
-    setSelectedIds([])
-  }
-
-  // 切换单选
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => 
-      prev.includes(id) 
-        ? prev.filter(i => i !== id)
-        : [...prev, id]
-    )
-  }
-
-  // 全选/取消全选
-  const toggleSelectAll = () => {
-    if (selectedIds.length === data.length) {
-      setSelectedIds([])
-    } else {
-      setSelectedIds(data.map(i => i.id))
-    }
-  }
-
-  // 批量删除
-  const handleBatchDelete = async () => {
-    if (selectedIds.length === 0) return
-    if (!confirm(`确定要删除选中的 ${selectedIds.length} 条交易吗？`)) return
-    
-    setSubmitting(true)
-    setLoading(true)
-    try {
-      // 删除所有选中的交易
-      for (const id of selectedIds) {
-        await apiDelete(`/api/transactions/${id}?book_id=${bookId}`)
-      }
-      message.success('删除成功')
-      cancelSelectionMode()
-      // 清空选中项，重新加载数据
-      const newData = await apiGet(`/api/transactions?book_id=${bookId}&page=1&page_size=50`)
-      setData(newData.items || [])
-    } catch { 
-      message.error('删除失败')
-      // 失败时重新加载
+    if (selectedYear) {
       loadData()
-    } finally {
-      setSubmitting(false)
-      setLoading(false)
     }
-  }
+  }, [bookId, selectedYear, selectedMonth])
 
-  // 退款（单笔限制）
-  const handleRefund = async (txId: string, amount: number, accountId: string) => {
-    if (!confirm(`确定要退款 ¥${Number(amount).toFixed(2)} 吗？`)) return
-    
-    setSubmitting(true)
-    try {
-      // 调用专用退款接口
-      await apiPost('/api/transactions/refund', {
-        book_id: bookId,
-        original_transaction_id: txId,
-        refund_account_id: accountId,
-        amount: amount,
-        occurred_at: new Date().toISOString()
-      })
-      message.success('退款成功')
-      cancelSelectionMode()
-      loadData()
-    } catch { message.error('退款失败') }
-    finally { setSubmitting(false) }
-  }
+  // 按天分组
+  const groupedData = (() => {
+    const groups: Record<string, any[]> = {}
+    data.forEach((item: any) => {
+      const date = item.occurred_at?.split('T')[0] || 'unknown'
+      if (!groups[date]) groups[date] = []
+      groups[date].push(item)
+    })
+    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
+  })()
 
-  // 批量选择模式进入时，渲染退款按钮（单笔）
-  const handleBatchRefund = async () => {
-    if (selectedIds.length === 0) return
-    if (selectedIds.length > 1) {
-      message.info('退款暂只支持单笔操作，请只选择一条记录')
-      return
-    }
-    
-    const tx = data.find(i => i.id === selectedIds[0])
-    if (!tx) return
-    if (tx.direction !== 'out') {
-      message.info('只能对支出交易发起退款')
-      return
-    }
-    
-    // 直接调用单笔退款
-    await handleRefund(tx.id, tx.amount, tx.account_id)
-  }
-
-  // 点击交易项进入编辑页
+  // 点击交易项打开底部Drawer
   const handleItemClick = (item: any) => {
-    if (selectionMode !== 'none') {
-      toggleSelect(item.id)
-    } else {
-      navigate(`/transactions/${item.id}`)
+    setSelectedTransaction(item)
+    setDrawerVisible(true)
+  }
+
+  // 刷新数据
+  const handleRefresh = () => {
+    loadData()
+  }
+
+  // 生成年份选项
+  const yearOptions = (() => {
+    if (!yearRange.min_year || !yearRange.max_year) return []
+    const years: number[] = []
+    for (let y = yearRange.min_year; y <= yearRange.max_year; y++) {
+      years.push(y)
     }
+    return years.sort((a, b) => b - a)
+  })()
+
+  // 月份选项
+  const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+  // 格式化日期显示
+  const formatDateDisplay = (dateStr: string) => {
+    const date = new Date(dateStr)
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    
+    if (date.toDateString() === today.toDateString()) return '今天'
+    if (date.toDateString() === yesterday.toDateString()) return '昨天'
+    return `${date.getMonth() + 1}月${date.getDate()}日`
   }
 
   return (
     <div>
-      {/* 标签筛选器 */}
-      {tags.length > 0 && selectionMode === 'none' && (
-        <div style={{ marginBottom: 16 }}>
-          <Select
-            placeholder="按标签筛选"
-            value={selectedTagId}
-            onChange={setSelectedTagId}
-            style={{ width: 160 }}
-            allowClear
-            size="small"
-          >
-            {tags.map(t => {
-              // 如果是二级标签，显示 "父级 > 子级" 格式
-              let label = t.name
-              let color = t.color || 'blue'
-              if (t.parent_id) {
-                const parent = tags.find((p: any) => p.id === t.parent_id)
-                if (parent) {
-                  label = `${parent.name} > ${t.name}`
-                  color = parent.color || color
-                }
-              }
-              return (
-                <Select.Option key={t.id} value={t.id}>
-                  <Tag color={color}>{label}</Tag>
-                </Select.Option>
-              )
-            })}
-          </Select>
+      {/* 时间筛选器 */}
+      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
+        {/* 年份选择器 */}
+        <Select
+          placeholder="选择年份"
+          value={selectedYear}
+          onChange={v => { setSelectedYear(v); setSelectedMonth(null) }}
+          style={{ width: 120 }}
+          allowClear
+        >
+          {yearOptions.map(y => (
+            <Select.Option key={y} value={y}>{y}年</Select.Option>
+          ))}
+        </Select>
+        
+        {/* 月份选择器 */}
+        <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', paddingBottom: 4 }}>
+          {months.map(m => (
+            <div
+              key={m}
+              onClick={() => setSelectedMonth(m)}
+              style={{
+                minWidth: 40,
+                padding: '6px 12px',
+                borderRadius: 16,
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: selectedMonth === m ? 'var(--accent-red)' : 'var(--bg-elevated)',
+                color: selectedMonth === m ? '#fff' : 'var(--text-primary)',
+                fontSize: 14,
+                transition: 'all 0.2s'
+              }}
+            >
+              {m}月
+            </div>
+          ))}
         </div>
-      )}
-
-      {/* 顶部操作栏 */}
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        {selectionMode === 'none' ? (
-          <>
-            <span style={{ fontSize: 14, color: '#666' }}>{data.length} 条记录</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button size="small" onClick={() => enterSelectionMode('refund')}>退款</Button>
-              <Button size="small" danger onClick={() => enterSelectionMode('delete')}>删除</Button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Checkbox 
-                checked={selectedIds.length === data.length && data.length > 0} 
-                indeterminate={selectedIds.length > 0 && selectedIds.length < data.length}
-                onChange={toggleSelectAll}
-              />
-              <span>已选 {selectedIds.length} 项</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button size="small" onClick={cancelSelectionMode}>取消</Button>
-              {selectionMode === 'delete' && (
-                <Button size="small" danger onClick={handleBatchDelete} loading={submitting}>确认删除</Button>
-              )}
-              {selectionMode === 'refund' && (
-                <Button size="small" type="primary" onClick={handleBatchRefund} loading={submitting}>确认退款</Button>
-              )}
-            </div>
-          </>
-        )}
       </div>
 
-      {/* 交易列表 */}
-      {loading ? <Spin /> : data.length === 0 ? 
+      {/* 记录数量 */}
+      <div style={{ marginBottom: 16, color: '#666', fontSize: 14 }}>
+        {loading ? '加载中...' : `${data.length} 条记录`}
+      </div>
+
+      {/* 卡片式列表 */}
+      {loading ? <Spin /> : groupedData.length === 0 ? 
         <Empty description="暂无交易记录" extra={<Button type="primary" onClick={() => navigate('/transactions/new')}>记一笔</Button>} /> : 
-        <List 
-          size="small" 
-          dataSource={data} 
-          renderItem={item => (
-            <List.Item 
-              style={{ padding: '12px 16px', cursor: 'pointer', background: selectedIds.includes(item.id) ? 'var(--bg-elevated)' : undefined }}
-              onClick={() => handleItemClick(item)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {groupedData.map(([date, items]) => (
+            <div 
+              key={date}
+              style={{
+                background: 'var(--bg-card)',
+                borderRadius: 12,
+                overflow: 'hidden'
+              }}
             >
-              {selectionMode !== 'none' && (
-                <Checkbox 
-                  checked={selectedIds.includes(item.id)} 
-                  onChange={() => toggleSelect(item.id)}
-                  style={{ marginRight: 12 }}
-                  onClick={e => e.stopPropagation()}
-                />
-              )}
-              {/* 左侧信息区 */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                {/* 第一层：二级分类名称 - 最醒目 */}
-                <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', marginBottom: 4 }}>
-                  {getCategoryName(item.category_id) || item.merchant || '-'}
-                </div>
-                {/* 第二层：备注 - 浅色小字，单行省略 */}
-                {item.note && (
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {item.note}
-                  </div>
-                )}
-                {/* 第三层：标签区 - 紧凑展示 */}
-                {(() => {
-                  let tagNames: string[] = []
-                  if (item.tags) {
-                    try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
-                  }
-                  if (tagNames.length > 0) {
-                    const displayTags = tagNames.slice(0, 2)
-                    const remainingCount = tagNames.length - 2
-                    return (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {displayTags.map((name: string, idx: number) => {
-                          const tag = tags.find((t: any) => t.name === name)
-                          let color = tag?.color || 'blue'
-                          if (tag?.parent_id) {
-                            const parent = tags.find((t: any) => t.id === tag.parent_id)
-                            if (parent?.color) color = parent.color
-                          }
-                          return <Tag key={idx} color={color} style={{ fontSize: 12, padding: '0 6px', margin: 0 }}>{name}</Tag>
-                        })}
-                        {remainingCount > 0 && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>+{remainingCount}</span>}
+              {/* 日期标题 */}
+              <div style={{ 
+                padding: '12px 16px', 
+                borderBottom: '1px solid var(--border-light)',
+                fontWeight: 500,
+                color: 'var(--text-primary)'
+              }}>
+                {formatDateDisplay(date)}
+              </div>
+              
+              {/* 交易列表 */}
+              <div>
+                {items.map((item: any) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: '12px 16px',
+                      borderBottom: '1px solid var(--border-light)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                    onClick={() => handleItemClick(item)}
+                  >
+                    {/* 左侧信息 */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', marginBottom: 4 }}>
+                        {getCategoryName(item.category_id) || item.merchant || '-'}
                       </div>
-                    )
-                  }
-                  return null
-                })()}
+                      {item.note && (
+                        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.note}
+                        </div>
+                      )}
+                      {(() => {
+                        let tagNames: string[] = []
+                        if (item.tags) {
+                          try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
+                        }
+                        if (tagNames.length > 0) {
+                          return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {tagNames.slice(0, 2).map((name: string, idx: number) => {
+                                const tag = tags.find((t: any) => t.name === name)
+                                return <Tag key={idx} color={tag?.color || 'blue'} style={{ fontSize: 12, padding: '0 6px', margin: 0 }}>{name}</Tag>
+                              })}
+                            </div>
+                          )
+                        }
+                        return null
+                      })()}
+                    </div>
+                    
+                    {/* 右侧金额 */}
+                    <div style={{ textAlign: 'right', marginLeft: 16, flexShrink: 0 }}>
+                      <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 600, fontSize: 16 }}>
+                        {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                        {getAccountName(item.account_id)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
-              {/* 右侧金额区 */}
-              <div style={{ textAlign: 'right', marginLeft: 16, flexShrink: 0 }}>
-                {/* 第一层：金额 - 大字，右对齐 */}
-                <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 600, fontSize: 16, lineHeight: 1.4 }}>
-                  {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
-                </div>
-                {/* 第二层：账户 - 浅色小字，右对齐 */}
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {getAccountName(item.account_id) || item.account_id?.slice(0, 8) || '-'}
-                </div>
-              </div>
-            </List.Item>
-          )} 
-        />
+            </div>
+          ))}
+        </div>
       }
+
+      {/* 底部编辑Drawer */}
+      <TransactionBottomDrawer
+        visible={drawerVisible}
+        transaction={selectedTransaction}
+        onClose={() => setDrawerVisible(false)}
+        onRefresh={handleRefresh}
+        accounts={accounts}
+        categories={categories}
+        tags={tags}
+        bookId={bookId}
+      />
     </div>
   )
 }

@@ -127,6 +127,8 @@ def list_transactions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     book_id: str = None,
+    year: int = None,
+    month: int = None,
     date_from: str = None,
     date_to: str = None,
     account_id: str = None,
@@ -147,17 +149,29 @@ def list_transactions(
     dt_from = None
     dt_to = None
     
-    if date_from:
-        dt_from = datetime.fromisoformat(date_from)
-        # 如果日期字符串不包含时间部分，设置为当天开始
-        if len(date_from) <= 10:
-            dt_from = dt_from.replace(hour=0, minute=0, second=0)
-    
-    if date_to:
-        dt_to = datetime.fromisoformat(date_to)
-        # 如果日期字符串不包含时间部分，设置为当天结束
-        if len(date_to) <= 10:
-            dt_to = dt_to.replace(hour=23, minute=59, second=59)
+    # 如果指定了 year 和 month，优先使用它们计算日期范围
+    if year and month:
+        dt_from = datetime(year, month, 1)
+        # 获取该月的最后一天
+        if month == 12:
+            dt_to = datetime(year + 1, 1, 1) - timedelta(seconds=1)
+        else:
+            dt_to = datetime(year, month + 1, 1) - timedelta(seconds=1)
+    elif year:
+        # 只指定年份，则查询整年
+        dt_from = datetime(year, 1, 1)
+        dt_to = datetime(year, 12, 31, 23, 59, 59)
+    else:
+        # 使用手动指定的日期范围
+        if date_from:
+            dt_from = datetime.fromisoformat(date_from)
+            if len(date_from) <= 10:
+                dt_from = dt_from.replace(hour=0, minute=0, second=0)
+        
+        if date_to:
+            dt_to = datetime.fromisoformat(date_to)
+            if len(date_to) <= 10:
+                dt_to = dt_to.replace(hour=23, minute=59, second=59)
 
     filters = {
         "date_from": dt_from,
@@ -181,6 +195,35 @@ def list_transactions(
         page_size=page_size,
         items=items
     )
+
+
+@router.get("/year-range")
+def get_year_range(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Get the year range (min year and max year) for transactions"""
+    from sqlalchemy import func
+    
+    bid = get_current_book_id(current_user, db, book_id)
+    
+    # 获取最早交易年份
+    min_year = db.query(func.min(func.extract('year', Transaction.occurred_at))).filter(
+        Transaction.book_id == bid,
+        Transaction.status != 'void'
+    ).scalar()
+    
+    # 获取最晚交易年份
+    max_year = db.query(func.max(func.extract('year', Transaction.occurred_at))).filter(
+        Transaction.book_id == bid,
+        Transaction.status != 'void'
+    ).scalar()
+    
+    return {
+        "min_year": int(min_year) if min_year else None,
+        "max_year": int(max_year) if max_year else None
+    }
 
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
