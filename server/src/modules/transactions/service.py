@@ -397,6 +397,20 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
     _apply_transaction_effects(db, refund_txn)
 
     db.add(refund_txn)
+    
+    # Update original transaction note to indicate refund
+    if original.note:
+        if "<已退款>" not in original.note:
+            original.note = original.note + " <已退款>"
+    else:
+        original.note = "<已退款>"
+    
+    # Set refund transaction note with "<退款>" prefix
+    if refund_txn.note:
+        refund_txn.note = "<退款> " + refund_txn.note
+    else:
+        refund_txn.note = "<退款>"
+    
     db.commit()
     db.refresh(refund_txn)
     return refund_txn
@@ -617,6 +631,9 @@ def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
     txn = get_transaction(db, transaction_id, book_id)
     if not txn:
         raise NotFoundException("Transaction not found")
+
+    # Reverse transaction effects first (update account balance)
+    _reverse_transaction_effects(db, txn)
 
     # Delete the transaction permanently
     db.delete(txn)
