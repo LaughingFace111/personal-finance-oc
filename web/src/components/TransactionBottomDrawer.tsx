@@ -58,6 +58,28 @@ export function TransactionBottomDrawer({
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [tagModalOpen, setTagModalOpen] = useState(false)
 
+  // Body滚动锁定 - 防止滚动穿透
+  useEffect(() => {
+    if (visible) {
+      // 记录滚动位置
+      const scrollY = window.scrollY
+      // 锁定body滚动
+      document.body.style.overflow = 'hidden'
+      document.body.style.position = 'fixed'
+      document.body.style.width = '100%'
+      document.body.style.top = `-${scrollY}px`
+      
+      return () => {
+        // 恢复滚动
+        document.body.style.overflow = ''
+        document.body.style.position = ''
+        document.body.style.width = ''
+        document.body.style.top = ''
+        window.scrollTo(0, scrollY)
+      }
+    }
+  }, [visible])
+
   // 加载交易数据
   useEffect(() => {
     if (!transaction || !visible) return
