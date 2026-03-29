@@ -97,6 +97,7 @@ export default function TransferPage() {
   return (
     <TransactionFormLayout
       pageTitle="转账"
+      showBackButton={true}
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className={transactionFormSectionClass}>

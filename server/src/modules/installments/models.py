@@ -14,18 +14,27 @@ class InstallmentPlan(Base):
     book_id = Column(String(36), ForeignKey("books.id"), nullable=False, index=True)
     account_id = Column(String(36), ForeignKey("accounts.id"), nullable=False)
     transaction_id = Column(String(36), ForeignKey("transactions.id"))
+    category_id = Column(String(36), ForeignKey("categories.id"))  # 🛡️ L: 分类ID
     plan_name = Column(String(200))
-    total_amount = Column(Numeric(15, 2), nullable=False)
-    total_periods = Column(Integer, nullable=False)
-    current_period = Column(Integer, default=1)
-    principal_per_period = Column(Numeric(15, 2), nullable=False)
-    fee_per_period = Column(Numeric(15, 2), default=0)
-    total_fee = Column(Numeric(15, 2), default=0)
-    start_date = Column(Date, nullable=False)
+    total_amount = Column(Numeric(15, 2), nullable=False)  # 总金额
+    installment_amount = Column(Numeric(15, 2), nullable=False)  # 🛡️ L: 每期金额
+    total_periods = Column(Integer, nullable=False)  # 总期数
+    executed_periods = Column(Integer, default=0)  # 🛡️ L: 已执行期数
+    current_period = Column(Integer, default=1)  # 当前期数
+    principal_per_period = Column(Numeric(15, 2), nullable=False)  # 每期本金
+    fee_per_period = Column(Numeric(15, 2), default=0)  # 每期手续费
+    handling_fee = Column(Numeric(15, 2), default=0)  # 🛡️ L: 手续费（别名）
+    total_fee = Column(Numeric(15, 2), default=0)  # 总手续费
+    interest = Column(Numeric(15, 2), default=0)  # 🛡️ L: 利息
+    start_date = Column(Date, nullable=False)  # 开始日期（申请日期）
+    application_date = Column(DateTime)  # 🛡️ L: 申请日期
+    first_billing_date = Column(Date)  # 🛡️ L: 首次账单日
     first_repayment_date = Column(Date)
+    next_execution_date = Column(Date)  # 🛡️ L: 下次执行日期
     repayment_day = Column(Integer)
     status = Column(String(20), default="active")
     early_settlement_supported = Column(Boolean, default=True)
+    note = Column(String(500))  # 🛡️ L: 备注
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

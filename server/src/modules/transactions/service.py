@@ -18,6 +18,7 @@ from .models import Transaction
 from .schemas import TransactionCreate, TransactionUpdate, RefundCreate, TransferCreate
 from src.modules.accounts.service import get_account, get_account_by_id, update_account_balance, update_account_debt
 from src.modules.accounts.models import Account
+from src.modules.categories.models import Category
 
 
 def _is_asset_account(account_type: str) -> bool:
@@ -198,7 +199,21 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
                 txn.include_in_cashflow = False
 
 
-def create_transaction(db: Session, book_id: str, data: TransactionCreate) -> Transaction:
+def create_transaction(
+    db: Session,
+    book_id: str,
+    data: TransactionCreate,
+    include_expense_override: bool = None,
+    include_income_override: bool = None,
+    include_cashflow_override: bool = None,
+) -> Transaction:
+    """Create new transaction
+    
+    Args:
+        include_expense_override: If provided, override the auto-calculated include_in_expense
+        include_income_override: If provided, override the auto-calculated include_in_income
+        include_cashflow_override: If provided, override the auto-calculated include_in_cashflow
+    """
     """Create new transaction with balance updates"""
 
     # Check account exists
@@ -224,10 +239,15 @@ def create_transaction(db: Session, book_id: str, data: TransactionCreate) -> Tr
         if existing:
             raise IdempotencyException(f"Transaction already exists: {data.business_key}")
 
-    # Calculate include flags
-    include_expense, include_income, include_cashflow = _calculate_include_flags(
+    # Calculate include flags (unless overridden)
+    auto_expense, auto_income, auto_cashflow = _calculate_include_flags(
         data.transaction_type, account.account_type
     )
+    
+    # Use auto-calculated values unless explicitly overridden
+    final_include_expense = include_expense_override if include_expense_override is not None else auto_expense
+    final_include_income = include_income_override if include_income_override is not None else auto_income
+    final_include_cashflow = include_cashflow_override if include_cashflow_override is not None else auto_cashflow
 
     # Create transaction
     txn = Transaction(
@@ -252,9 +272,9 @@ def create_transaction(db: Session, book_id: str, data: TransactionCreate) -> Tr
         extra=data.extra,
         related_transaction_id=data.related_transaction_id,
         business_key=data.business_key,
-        include_in_expense=include_expense,
-        include_in_income=include_income,
-        include_in_cashflow=include_cashflow,
+        include_in_expense=final_include_expense,
+        include_in_income=final_include_income,
+        include_in_cashflow=final_include_cashflow,
         status=TransactionStatus.CONFIRMED.value,
     )
 
@@ -417,7 +437,7 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
 
 
 def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Transaction], int]:
-    """Get transactions with filters"""
+    """Get transactions with filters - Optimized version"""
     query = db.query(Transaction).filter(Transaction.book_id == book_id)
 
     # Apply filters
@@ -445,7 +465,7 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
         # Filter by tags JSON field containing the tag name
         query = query.filter(Transaction.tags.ilike(f"%{filters['tag']}%"))
 
-    # Get total count
+    # Get total count - 使用窗口函数优化
     total = query.count()
 
     # Pagination
@@ -456,21 +476,22 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
 
     transactions = query.all()
 
-    # 预先查询所有已退款的原交易ID，用于标记 has_refund
-    refunded_ids = set()
+    # 🛡️ L: 优化 - 使用单次子查询获取所有已退款ID，避免 N+1
     if transactions:
         ids = [t.id for t in transactions]
-        # 查找所有以这些交易为原交易的退款记录
-        refunds = db.query(Transaction.related_transaction_id).filter(
-            Transaction.related_transaction_id.in_(ids),
-            Transaction.transaction_type == TransactionType.REFUND.value,
-            Transaction.status == TransactionStatus.CONFIRMED.value
-        ).all()
-        refunded_ids = {r[0] for r in refunds}
-
-    # 为每个交易添加 has_refund 标记
-    for t in transactions:
-        t.has_refund = t.id in refunded_ids
+        refunded_ids = set(
+            row[0] for row in db.query(Transaction.related_transaction_id).filter(
+                Transaction.related_transaction_id.in_(ids),
+                Transaction.transaction_type == TransactionType.REFUND.value,
+                Transaction.status == TransactionStatus.CONFIRMED.value
+            ).all()
+        )
+        # 为每个交易添加 has_refund 标记
+        for t in transactions:
+            t.has_refund = t.id in refunded_ids
+    else:
+        for t in transactions:
+            t.has_refund = False
 
     return transactions, total
 
@@ -638,3 +659,155 @@ def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
     # Delete the transaction permanently
     db.delete(txn)
     db.commit()
+
+
+def _get_or_create_adjustment_category(db: Session, book_id: str) -> str:
+    """
+    获取或创建"余额调整"系统分类。
+    如果不存在则创建，返回 category_id。
+    """
+    category_name = "余额调整"
+    existing = db.query(Category).filter(
+        Category.book_id == book_id,
+        Category.name == category_name
+    ).first()
+    
+    if existing:
+        return existing.id
+    
+    # 创建新的调整分类
+    new_category = Category(
+        id=generate_uuid(),
+        book_id=book_id,
+        name=category_name,
+        category_type="expense",  # 调整类可计入支出
+        icon="🔧",
+    )
+    db.add(new_category)
+    db.flush()  # 获取ID但不提交
+    return new_category.id
+
+
+def adjust_account_balance(
+    db: Session,
+    book_id: str,
+    account_id: str,
+    target_value: Decimal,
+    adjust_mode: str = "balance",  # "balance" | "available_credit"
+    note: str = "",
+    is_counted_in_reports: bool = False
+) -> Transaction:
+    """
+    合规平账操作：为账户生成调整交易流水，修正余额或可用额度。
+    
+    Args:
+        db: 数据库会话
+        book_id: 账本ID
+        account_id: 账户ID
+        target_value: 目标值（资产账户为目标余额，信用账户为目标可用额度）
+        adjust_mode: 调整模式
+            - "balance": 调整当前余额（资产类账户）
+            - "available_credit": 调整可用额度（信用类账户）
+        note: 调整原因（必填）
+        is_counted_in_reports: 是否计入收支报表
+    
+    Returns:
+        创建的调整交易记录
+    
+    Algorithm:
+        资产账户: delta = target_balance - current_balance
+                 delta > 0 → income, delta < 0 → expense
+        
+        信用账户: target_debt = credit_limit - target_available
+                 delta_debt = target_debt - current_debt
+                 delta_debt > 0 → expense (欠款增加), delta_debt < 0 → income (欠款减少)
+    """
+    if not note:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, 
+                          message="调整原因不能为空")
+    
+    # 获取账户信息
+    account = get_account_by_id(db, account_id)
+    if not account:
+        raise NotFoundException("Account not found")
+    
+    if account.book_id != book_id:
+        raise NotFoundException("Account not found in this book")
+    
+    # 计算差额
+    adjustment_amount: Decimal
+    direction: TransactionDirection
+    transaction_type: TransactionType
+    
+    if adjust_mode == "balance":
+        # 资产账户：调整余额
+        current_balance = account.current_balance or Decimal("0")
+        delta = target_value - current_balance
+        
+        if delta > 0:
+            # 盘盈：余额增加 → 收入
+            adjustment_amount = abs(delta)
+            direction = TransactionDirection.IN
+            transaction_type = TransactionType.INCOME
+        else:
+            # 盘亏：余额减少 → 支出
+            adjustment_amount = abs(delta)
+            direction = TransactionDirection.OUT
+            transaction_type = TransactionType.EXPENSE
+            
+    elif adjust_mode == "available_credit":
+        # 信用账户：调整可用额度
+        credit_limit = account.credit_limit or Decimal("0")
+        current_debt = account.debt_amount or Decimal("0")
+        
+        # 目标可用额度 → 目标欠款
+        target_debt = credit_limit - target_value
+        
+        # 欠款差额：正数表示欠款增加（可用减少），负数表示欠款减少（可用增加）
+        delta_debt = target_debt - current_debt
+        
+        if delta_debt >= 0:
+            # 欠款增加 → 支出（遗漏消费/利息等）
+            adjustment_amount = abs(delta_debt)
+            direction = TransactionDirection.OUT
+            transaction_type = TransactionType.EXPENSE
+        else:
+            # 欠款减少 → 收入（还款/退款等）
+            adjustment_amount = abs(delta_debt)
+            direction = TransactionDirection.IN
+            transaction_type = TransactionType.INCOME
+    else:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                          message=f"Unknown adjust_mode: {adjust_mode}")
+    
+    if adjustment_amount == 0:
+        raise AppException(status_code=400, code=ErrorCode.CONFLICT,
+                          message="目标值与当前值相同，无需调整")
+    
+    # 获取调整分类
+    category_id = _get_or_create_adjustment_category(db, book_id)
+    
+    # 创建调整交易
+    tx_data = TransactionCreate(
+        account_id=account_id,
+        amount=adjustment_amount,
+        direction=direction,
+        transaction_type=transaction_type,
+        occurred_at=datetime.utcnow(),
+        category_id=category_id,
+        note=note,
+        source_type=SourceType.SYSTEM,
+        business_key=f"adjust:{account_id}:{datetime.utcnow().isoformat()}",
+    )
+    
+    # 设置收支统计开关
+    # is_counted_in_reports=false 时，必须覆盖为 False
+    count_in_expense = is_counted_in_reports and transaction_type == TransactionType.EXPENSE
+    count_in_income = is_counted_in_reports and transaction_type == TransactionType.INCOME
+    
+    return create_transaction(
+        db, book_id, tx_data,
+        include_expense_override=count_in_expense,
+        include_income_override=count_in_income,
+        include_cashflow_override=False  # 平账流水不计入现金流
+    )

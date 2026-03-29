@@ -119,7 +119,13 @@ export default function AddTransactionPage() {
         include_in_expense: true,
         include_in_income: true,
         include_in_cashflow: true,
-        tags: tagIds.length > 0 ? JSON.stringify(tagIds) : null
+        // 🛡️ L: 标签持久化 - 传递标签名数组（与编辑页保持一致）
+        tags: tagIds.length > 0
+          ? JSON.stringify(tagIds.map(id => {
+              const tag = tags.find((item: any) => item.id === id)
+              return tag?.name || ''
+            }).filter(Boolean))
+          : null
       };
 
       const response = await apiPost('/api/transactions', payload);

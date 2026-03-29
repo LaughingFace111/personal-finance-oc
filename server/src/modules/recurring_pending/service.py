@@ -35,6 +35,31 @@ def _build_payload(rule: RecurringRule, expected_date: date) -> dict:
     }
 
 
+def _validate_account_for_transaction(db: Session, account_id: str, transaction_type: str) -> dict:
+    """
+    验证账户可用于交易，返回账户类型信息
+    抛出异常如果账户不存在或类型不匹配
+    """
+    from src.modules.accounts.models import Account
+    
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise ValueError(f"账户不存在: {account_id}")
+    if not account.is_active:
+        raise ValueError(f"账户已禁用: {account.name}")
+    
+    # 检查信用账户边界
+    is_credit = account.account_type in ["credit_card", "credit_line"]
+    is_loan = account.account_type == "loan"
+    
+    return {
+        "account_type": account.account_type,
+        "is_credit": is_credit,
+        "is_loan": is_loan,
+        "name": account.name,
+    }
+
+
 def sync_pending_items(db: Session, book_id: str, until_date: Optional[date] = None) -> List[PendingItem]:
     cutoff = until_date or date.today()
     rules = db.query(RecurringRule).filter(
@@ -45,6 +70,15 @@ def sync_pending_items(db: Session, book_id: str, until_date: Optional[date] = N
 
     created_items: List[PendingItem] = []
     for rule in rules:
+        # 🛡️ 审计：生成待处理项前验证账户类型
+        try:
+            account_info = _validate_account_for_transaction(db, rule.account_id, rule.transaction_type)
+        except ValueError as e:
+            # 账户无效，跳过该规则并禁用
+            rule.is_active = False
+            rule.note = (rule.note or "") + f" [系统跳过: {str(e)}]"
+            continue
+
         if rule.end_date and rule.next_occurs_on > rule.end_date:
             rule.is_active = False
             continue
@@ -123,7 +157,19 @@ def confirm_pending_item(
 
     payload = json.loads(pending.transaction_payload)
     if data.account_id:
+        # 🛡️ 审计：用户修改账户时再次验证
+        try:
+            _validate_account_for_transaction(db, data.account_id, payload["transaction_type"])
+        except ValueError as e:
+            raise ValueError(f"账户验证失败: {str(e)}")
         payload["account_id"] = data.account_id
+    else:
+        # 🛡️ 审计：确认时再次验证原始账户
+        try:
+            _validate_account_for_transaction(db, payload["account_id"], payload["transaction_type"])
+        except ValueError as e:
+            raise ValueError(f"原始账户验证失败: {str(e)}")
+            
     if data.occurred_at:
         payload["occurred_at"] = data.occurred_at.isoformat()
 

@@ -41,9 +41,16 @@ class AccountResponse(AccountBase):
     id: str
     book_id: str
     debt_amount: Decimal = Field(default=Decimal("0"))
+    frozen_amount: Decimal = Field(default=Decimal("0"))  # 🛡️ L: 冻结额度
     is_active: bool = True
+    is_deleted: bool = False  # 软删除标记
     created_at: datetime
     updated_at: datetime
+    
+    # 🛡️ L: 本期待还计算字段（信用账户专用）
+    current_statement_balance: Optional[Decimal] = None  # 本期待还金额
+    next_repayment_date: Optional[str] = None  # 下一个还款日期 (YYYY-MM-DD)
+    days_until_repayment: Optional[int] = None  # 距还款日天数
 
     class Config:
         from_attributes = True

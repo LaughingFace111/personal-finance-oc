@@ -15,7 +15,8 @@ from .schemas import (
 )
 from .service import (
     create_transaction, create_transfer, create_refund,
-    get_transactions, get_transaction, update_transaction, delete_transaction
+    get_transactions, get_transaction, update_transaction, delete_transaction,
+    adjust_account_balance
 )
 from src.modules.books.service import get_default_book, create_book
 from src.common.enums import TransactionType, TransactionDirection
@@ -27,9 +28,10 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 class BalanceAdjustCreate(BaseModel):
     book_id: str
     account_id: str
-    amount: float
-    direction: str  # 'in' or 'out'
-    note: str = ""
+    target_value: float  # 目标值（余额或可用额度）
+    adjust_mode: str = "balance"  # "balance" | "available_credit"
+    note: str = ""  # 调整原因（必填）
+    is_counted_in_reports: bool = False  # 是否计入收支报表
 
 
 def get_current_book_id(
@@ -103,23 +105,23 @@ def adjust_balance(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Adjust account balance (create adjustment transaction)"""
-    from datetime import datetime
+    """Adjust account balance or available credit (create adjustment transaction)"""
     from decimal import Decimal
     
-    # Use book_id from the request body
-    bid = data.book_id
+    # 验证 adjust_mode
+    if data.adjust_mode not in ["balance", "available_credit"]:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="adjust_mode must be 'balance' or 'available_credit'")
     
-    # Create an income or expense transaction based on direction
-    tx_data = TransactionCreate(
+    return adjust_account_balance(
+        db=db,
+        book_id=data.book_id,
         account_id=data.account_id,
-        amount=Decimal(str(data.amount)),
-        direction=TransactionDirection.IN if data.direction == 'in' else TransactionDirection.OUT,
-        transaction_type=TransactionType.INCOME if data.direction == 'in' else TransactionType.EXPENSE,
-        occurred_at=datetime.utcnow(),
-        note=data.note or "余额调整",
+        target_value=Decimal(str(data.target_value)),
+        adjust_mode=data.adjust_mode,
+        note=data.note,
+        is_counted_in_reports=data.is_counted_in_reports
     )
-    return create_transaction(db, bid, tx_data)
 
 
 @router.get("", response_model=TransactionSummary)

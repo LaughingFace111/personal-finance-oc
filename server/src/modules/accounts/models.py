@@ -23,8 +23,10 @@ class Account(Base):
     opening_balance = Column(Numeric(15, 2), default=0)
     current_balance = Column(Numeric(15, 2), default=0)
     debt_amount = Column(Numeric(15, 2), default=0)
+    frozen_amount = Column(Numeric(15, 2), default=0)  # 🛡️ L: 冻结额度（分期专用）
     currency = Column(String(3), default="CNY")
     is_active = Column(Boolean, default=True)
+    is_deleted = Column(Boolean, default=False)  # 软删除标记
     note = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

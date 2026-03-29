@@ -58,6 +58,42 @@ export function TransactionBottomDrawer({
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [tagModalOpen, setTagModalOpen] = useState(false)
 
+  // 🛡️ L: Bug 2 修复 - 强制清理标签状态，防止跨交易泄漏
+  useEffect(() => {
+    if (!visible) {
+      // 弹窗关闭时重置标签状态
+      setSelectedTagIds([])
+      setTagModalOpen(false)
+      setCategoryModalOpen(false)
+    }
+  }, [visible])
+
+  // 🛡️ L: Bug 2 修复 - 交易切换时立即清理状态
+  useEffect(() => {
+    if (!transaction || !visible) return
+    setForm({
+      type: transaction.direction === 'in' ? 'income' : 'expense',
+      amount: String(transaction.amount),
+      account_id: transaction.account_id || '',
+      category_id: transaction.category_id || '',
+      note: transaction.note || '',
+      occurred_at: transaction.occurred_at ? transaction.occurred_at.split('T')[0] : ''
+    })
+    // 🛡️ L: 先清理再加载，防止残留
+    setSelectedTagIds([])
+    // 解析标签
+    if (transaction.tags) {
+      try {
+        const tagNames = typeof transaction.tags === 'string' ? JSON.parse(transaction.tags) : transaction.tags
+        if (Array.isArray(tagNames)) {
+          // 根据标签名匹配ID
+          const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
+          setSelectedTagIds(matchedIds)
+        }
+      } catch {}
+    }
+  }, [transaction?.id, visible, tags])  // 依赖 transaction.id 而不是整个 transaction 对象
+
   // Body滚动锁定 - 防止滚动穿透
   useEffect(() => {
     if (visible) {

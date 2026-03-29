@@ -35,8 +35,8 @@ class Transaction(Base):
     extra = Column(Text)  # JSON string
     related_transaction_id = Column(String(36), index=True)
     business_key = Column(String(100))
-    include_in_expense = Column(Boolean, default=True)
-    include_in_income = Column(Boolean, default=True)
+    include_in_expense = Column(Boolean, default=True, index=True)  # 🛡️ L: 添加索引
+    include_in_income = Column(Boolean, default=True, index=True)  # 🛡️ L: 添加索引
     include_in_cashflow = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -52,5 +52,9 @@ class Transaction(Base):
         Index("ix_transactions_book_date", "book_id", "occurred_at"),
         Index("ix_transactions_book_type", "book_id", "transaction_type"),
         Index("ix_transactions_book_category", "book_id", "category_id"),
+        # 🛡️ L: 新增复合索引以加速报表查询
+        Index("ix_transactions_book_income_period", "book_id", "include_in_income", "occurred_at"),
+        Index("ix_transactions_book_expense_period", "book_id", "include_in_expense", "occurred_at"),
+        Index("ix_transactions_book_type_status_period", "book_id", "transaction_type", "status", "occurred_at"),
         UniqueConstraint("book_id", "source_type", "business_key", name="uix_transaction_business_key"),
     )

@@ -92,6 +92,7 @@ def _get_period_metrics(db: Session, book_id: str, date_from: date, date_to: dat
         Transaction.book_id == book_id,
         Transaction.transaction_type == TransactionType.INCOME.value,
         Transaction.status == "confirmed",
+        Transaction.include_in_income == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= dt_from,
         Transaction.occurred_at <= dt_to,
     ).scalar() or Decimal("0")
@@ -104,6 +105,7 @@ def _get_period_metrics(db: Session, book_id: str, date_from: date, date_to: dat
             TransactionType.INSTALLMENT_PURCHASE.value,
         ]),
         Transaction.status == "confirmed",
+        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= dt_from,
         Transaction.occurred_at <= dt_to,
     ).scalar() or Decimal("0")
@@ -224,6 +226,7 @@ def _get_category_amounts_for_period(
             Transaction.book_id == book_id,
             Transaction.transaction_type == TransactionType.INCOME.value,
             Transaction.status == "confirmed",
+            Transaction.include_in_income == True,  # 🛡️ L: 收支开关过滤
             Transaction.occurred_at >= dt_from,
             Transaction.occurred_at <= dt_to,
             Transaction.category_id.in_(category_ids),
@@ -244,6 +247,7 @@ def _get_category_amounts_for_period(
             TransactionType.INSTALLMENT_PURCHASE.value,
         ]),
         Transaction.status == "confirmed",
+        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= dt_from,
         Transaction.occurred_at <= dt_to,
         Transaction.category_id.in_(category_ids),
@@ -258,6 +262,7 @@ def _get_category_amounts_for_period(
         OriginalTxn.c.book_id == book_id,
         RefundTxn.c.transaction_type == TransactionType.REFUND.value,
         RefundTxn.c.status == "confirmed",
+        RefundTxn.c.include_in_expense == True,  # 🛡️ L: 收支开关过滤（退款也计入支出抵消）
         RefundTxn.c.occurred_at >= dt_from,
         RefundTxn.c.occurred_at <= dt_to,
         OriginalTxn.c.category_id.in_(category_ids),
@@ -531,6 +536,7 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
             TransactionType.INSTALLMENT_PURCHASE.value
         ]),
         Transaction.status == "confirmed",
+        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max),
         Transaction.category_id.isnot(None)
@@ -674,6 +680,7 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
         Transaction.book_id == book_id,
         Transaction.transaction_type == TransactionType.INCOME.value,
         Transaction.status == "confirmed",
+        Transaction.include_in_income == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max)
     ).group_by(func.date(Transaction.occurred_at)).all()
@@ -690,6 +697,7 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
             TransactionType.INSTALLMENT_PURCHASE.value
         ]),
         Transaction.status == "confirmed",
+        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max)
     ).group_by(func.date(Transaction.occurred_at)).all()
@@ -742,6 +750,7 @@ def get_income_by_category(db: Session, book_id: str, date_from: date, date_to: 
         Transaction.book_id == book_id,
         Transaction.transaction_type == TransactionType.INCOME.value,
         Transaction.status == "confirmed",
+        Transaction.include_in_income == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max),
         Transaction.category_id.isnot(None)

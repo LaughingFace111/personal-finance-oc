@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space } from 'antd'
+import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch } from 'antd'
+import ReactECharts from 'echarts-for-react'
 const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
@@ -7,6 +8,9 @@ import { StagingImportTable } from './components/StagingImportTable'
 
 // 懒加载新页面组件
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
+const OtherHubPage = lazy(() => import('./pages/OtherHubPage'))
+const InstallmentPage = lazy(() => import('./pages/InstallmentPage'))
+const DebtPage = lazy(() => import('./pages/DebtPage'))
 const OtherTransactionPage = lazy(() => import('./pages/OtherTransactionPage'))
 const ReportsHomePage = lazy(() => import('./pages/ReportsHomePage'))
 const AccountBalanceTrendPage = lazy(() => import('./pages/AccountBalanceTrendPage'))
@@ -303,7 +307,11 @@ return (
             <Route path="/reports/account-balance-trend" element={<Suspense fallback={<LoadingFallback />}><AccountBalanceTrendPage /></Suspense>} />
             <Route path="/transfer" element={<TransferPage />} />
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
-            <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage /></Suspense>} />
+            {/* 其他交易 - 导航枢纽页 */}
+            <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
+            <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><InstallmentPage /></Suspense>} />
+            <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="lend" /></Suspense>} />
+            <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="borrow" /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/settings/import-templates" element={<Suspense fallback={<LoadingFallback />}><ImportTemplatesPage /></Suspense>} />
             <Route path="/settings/recurring-rules" element={<Suspense fallback={<LoadingFallback />}><RecurringRulesPage /></Suspense>} />
@@ -575,6 +583,92 @@ const DashboardPage = () => {
           ))}
         </div>
       </div>
+
+      {/* 🛡️ L: 信用账户待还列表 */}
+      <CreditRepaymentSummary />
+    </div>
+  )
+}
+
+// 🛡️ L: 信用账户待还摘要组件
+const CreditRepaymentSummary = () => {
+  const { user } = useAuth()
+  const [summary, setSummary] = useState<any[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
+  const bookId = user?.default_book_id
+
+  useEffect(() => {
+    if (!bookId) return
+    setLoading(true)
+    setError(false)
+    apiGet(`/api/accounts/credit-repayment-summary?book_id=${bookId}`)
+      .then((data: any) => {
+        setSummary(data || [])
+        setLoading(false)
+      })
+      .catch(() => { 
+        setError(true) 
+        setLoading(false)
+      })
+  }, [bookId])
+
+  // 加载中或出错时不显示
+  if (loading || error) return null
+  if (summary.length === 0) return null
+
+  return (
+    <div style={{ margin: '0 0 16px', borderRadius: 16, background: 'var(--bg-card)', overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+      {/* 折叠标题 */}
+      <div 
+        onClick={() => setExpanded(!expanded)}
+        style={{ 
+          padding: '12px 16px', 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center',
+          cursor: 'pointer',
+          background: expanded ? 'var(--bg-elevated)' : 'transparent'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 16, fontWeight: 600 }}>信用账户待还</span>
+          <Tag color="orange">{summary.length} 个账户</Tag>
+        </div>
+        <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{expanded ? '▲ 收起' : '▼ 展开'}</span>
+      </div>
+
+      {/* 折叠内容 */}
+      {expanded && (
+        <div style={{ padding: '0 16px 16px' }}>
+          {summary.map((item: any, index: number) => (
+            <div 
+              key={item.account_id}
+              style={{ 
+                padding: '12px 0', 
+                borderBottom: index < summary.length - 1 ? '1px solid var(--border-color)' : 'none'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontWeight: 500 }}>{item.account_name}</span>
+                <span style={{ 
+                  color: item.statement_balance > 0 ? '#fa8c16' : '#52c41a',
+                  fontWeight: 600
+                }}>
+                  {item.statement_balance > 0 ? `¥${Number(item.statement_balance).toFixed(2)}` : '✅ 本期已还清'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)' }}>
+                <span>还款日: {item.repayment_date}</span>
+                <span style={{ color: item.days_until_repayment <= 5 ? '#ff4d4f' : 'inherit' }}>
+                  {item.days_until_repayment === 0 ? '今天还款' : `还有 ${item.days_until_repayment} 天`}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -838,6 +932,8 @@ const TransactionsPage = () => {
   const getAccountName = (accountId: string) => {
     if (!accountId) return ''
     const acc = accounts.find((a: any) => a.id === accountId)
+    if (!acc) return '[已删除账户]'
+    if (acc.is_deleted) return '[已删除账户]'
     return acc?.name || ''
   }
 
@@ -1380,11 +1476,11 @@ const AccountsPage = () => {
   const getCreditDisplay = (item: any) => {
     if (isCreditAccount(item.account_type)) {
       const limit = Number(item.credit_limit || 0)
-      // 可用额度 = 信用额度 - 当前欠款(debt_amount) - 初始欠款(opening_balance)
-      // 注：新建账户时 initial_debt 存入 debt_amount，所以直接用 debt_amount
+      // 🛡️ L: 可用额度 = 信用额度 - 当前欠款(debt_amount) - 冻结金额(frozen_amount)
       const debt = Number(item.debt_amount || 0)
-      const remaining = limit - debt
-      return { remaining, limit, debt }
+      const frozen = Number(item.frozen_amount || 0)
+      const remaining = limit - debt - frozen
+      return { remaining, limit, debt, frozen }
     }
     return null
   }
@@ -1399,6 +1495,8 @@ const AccountsPage = () => {
           grid={{ gutter: 16, column: 2 }} 
           dataSource={data} 
           renderItem={item => {
+            // 跳过已删除的账户
+            if (item.is_deleted) return null
             const creditInfo = getCreditDisplay(item)
             return (
               <List.Item>
@@ -1440,6 +1538,7 @@ const AccountDetailPage = () => {
   const [account, setAccount] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [balanceTrendData, setBalanceTrendData] = useState<any[]>([])
   const [adjustModalVisible, setAdjustModalVisible] = useState(false)
   const [adjustForm] = Form.useForm()
   const [adjustSubmitting, setAdjustSubmitting] = useState(false)
@@ -1459,6 +1558,17 @@ const AccountDetailPage = () => {
       .catch(() => { message.error('加载失败'); navigate('/accounts') })
   }, [bookId, accountId])
 
+  // 🛡️ L: 加载余额趋势数据
+  useEffect(() => {
+    if (!accountId) return
+    
+    apiGet(`/api/accounts/${accountId}/balance-trend?start_date=2026-01-01&end_date=2026-03-31`)
+      .then((data: any) => {
+        setBalanceTrendData(data || [])
+      })
+      .catch(() => setBalanceTrendData([]))
+  }, [accountId])
+
   useEffect(() => {
     if (!bookId || !accountId || !month) return
     
@@ -1474,18 +1584,43 @@ const AccountDetailPage = () => {
       .finally(() => setLoading(false))
   }, [bookId, accountId, month])
 
-  // 余额调整（通过创建调整交易）
-  const handleBalanceAdjust = async (adjustAmount: number, note: string) => {
-    if (!confirm(`确定要调整余额 ${adjustAmount >= 0 ? '+' : ''}¥${adjustAmount} 吗？`)) return
+  // 判断账户类型
+  const isCreditAccount = account?.account_type === 'credit_card' || account?.account_type === 'credit_line'
+  const isAssetAccount = ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account?.account_type)
+  
+  // 余额调整（合规平账操作）
+  const handleBalanceAdjust = async (values: any) => {
+    const adjustMode = isCreditAccount ? 'available_credit' : 'balance'
+    const currentValue = isCreditAccount 
+      ? (Number(account.credit_limit || 0) - Number(account.debt_amount || 0))  // 当前可用额度
+      : Number(account.current_balance || 0)  // 当前余额
+    
+    if (!values.note || values.note.trim() === '') {
+      message.error('调整原因不能为空')
+      return
+    }
+    
+    let targetValue: number
+    if (values.adjustMode === 'direct') {
+      // 直接设置目标值
+      targetValue = values.targetValue
+    } else {
+      // 按差额调整
+      targetValue = currentValue + (values.adjustDirection === 'increase' ? values.amount : -values.amount)
+    }
+    
     try {
       await apiPost('/api/transactions/adjust', {
         book_id: bookId,
         account_id: accountId,
-        amount: Math.abs(adjustAmount),
-        direction: adjustAmount >= 0 ? 'in' : 'out',
-        note: note || '余额调整'
+        target_value: targetValue,
+        adjust_mode: adjustMode,
+        note: values.note,
+        is_counted_in_reports: values.countInReports || false
       })
       message.success('调整成功')
+      setAdjustModalVisible(false)
+      adjustForm.resetFields()
       // 重新加载账户信息
       const updated = await apiGet(`/api/accounts/${accountId}`)
       setAccount(updated)
@@ -1512,7 +1647,25 @@ const AccountDetailPage = () => {
             <div style={{ color: '#666', fontSize: 14 }}>{typeLabels[account.account_type] || account.account_type}</div>
             <div style={{ fontSize: 24, fontWeight: 600, marginTop: 8 }}>¥{Number(account.current_balance || 0).toFixed(2)}</div>
           </div>
-          <Button type="primary" size="small" onClick={() => navigate(`/accounts/${accountId}/edit`)}>编辑</Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button type="primary" size="small" onClick={() => navigate(`/accounts/${accountId}/edit`)}>编辑</Button>
+            <Popconfirm
+              title="删除账户"
+              description="删除后，该账户的历史交易将被保留并标记为[已删除账户]，此操作不可逆，是否继续？"
+              onConfirm={async () => {
+                try {
+                  await apiDelete(`/api/accounts/${accountId}`)
+                  message.success('账户已删除')
+                  navigate('/accounts')
+                } catch { message.error('删除失败') }
+              }}
+              okText="确认删除"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+            >
+              <Button danger size="small">删除账户</Button>
+            </Popconfirm>
+          </div>
         </div>
         
         {/* 信用账户额外信息 */}
@@ -1542,6 +1695,23 @@ const AccountDetailPage = () => {
                 <span>每月 {account.repayment_day} 日</span>
               </div>
             )}
+            {/* 🛡️ L: 本期待还 - 信用账户专用 */}
+            {account.current_statement_balance !== null && (
+              <div style={{ 
+                display: 'flex', justifyContent: 'space-between', marginTop: 8, 
+                padding: '8px 12px', background: '#fff7e6', borderRadius: 8,
+                border: '1px solid #ffd591'
+              }}>
+                <span style={{ fontWeight: 600 }}>本期待还:</span>
+                <span style={{ color: '#fa8c16', fontWeight: 600, fontSize: 16 }}>¥{Number(account.current_statement_balance).toFixed(2)}</span>
+              </div>
+            )}
+            {account.days_until_repayment !== null && account.days_until_repayment > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, color: '#fa8c16' }}>
+                <span>距还款日:</span>
+                <span>{account.days_until_repayment} 天</span>
+              </div>
+            )}
             {account.institution_name && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                 <span>所属机构:</span>
@@ -1564,9 +1734,37 @@ const AccountDetailPage = () => {
         </div>
       </Card>
 
+      {/* 余额趋势图 */}
+      {balanceTrendData && balanceTrendData.length > 0 && (
+        <Card style={{ marginBottom: 16 }} title="余额趋势">
+          <ReactECharts
+            option={{
+              tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].name}<br/>余额: ¥${params[0].value.toFixed(2)}` },
+              grid: { left: 60, right: 20, top: 20, bottom: 30 },
+              xAxis: { type: 'category', data: balanceTrendData.map((p: any) => p.date), axisLabel: { fontSize: 10 } },
+              yAxis: { 
+                type: 'value', 
+                axisLabel: { formatter: (v: number) => `¥${Math.abs(v).toFixed(0)}` },
+                ...(isCreditAccount ? { min: (value: any) => Math.min(value.min, 0) } : {}),
+              },
+              series: [{
+                type: 'line',
+                data: balanceTrendData.map((p: any) => p.balance),
+                smooth: true,
+                areaStyle: { opacity: 0.2 },
+                itemStyle: { color: isCreditAccount ? '#ff4d4f' : '#1890ff' },
+                lineStyle: { width: 2 },
+              }],
+            }}
+            style={{ height: 220 }}
+            opts={{ renderer: 'canvas' }}
+          />
+        </Card>
+      )}
+
       {/* 余额调整弹窗 */}
       <Modal
-        title="余额调整"
+        title={isCreditAccount ? "调整可用额度" : "余额调整"}
         open={adjustModalVisible}
         onCancel={() => { setAdjustModalVisible(false); adjustForm.resetFields() }}
         footer={null}
@@ -1574,32 +1772,72 @@ const AccountDetailPage = () => {
         <Form
           form={adjustForm}
           layout="vertical"
-          onFinish={async (values) => {
-            setAdjustSubmitting(true)
-            try {
-              await handleBalanceAdjust(
-                values.adjustType === 'increase' ? values.amount : -values.amount,
-                values.note || '余额调整'
-              )
-              setAdjustModalVisible(false)
-              adjustForm.resetFields()
-            } finally {
-              setAdjustSubmitting(false)
-            }
-          }}
+          initialValues={{ adjustMode: 'direct', adjustDirection: 'increase' }}
+          onFinish={handleBalanceAdjust}
         >
-          <Form.Item name="adjustType" label="调整方向" rules={[{ required: true }]}>
-            <Select>
-              <Select.Option value="increase">增加</Select.Option>
-              <Select.Option value="decrease">减少</Select.Option>
-            </Select>
+          {isCreditAccount && (
+            <div style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 8, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>当前状态</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>总额度</span><span>¥{Number(account?.credit_limit || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0)).toFixed(2)}</span>
+              </div>
+            </div>
+          )}
+          
+          <Form.Item name="adjustMode" label="调整方式" rules={[{ required: true }]}>
+            <Radio.Group>
+              <Radio.Button value="direct">直接设置目标值</Radio.Button>
+              <Radio.Button value="delta">按差额调整</Radio.Button>
+            </Radio.Group>
           </Form.Item>
-          <Form.Item name="amount" label="金额" rules={[{ required: true, message: '请输入金额' }]}>
-            <InputNumber style={{ width: '100%' }} min={0.01} precision={2} placeholder="请输入金额" />
+          
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.adjustMode !== curr.adjustMode}>
+            {({ getFieldValue }) => (
+              getFieldValue('adjustMode') === 'direct' ? (
+                <Form.Item name="targetValue" label={isCreditAccount ? "目标可用额度" : "目标余额"} rules={[{ required: true, message: '请输入目标值' }]}>
+                  <InputNumber 
+                    style={{ width: '100%' }} 
+                    min={0} 
+                    precision={2} 
+                    placeholder={isCreditAccount ? `当前: ¥${(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0)).toFixed(2)}` : `当前: ¥${Number(account?.current_balance || 0).toFixed(2)}`}
+                  />
+                </Form.Item>
+              ) : (
+                <>
+                  <Form.Item name="adjustDirection" label="调整方向" rules={[{ required: true }]}>
+                    <Select>
+                      <Select.Option value="increase">增加</Select.Option>
+                      <Select.Option value="decrease">减少</Select.Option>
+                    </Select>
+                  </Form.Item>
+                  <Form.Item name="amount" label="金额" rules={[{ required: true, message: '请输入金额' }]}>
+                    <InputNumber style={{ width: '100%' }} min={0.01} precision={2} placeholder="请输入金额" />
+                  </Form.Item>
+                </>
+              )
+            )}
           </Form.Item>
-          <Form.Item name="note" label="备注">
-            <Input.TextArea rows={2} placeholder="可选备注" />
+          
+          <Form.Item name="note" label="调整原因" rules={[{ required: true, message: '调整原因必填' }]}>
+            <Input.TextArea rows={2} placeholder="请输入调整原因（如：修正历史遗留误差、补录遗漏交易）" />
           </Form.Item>
+          
+          <Form.Item name="countInReports" valuePropName="checked">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Switch size="small" />
+              <span>此笔调整计入收支报表</span>
+              <Tooltip title="默认关闭。大多数平账是为了修正历史遗留误差，不代表当月真实消费。">
+                <span style={{ color: '#999', cursor: 'help' }}>❓</span>
+              </Tooltip>
+            </div>
+          </Form.Item>
+          
           <Button type="primary" htmlType="submit" block loading={adjustSubmitting}>确认调整</Button>
         </Form>
       </Modal>
@@ -1651,31 +1889,46 @@ const AccountEditPage = () => {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(true)
+  const [accountType, setAccountType] = useState<string>('')
+  const [isAssetAccount, setIsAssetAccount] = useState(false)
+  const [isCreditAccount, setIsCreditAccount] = useState(false)
+  const [isLoanAccount, setIsLoanAccount] = useState(false)
 
   useEffect(() => {
     if (!bookId || !accountId) return
     
+    setFetching(true)
     apiGet(`/api/accounts/${accountId}`)
       .then(acc => {
-        setAccountType(acc.account_type)
-        form.setFieldsValue({
-          name: acc.name,
-          account_type: acc.account_type,
-          note: acc.note || '',
-          // 信用类字段
-          credit_limit: acc.credit_limit,
-          billing_day: acc.billing_day,
-          billing_day_rule: acc.billing_day_rule || 'current_cycle',
-          repayment_day: acc.repayment_day,
-          card_last_four: acc.card_last4,
-          initial_debt: acc.debt_amount,  // 加载当前欠款/已用额度
-          // 资产类字段
-          institution: acc.institution_name
-        })
+        const accType = acc.account_type
+        setAccountType(accType)
+        setIsAssetAccount(['cash', 'debit_card', 'ewallet'].includes(accType))
+        setIsCreditAccount(['credit_card', 'credit_line'].includes(accType))
+        setIsLoanAccount(accType === 'loan')
+        
+        // 延迟设置表单值，确保状态先更新
+        setTimeout(() => {
+          form.setFieldsValue({
+            name: acc.name,
+            account_type: accType,
+            note: acc.note || '',
+            credit_limit: acc.credit_limit,
+            billing_day: acc.billing_day,
+            billing_day_rule: acc.billing_day_rule || 'current_cycle',
+            repayment_day: acc.repayment_day,
+            card_last_four: acc.card_last4,
+            initial_debt: acc.debt_amount,
+            institution: acc.institution_name
+          })
+        }, 50)
       })
-      .catch(() => { message.error('加载失败'); navigate('/accounts') })
+      .catch(err => { 
+        console.error('加载账户失败:', err)
+        message.error('加载失败: ' + (err.message || '未知错误'))
+        navigate('/accounts') 
+      })
       .finally(() => setFetching(false))
-  }, [bookId, accountId])
+  }, [bookId, accountId, form])
 
   const onFinish = async (values: any) => {
     if (!bookId) return
@@ -2007,7 +2260,14 @@ const TransferPage = () => {
   }
 
   return (
-    <Card title="转账">
+    <Card 
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Button type="text" size="small" icon={<span>←</span>} onClick={() => navigate(-1)} style={{ border: 'none' }} />
+          <span>转账</span>
+        </div>
+      }
+    >
       <div style={{ marginBottom: 16 }}><Select placeholder="转出账户" value={form.from_account_id || undefined} onChange={v => setForm(f => ({ ...f, from_account_id: v || '' }))} style={{ width: '100%' }}>{accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}</Select></div>
       <div style={{ marginBottom: 16 }}><Select placeholder="转入账户" value={form.to_account_id || undefined} onChange={v => setForm(f => ({ ...f, to_account_id: v || '' }))} style={{ width: '100%' }}>{accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}</Select></div>
       <div style={{ marginBottom: 16 }}><InputNumber placeholder="金额" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: String(v || '') }))} style={{ width: '100%' }} min={0} precision={2} /></div>
@@ -2058,8 +2318,8 @@ const AccountFormPage = () => {
         payload.billing_day_rule = values.billing_day_rule || 'current_cycle'
         payload.repayment_day = values.repayment_day || null
         payload.card_last4 = values.card_last_four || null
-        payload.current_balance = 0  // 信用卡使用 debt_amount
-        payload.debt_amount = values.initial_debt || 0
+        // 信用类账户：将初始欠款通过 opening_balance 传给后端，由后端存入 debt_amount
+        payload.opening_balance = values.initial_debt || 0
       } else if (isLoanAccount) {
         // 贷款类：使用 debt_amount 表达负债
         payload.debt_amount = values.loan_principal || 0  // 贷款本金
