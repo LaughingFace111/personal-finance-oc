@@ -1,4 +1,4 @@
-# 个人记账 Web 服务 (Personal Finance)
+# 个人记账 Personal Finance
 
 一个功能完整的个人/家庭记账 Web 应用，支持账户管理、交易记录、分期消费、贷款管理、批量导入和报表分析。
 
@@ -7,10 +7,20 @@
 ### 核心功能
 - 📊 **账户管理** - 支持现金、借记卡、电子钱包、信用卡、信用账户(花呗)、贷款账户等多种类型
 - 💰 **交易记录** - 支出、收入、转账、退款完整支持
-- 📈 **分期消费** - 信用卡/花呗分期，自动生成期数和还款计划
+- 💳 **分期消费** - 信用卡/花呗分期，自动生成期数和还款计划，支持冻结额度管理
+- 📋 **分期任务大盘** - 统一查看所有进行中的分期任务，支持单期执行
 - 🏦 **贷款管理** - 房贷、车贷等贷款，支持本金/利息拆分
 - 📤 **批量导入** - CSV 文件导入，自动识别归类
 - 📉 **报表分析** - 首页总览、分类支出、账户分析、债务看板
+- 📈 **余额趋势图** - 信用账户显示每日可用额度趋势
+
+### 信用账户专项
+- 本期待还金额计算
+- 账单日/还款日管理
+- 距还款日倒计时
+- 可用额度实时计算：`可用额度 = 信用额度 - 欠款 - 冻结金额`
+- 调整总额度（不生成流水）
+- 负债平账（生成调整流水）
 
 ### 技术特点
 - ✅ 按业务规则设计，支出/收入/现金流统计口径清晰
@@ -22,7 +32,7 @@
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Python 3.11 + FastAPI + SQLAlchemy |
+| 后端 | Python 3.12 + FastAPI + SQLAlchemy |
 | 数据库 | SQLite (开发) / PostgreSQL (生产) |
 | 前端 | React 18 + TypeScript + Vite |
 | UI | Ant Design 5.x |
@@ -36,15 +46,15 @@
 cd server
 
 # 创建虚拟环境
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate  # Windows
+python -m venv .venv
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate  # Windows
 
 # 安装依赖
 pip install -r requirements.txt
 
 # 启动服务
-python -m uvicorn src.main:app --reload
+uvicorn src.main:app --host 0.0.0.0 --port 8000
 
 # API 文档: http://localhost:8000/docs
 ```
@@ -63,29 +73,29 @@ npm run dev
 # 访问: http://localhost:5173
 ```
 
+### 默认账号
+- 用户名: test
+- 密码: 357103
+
 ## 项目结构
 
 ```
 personal-finance/
-├── docs/                      # 技术方案文档
-│   ├── TECH_DESIGN.md        # PostgreSQL 版设计
-│   └── TECH_DESIGN_LITE_V8.md # SQLite 最终版设计
-│
 ├── server/                    # 后端项目
 │   ├── src/
-│   │   ├── main.py          # FastAPI 入口
-│   │   ├── core/            # 核心模块
+│   │   ├── main.py           # FastAPI 入口
+│   │   ├── core/             # 核心模块
 │   │   │   ├── config.py    # 配置管理
 │   │   │   ├── database.py  # 数据库连接
-│   │   │   ├── security.py # JWT 鉴权
+│   │   │   ├── security.py  # JWT 鉴权
 │   │   │   └── exceptions.py
 │   │   │
-│   │   ├── modules/          # 业务模块
+│   │   ├── modules/         # 业务模块
 │   │   │   ├── auth/         # 用户认证
-│   │   │   ├── books/       # 账本管理
-│   │   │   ├── accounts/    # 账户管理
-│   │   │   ├── categories/  # 分类管理
-│   │   │   ├── transactions/# 交易记录
+│   │   │   ├── books/        # 账本管理
+│   │   │   ├── accounts/     # 账户管理
+│   │   │   ├── categories/   # 分类管理
+│   │   │   ├── transactions/ # 交易记录
 │   │   │   ├── installments/ # 分期消费
 │   │   │   ├── loans/       # 贷款管理
 │   │   │   ├── imports/     # 批量导入
@@ -95,25 +105,27 @@ personal-finance/
 │   │   └── common/          # 公共工具
 │   │
 │   ├── data/                # SQLite 数据库
-│   ├── migrations/          # 数据库迁移
 │   ├── requirements.txt
 │   └── .env.example
 │
-└── web/                     # 前端项目
+└── web/                      # 前端项目
     ├── src/
-    │   ├── pages/          # 页面组件
-    │   │   ├── Dashboard.tsx   # 首页看板
-    │   │   ├── Accounts.tsx    # 账户管理
-    │   │   ├── Categories.tsx  # 分类管理
-    │   │   ├── Transactions.tsx # 交易记录
-    │   │   ├── Transfer.tsx   # 转账
-    │   │   ├── CreditCards.tsx # 信用账户
-    │   │   ├── Loans.tsx      # 贷款管理
-    │   │   ├── Imports.tsx    # 批量导入
-    │   │   └── Reports.tsx    # 报表中心
+    │   ├── pages/           # 页面组件
+    │   │   ├── Dashboard.tsx     # 首页看板
+    │   │   ├── Accounts.tsx      # 账户管理
+    │   │   ├── AccountDetail.tsx # 账户详情
+    │   │   ├── Transactions.tsx   # 交易记录
+    │   │   ├── AddTransaction.tsx # 添加交易
+    │   │   ├── Transfer.tsx      # 转账
+    │   │   ├── OtherHub.tsx      # 其他交易入口
+    │   │   ├── Installment.tsx   # 分期消费录入
+    │   │   ├── InstallmentTasks.tsx # 分期任务大盘
+    │   │   ├── Reports.tsx       # 报表中心
+    │   │   └── ...
     │   │
-    │   ├── services/        # API 服务
-    │   └── App.tsx
+    │   ├── services/         # API 服务
+    │   ├── components/       # 公共组件
+    │   └── App.tsx           # 主应用
     │
     ├── package.json
     └── vite.config.ts
@@ -127,11 +139,14 @@ personal-finance/
 
 ### 账本
 - `GET/POST /api/books` - 获取/创建账本
-- `GET/PATCH/DELETE /api/books/{id}` - 账本 CRUD
 
 ### 账户
 - `GET/POST /api/accounts` - 获取/创建账户
 - `GET/PATCH/DELETE /api/accounts/{id}` - 账户 CRUD
+- `POST /api/accounts/{id}/adjust-limit` - 调整信用额度（不生成流水）
+- `POST /api/accounts/rebuild/{id}` - 重建账户余额
+- `GET /api/accounts/credit-repayment-summary` - 信用还款汇总
+- `GET /api/accounts/{id}/balance-trend` - 余额/可用额度趋势
 
 ### 分类
 - `GET /api/categories` - 获取分类列表
@@ -142,12 +157,13 @@ personal-finance/
 - `GET /api/transactions` - 交易列表(支持筛选)
 - `POST /api/transactions` - 创建交易
 - `POST /api/transactions/transfer` - 转账
+- `POST /api/transactions/adjust` - 余额/可用额度平账
 - `POST /api/transactions/refund` - 退款
 
 ### 分期
 - `GET /api/installments` - 分期计划列表
 - `POST /api/installments` - 创建分期消费
-- `POST /api/installments/{id}/settle` - 分期还款
+- `POST /api/installments/{id}/execute` - 执行单期分期
 
 ### 贷款
 - `GET /api/loans` - 贷款列表
@@ -165,20 +181,29 @@ personal-finance/
 - `GET /api/reports/accounts` - 账户汇总
 - `GET /api/reports/upcoming-debts` - 待还债务
 
-## 交易类型与统计口径
+## 信用账户算法
 
-| 类型 | 计入支出 | 计入收入 | 现金流 |
-|------|---------|---------|--------|
-| expense (支出) | ✅ | ❌ | ✅ (资产账户) |
-| income (收入) | ❌ | ✅ | ✅ |
-| installment_purchase (分期消费) | ✅ | ❌ | ❌ |
-| fee (手续费/利息) | ✅ | ❌ | ✅ |
-| repayment_credit_card | ❌ | ❌ | ❌ |
-| repayment_loan | ❌ | ❌ | ❌ |
-| debt_borrow/debt_lend | ❌ | ❌ | ✅ |
-| refund | ❌ | ❌ | ✅ (资产账户) |
+### 可用额度计算
+```
+可用额度 = 信用额度 - 当前欠款 - 冻结金额
+```
 
-详细统计规则见 `docs/TECH_DESIGN_LITE_V8.md`
+### 平账公式（调整可用额度）
+```
+目标欠款 = 信用额度 - 冻结金额 - 目标可用额度
+欠款差额 = 目标欠款 - 当前欠款
+- 欠款差额 > 0 → 生成支出流水
+- 欠款差额 < 0 → 生成收入流水
+```
+
+### 分期冻结逻辑
+```
+创建分期时：
+  冻结金额 = 每期金额 × (总期数 - 1)
+执行单期时：
+  冻结金额 -= 每期金额
+  欠款 -= 每期金额
+```
 
 ## 设计文档
 
