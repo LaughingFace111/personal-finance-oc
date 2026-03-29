@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Select, message } from 'antd';
 import { apiGet, apiPost, apiUpload } from '../services/api';
 import { TagCreateModal } from './TagCreateModal';
+import { HierarchyPickerModal } from './HierarchyPickerModal';
 import { getDefaultBookId, TagOption } from '../pages/transactionFormSupport';
 
 type Account = {
@@ -187,6 +188,8 @@ export function StagingImportTable() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [confirmResult, setConfirmResult] = useState<ConfirmResponse | null>(null);
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [bookId, setBookId] = useState<string | null>(null);
   const [tags, setTags] = useState<SelectTagOption[]>([]);
   const [tagSearchValues, setTagSearchValues] = useState<Record<string, string>>({});
@@ -613,26 +616,15 @@ export function StagingImportTable() {
 
                     <div>
                       <div style={styles.label}>类别</div>
-                      <select
+                      <div
                         style={styles.select}
-                        value={row.categoryId || ''}
-                        onChange={e => {
-                          const nextCategoryId = e.target.value || null;
-                          const selected = nextCategoryId ? categoryById.get(nextCategoryId) : null;
-                          updateRow(row.tempId, {
-                            categoryId: nextCategoryId,
-                            categoryName: selected?.name || null,
-                            categoryMatchStatus: nextCategoryId ? 'MATCHED' : 'UNMATCHED',
-                          });
+                        onClick={() => {
+                          setEditingRowId(row.tempId);
+                          setCategoryModalOpen(true);
                         }}
                       >
-                        <option value="">未分类</option>
-                        {allowedCategories.map(category => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
+                        {row.categoryId ? categoryById.get(row.categoryId)?.name || '未分类' : '点击选择类别'}
+                      </div>
                       <div style={styles.helper}>原始类别：{row.tradeCategory || '-'}</div>
                     </div>
 
@@ -816,6 +808,32 @@ export function StagingImportTable() {
             setTagSearchValues((current) => ({ ...current, [tagCreateState.rowId]: '' }));
           }
           setTagCreateState(null);
+        }}
+      />
+
+      <HierarchyPickerModal
+        open={categoryModalOpen}
+        title="选择类别"
+        items={allowedCategories}
+        value={editingRowId ? rows.find(r => r.tempId === editingRowId)?.categoryId || '' : ''}
+        emptyText="暂无可选类别"
+        onCancel={() => {
+          setCategoryModalOpen(false);
+          setEditingRowId(null);
+        }}
+        onConfirm={(nextValue) => {
+          if (editingRowId) {
+            const row = rows.find(r => r.tempId === editingRowId);
+            const nextCategoryId = typeof nextValue === 'string' ? nextValue : '';
+            const selected = nextCategoryId ? categoryById.get(nextCategoryId) : null;
+            updateRow(editingRowId, {
+              categoryId: nextCategoryId || null,
+              categoryName: selected?.name || null,
+              categoryMatchStatus: nextCategoryId ? 'MATCHED' : 'UNMATCHED',
+            });
+          }
+          setCategoryModalOpen(false);
+          setEditingRowId(null);
         }}
       />
     </div>
