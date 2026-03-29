@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 from dateutil import parser as date_parser
+from sqlalchemy.exc import IntegrityError  # 🛡️ L: 添加唯一约束异常捕获
 
 from sqlalchemy.orm import Session
 
@@ -340,11 +341,19 @@ def confirm_import(db: Session, batch_id: str, book_id: str, data: ConfirmImport
                         error_count += 1
                         continue
 
+                    # 🛡️ L: 确定交易类型和方向，设置收支开关
+                    tx_type = normalized.get("transaction_type", "expense")
+                    direction = normalized.get("direction", "out")
+                    
+                    # 支出交易计入支出，收入交易计入收入
+                    is_expense = tx_type == "expense" or direction == "out"
+                    is_income = tx_type == "income" or direction == "in"
+
                     # Create transaction
                     txn_data = TransactionCreate(
                         occurred_at=datetime.fromisoformat(normalized["occurred_at"]) if normalized.get("occurred_at") else datetime.utcnow(),
-                        transaction_type=normalized.get("transaction_type", "expense"),
-                        direction=normalized.get("direction", "out"),
+                        transaction_type=tx_type,
+                        direction=direction,
                         amount=Decimal(normalized["amount"]),
                         account_id=row.guessed_account_id,
                         category_id=row.guessed_category_id,
@@ -354,13 +363,30 @@ def confirm_import(db: Session, batch_id: str, book_id: str, data: ConfirmImport
                         source_batch_id=batch_id,
                         source_row_no=row.row_no,
                         business_key=business_key,
+                        # 🛡️ L: 显式设置收支开关
+                        include_expense_override=is_expense,
+                        include_income_override=is_income,
+                        include_cashflow_override=True,  # 导入的交易默认计入现金流
+                        # 🛡️ L: 初始化标签为空数组，避免 None 导致 Pydantic 校验失败
+                        tags=[],
                     )
 
-                    create_transaction(db, book_id, txn_data)
+                    try:
+                        create_transaction(db, book_id, txn_data)
+                        row.confirm_status = ConfirmStatus.CONFIRMED.value
+                        confirmed_count += 1
+                    except IntegrityError as ie:
+                        # 🛡️ L: 数据库唯一约束冲突 - 标记为重复
+                        db.rollback()  # 回滚当前事务
+                        row.error_message = f"重复数据: {str(ie)}"
+                        row.confirm_status = ConfirmStatus.DUPLICATE.value
+                        duplicate_count += 1
 
-                    row.confirm_status = ConfirmStatus.CONFIRMED.value
-                    confirmed_count += 1
-
+                except IntegrityError as ie:
+                    # 🛡️ L: 外层捕获 - 防止整个导入请求报 500
+                    row.error_message = f"重复数据: {str(ie)}"
+                    row.confirm_status = ConfirmStatus.DUPLICATE.value
+                    duplicate_count += 1
                 except Exception as e:
                     row.error_message = str(e)
                     row.confirm_status = ConfirmStatus.SKIPPED.value

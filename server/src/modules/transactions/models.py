@@ -56,5 +56,6 @@ class Transaction(Base):
         Index("ix_transactions_book_income_period", "book_id", "include_in_income", "occurred_at"),
         Index("ix_transactions_book_expense_period", "book_id", "include_in_expense", "occurred_at"),
         Index("ix_transactions_book_type_status_period", "book_id", "transaction_type", "status", "occurred_at"),
-        UniqueConstraint("book_id", "source_type", "business_key", name="uix_transaction_business_key"),
+        # 🛡️ L: 幂等性约束 - 同一账本下 business_key 绝对唯一
+        UniqueConstraint("book_id", "business_key", name="uix_transaction_business_key"),
     )
