@@ -13,7 +13,7 @@ class InstallmentPlanBase(BaseModel):
     plan_name: Optional[str] = None
     total_amount: Decimal = Field(..., gt=0)
     total_periods: int = Field(..., gt=0)
-    principal_per_period: Decimal = Field(..., gt=0)
+    principal_per_period: Optional[Decimal] = Field(default=None, ge=0)  # 🛡️ L: 可选，允许 0
     fee_per_period: Decimal = Field(default=Decimal("0"), ge=0)
     total_fee: Decimal = Field(default=Decimal("0"), ge=0)
     start_date: date
@@ -75,6 +75,8 @@ class CreateInstallmentRequest(BaseModel):
     total_amount: Decimal = Field(..., gt=0)
     total_periods: int = Field(..., gt=0, le=36)
     fee_per_period: Decimal = Field(default=Decimal("0"), ge=0)
+    installment_amount: Decimal = Field(default=Decimal("0"), ge=0)  # 🛡️ L: 每期金额
+    principal_per_period: Decimal = Field(default=None, ge=0)  # 🛡️ L: 每期本金，可选
     start_date: date
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     plan_name: Optional[str] = None

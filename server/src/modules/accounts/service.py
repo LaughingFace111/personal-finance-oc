@@ -106,7 +106,8 @@ def delete_account(db: Session, account_id: str, book_id: str) -> Account:
 
     account.is_deleted = True
     account.is_active = False
-    account.name = "[已删除账户]"  # 标记名称，关联查询时统一显示此名称
+    # 🛡️ L: 保留原名称，前面加标记，不使用固定名称避免 UNIQUE 约束冲突
+    account.name = f"[已删除] {account.name}"
     db.commit()
     return account
 
@@ -133,6 +134,21 @@ def update_account_debt(db: Session, account_id: str, amount: Decimal, is_increa
         account.debt_amount += amount
     else:
         account.debt_amount -= amount
+
+
+def update_account_frozen(db: Session, account_id: str, amount: Decimal, is_increase: bool) -> None:
+    """🛡️ L: Update account frozen amount (for installment plans)"""
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        return
+
+    if is_increase:
+        account.frozen_amount += amount
+    else:
+        account.frozen_amount -= amount
+        # 确保不会变成负数
+        if account.frozen_amount < 0:
+            account.frozen_amount = 0
 
 
 def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, Any]:

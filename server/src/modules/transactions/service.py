@@ -757,11 +757,15 @@ def adjust_account_balance(
             
     elif adjust_mode == "available_credit":
         # 信用账户：调整可用额度
+        # 🛡️ L: 正确的财务公式
+        # Available_Credit = Credit_Limit - Debt_Amount - Frozen_Amount
+        # 所以: Debt_Target = Credit_Limit - Frozen_Amount - Available_Target
         credit_limit = account.credit_limit or Decimal("0")
         current_debt = account.debt_amount or Decimal("0")
+        frozen_amount = account.frozen_amount or Decimal("0")
         
-        # 目标可用额度 → 目标欠款
-        target_debt = credit_limit - target_value
+        # 🛡️ L: 必须减去冻结金额!
+        target_debt = credit_limit - frozen_amount - target_value
         
         # 欠款差额：正数表示欠款增加（可用减少），负数表示欠款减少（可用增加）
         delta_debt = target_debt - current_debt
@@ -804,6 +808,12 @@ def adjust_account_balance(
     # is_counted_in_reports=false 时，必须覆盖为 False
     count_in_expense = is_counted_in_reports and transaction_type == TransactionType.EXPENSE
     count_in_income = is_counted_in_reports and transaction_type == TransactionType.INCOME
+    
+    # 🛡️ L: 在事务中更新账户欠款，确保与交易流水同步
+    if adjust_mode == "available_credit" and adjustment_amount > 0:
+        from src.modules.accounts.service import update_account_debt
+        is_debt_increase = delta_debt >= 0  # delta_debt > 0 表示欠款增加
+        update_account_debt(db, account_id, adjustment_amount, is_increase=is_debt_increase)
     
     return create_transaction(
         db, book_id, tx_data,

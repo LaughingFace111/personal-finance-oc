@@ -10,6 +10,7 @@ import { StagingImportTable } from './components/StagingImportTable'
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
 const OtherHubPage = lazy(() => import('./pages/OtherHubPage'))
 const InstallmentPage = lazy(() => import('./pages/InstallmentPage'))
+const InstallmentTasksPage = lazy(() => import('./pages/InstallmentTasksPage'))
 const DebtPage = lazy(() => import('./pages/DebtPage'))
 const OtherTransactionPage = lazy(() => import('./pages/OtherTransactionPage'))
 const ReportsHomePage = lazy(() => import('./pages/ReportsHomePage'))
@@ -310,6 +311,7 @@ return (
             {/* 其他交易 - 导航枢纽页 */}
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
             <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><InstallmentPage /></Suspense>} />
+            <Route path="/installments" element={<Suspense fallback={<LoadingFallback />}><InstallmentTasksPage /></Suspense>} />
             <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="lend" /></Suspense>} />
             <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="borrow" /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -1540,6 +1542,9 @@ const AccountDetailPage = () => {
   const [loading, setLoading] = useState(true)
   const [balanceTrendData, setBalanceTrendData] = useState<any[]>([])
   const [adjustModalVisible, setAdjustModalVisible] = useState(false)
+  const [limitModalVisible, setLimitModalVisible] = useState(false)
+  const [limitForm] = Form.useForm()
+  const [limitSubmitting, setLimitSubmitting] = useState(false)
   const [adjustForm] = Form.useForm()
   const [adjustSubmitting, setAdjustSubmitting] = useState(false)
   const [month, setMonth] = useState(() => {
@@ -1592,7 +1597,7 @@ const AccountDetailPage = () => {
   const handleBalanceAdjust = async (values: any) => {
     const adjustMode = isCreditAccount ? 'available_credit' : 'balance'
     const currentValue = isCreditAccount 
-      ? (Number(account.credit_limit || 0) - Number(account.debt_amount || 0))  // 当前可用额度
+      ? (Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.frozen_amount || 0))  // 当前可用额度
       : Number(account.current_balance || 0)  // 当前余额
     
     if (!values.note || values.note.trim() === '') {
@@ -1681,7 +1686,7 @@ const AccountDetailPage = () => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
               <span style={{ color: 'var(--text-secondary)' }}>可用额度:</span>
-              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0)).toFixed(2)}</span>
+              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.frozen_amount || 0)).toFixed(2)}</span>
             </div>
             {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
@@ -1724,6 +1729,10 @@ const AccountDetailPage = () => {
                 <span>****{account.card_last4}</span>
               </div>
             )}
+            {/* 🛡️ L: 调整额度按钮 */}
+            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+              <Button size="small" onClick={() => setLimitModalVisible(true)}>调整额度</Button>
+            </div>
           </div>
         )}
 
@@ -1736,10 +1745,17 @@ const AccountDetailPage = () => {
 
       {/* 余额趋势图 */}
       {balanceTrendData && balanceTrendData.length > 0 && (
-        <Card style={{ marginBottom: 16 }} title="余额趋势">
+        <Card style={{ marginBottom: 16 }} title={isCreditAccount ? "每日可用额度趋势" : "余额趋势"}>
           <ReactECharts
             option={{
-              tooltip: { trigger: 'axis', formatter: (params: any) => `${params[0].name}<br/>余额: ¥${params[0].value.toFixed(2)}` },
+              tooltip: { 
+                trigger: 'axis', 
+                formatter: (params: any) => {
+                  const value = params[0].value
+                  const label = isCreditAccount ? "可用额度" : "余额"
+                  return `${params[0].name}<br/>${label}: ¥${value.toFixed(2)}`
+                }
+              },
               grid: { left: 60, right: 20, top: 20, bottom: 30 },
               xAxis: { type: 'category', data: balanceTrendData.map((p: any) => p.date), axisLabel: { fontSize: 10 } },
               yAxis: { 
@@ -1752,7 +1768,7 @@ const AccountDetailPage = () => {
                 data: balanceTrendData.map((p: any) => p.balance),
                 smooth: true,
                 areaStyle: { opacity: 0.2 },
-                itemStyle: { color: isCreditAccount ? '#ff4d4f' : '#1890ff' },
+                itemStyle: { color: isCreditAccount ? '#52c41a' : '#1890ff' },
                 lineStyle: { width: 2 },
               }],
             }}
@@ -1785,7 +1801,7 @@ const AccountDetailPage = () => {
                 <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0)).toFixed(2)}</span>
+                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}</span>
               </div>
             </div>
           )}
@@ -1805,7 +1821,7 @@ const AccountDetailPage = () => {
                     style={{ width: '100%' }} 
                     min={0} 
                     precision={2} 
-                    placeholder={isCreditAccount ? `当前: ¥${(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0)).toFixed(2)}` : `当前: ¥${Number(account?.current_balance || 0).toFixed(2)}`}
+                    placeholder={isCreditAccount ? `当前: ¥${(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}` : `当前: ¥${Number(account?.current_balance || 0).toFixed(2)}`}
                   />
                 </Form.Item>
               ) : (
@@ -1839,6 +1855,61 @@ const AccountDetailPage = () => {
           </Form.Item>
           
           <Button type="primary" htmlType="submit" block loading={adjustSubmitting}>确认调整</Button>
+        </Form>
+      </Modal>
+
+      {/* 🛡️ L: 额度调整弹窗 - 纯粹的调额，不生成流水 */}
+      <Modal
+        title="调整总额度"
+        open={limitModalVisible}
+        onCancel={() => { setLimitModalVisible(false); limitForm.resetFields() }}
+        footer={null}
+      >
+        <Form
+          form={limitForm}
+          layout="vertical"
+          onFinish={async (values) => {
+            setLimitSubmitting(true)
+            try {
+              await apiPost(`/api/accounts/${accountId}/adjust-limit`, { new_limit: values.new_limit })
+              message.success('额度调整成功')
+              setLimitModalVisible(false)
+              limitForm.resetFields()
+              // 重新加载账户信息
+              const updated = await apiGet(`/api/accounts/${accountId}`)
+              setAccount(updated)
+            } catch { message.error('调整失败') } finally {
+              setLimitSubmitting(false)
+            }
+          }}
+        >
+          <div style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 8, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>当前状态</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>总额度</span><span>¥{Number(account?.credit_limit || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+              <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}</span>
+            </div>
+          </div>
+          
+          <Form.Item name="new_limit" label="新总额度" rules={[{ required: true, message: '请输入新总额度' }]}>
+            <InputNumber 
+              style={{ width: '100%' }} 
+              min={0} 
+              precision={2} 
+              placeholder={`当前: ¥${Number(account?.credit_limit || 0).toFixed(2)}`}
+            />
+          </Form.Item>
+          
+          <div style={{ fontSize: 12, color: '#999', marginBottom: 16 }}>
+            💡 提示：调整总额度只会修改可用额度计算公式中的变量，不会生成任何交易流水。
+          </div>
+          
+          <Button type="primary" htmlType="submit" block loading={limitSubmitting}>确认调整</Button>
         </Form>
       </Modal>
 

@@ -121,3 +121,35 @@ def settle(
     from datetime import datetime
     schedule, transaction = settle_installment(db, plan_id, bid, account_id, datetime.utcnow())
     return {"schedule": schedule, "transaction": transaction}
+
+
+# 🛡️ L: 执行单期分期扣款接口
+@router.post("/{plan_id}/execute")
+def execute_period(
+    plan_id: str, 
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    book_id: str = None
+):
+    """
+    执行单期分期扣款
+    
+    步骤：
+    1. 校验剩余期数
+    2. 创建单期 Transaction 交易记录
+    3. 减少对应账户的 frozen_amount
+    4. 推算下一个执行日期（处理跨月问题）
+    5. 更新计划状态
+    """
+    from .service import execute_installment_period
+    
+    bid = get_current_book_id(current_user, db, book_id)
+    result = execute_installment_period(db, plan_id, bid)
+    
+    return {
+        "plan_id": plan_id,
+        "executed_period": result["plan"].executed_periods,
+        "remaining_periods": result["plan"].total_periods - result["plan"].executed_periods,
+        "next_execution_date": result["next_execution_date"],
+        "status": result["plan"].status
+    }

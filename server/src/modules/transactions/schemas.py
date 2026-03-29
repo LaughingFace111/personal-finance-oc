@@ -36,6 +36,11 @@ class TransactionCreate(TransactionBase):
 
     account_id: str
     counterparty_account_id: Optional[str] = None
+    
+    # 🛡️ L: Override flags for special transactions
+    include_expense_override: Optional[bool] = None  # 是否覆盖 include_in_expense
+    include_income_override: Optional[bool] = None
+    include_cashflow_override: Optional[bool] = None
 
 
 class TransactionUpdate(BaseModel):

@@ -10,6 +10,13 @@ const menuItems = [
     path: '/other/installment',
   },
   {
+    key: 'installments',
+    title: '分期任务',
+    description: '查看并执行所有分期账单',
+    icon: '📋',
+    path: '/installments',
+  },
+  {
     key: 'lend',
     title: '借出登记',
     description: '记录借给他人的资金往来',
