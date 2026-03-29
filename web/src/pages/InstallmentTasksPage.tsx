@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Button, Tag, Empty, Spin, message, Progress } from 'antd'
-import { useAuth } from '../services/auth'
+import { useAuth } from '../App'
 import { apiGet, apiPost } from '../services/api'
 
 export default function InstallmentTasksPage() {

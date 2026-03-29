@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TagMultiSelect } from '../components/TagMultiSelect';
+import { CategorySelector } from '../components/CategorySelector';
 import {
   TransactionFormLayout,
   transactionFormFieldClass,
@@ -168,12 +169,12 @@ export default function InstallmentPage() {
           {/* 支出项目 - 分类 */}
           <div>
             <label className={transactionFormLabelClass}>支出项目 *</label>
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={transactionFormFieldClass} required>
-              <option value="">选择分类</option>
-              {installmentCategories.map((category) => (
-                <option key={category.id} value={category.id}>{getCategoryLabel(categories, category.id)}</option>
-              ))}
-            </select>
+            <CategorySelector
+              categories={categories as any}
+              value={categoryId}
+              onChange={setCategoryId}
+              placeholder="点击选择类别"
+            />
           </div>
 
           {/* 分期总金额 */}
