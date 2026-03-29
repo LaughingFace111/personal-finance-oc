@@ -13,5 +13,6 @@ class Tag(Base):
     name = Column(String(50), nullable=False)
     color = Column(String(20), nullable=True)
     is_active = Column(Boolean, default=True)
+    is_system = Column(Boolean, default=False)  # 🛡️ L: 系统标签，所有账本共享
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

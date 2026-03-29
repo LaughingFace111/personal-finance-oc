@@ -38,12 +38,12 @@ def _pick_default_color(db: Session, book_id: str) -> str:
     return DEFAULT_COLOR_PALETTE[count % len(DEFAULT_COLOR_PALETTE)]
 
 
-def create_tag(db: Session, book_id: str, tag_data: TagCreate) -> Tag:
+def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool = False) -> Tag:
     # 校验：如果传了 parent_id，必须指向一个一级标签
     if tag_data.parent_id:
         parent = db.query(Tag).filter(
             Tag.id == tag_data.parent_id,
-            Tag.book_id == book_id,
+            ((Tag.book_id == book_id) | (Tag.is_system == True)),
             Tag.is_active == True
         ).first()
         if not parent:
@@ -58,10 +58,11 @@ def create_tag(db: Session, book_id: str, tag_data: TagCreate) -> Tag:
 
     tag = Tag(
         id=str(uuid.uuid4()),
-        book_id=book_id,
+        book_id=book_id if not is_system else None,  # 🛡️ L: 系统标签无账本归属
         name=tag_data.name,
         color=color,
         parent_id=tag_data.parent_id,
+        is_system=is_system,  # 🛡️ L: 标记为系统标签
     )
     db.add(tag)
     db.commit()
@@ -70,31 +71,34 @@ def create_tag(db: Session, book_id: str, tag_data: TagCreate) -> Tag:
 
 
 def get_tags(db: Session, book_id: str, include_inactive: bool = False) -> List[Tag]:
-    query = db.query(Tag).filter(Tag.book_id == book_id)
+    # 🛡️ L: 返回当前账本标签 + 系统级标签（所有账本共享）
+    query = db.query(Tag).filter(
+        (Tag.book_id == book_id) | (Tag.is_system == True)
+    )
     if not include_inactive:
         query = query.filter(Tag.is_active == True)
-    return query.order_by(Tag.parent_id.asc().nullsfirst(), Tag.name).all()
+    return query.order_by(Tag.is_system.desc(), Tag.parent_id.asc().nullsfirst(), Tag.name).all()
 
 
 def get_first_level_tags(db: Session, book_id: str) -> List[Tag]:
-    """只返回一级标签（parent_id 为 null）"""
+    """只返回一级标签（parent_id 为 null），包含系统级标签"""
     return db.query(Tag).filter(
-        Tag.book_id == book_id,
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
         Tag.parent_id.is_(None),
         Tag.is_active == True
-    ).order_by(Tag.name).all()
+    ).order_by(Tag.is_system.desc(), Tag.name).all()
 
 
 def get_tags_tree(db: Session, book_id: str) -> List[Dict[str, Any]]:
-    """返回分组树形结构：一级标签 + children"""
+    """返回分组树形结构：一级标签 + children，包含系统级标签"""
     first_level = db.query(Tag).filter(
-        Tag.book_id == book_id,
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
         Tag.parent_id.is_(None),
         Tag.is_active == True
-    ).order_by(Tag.name).all()
+    ).order_by(Tag.is_system.desc(), Tag.name).all()
 
     second_level = db.query(Tag).filter(
-        Tag.book_id == book_id,
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
         Tag.parent_id.isnot(None),
         Tag.is_active == True
     ).order_by(Tag.name).all()
@@ -191,3 +195,64 @@ def delete_tag(db: Session, tag_id: str, book_id: str = None) -> bool:
         ).update({"is_active": False})
     db.commit()
     return True
+
+
+# 🛡️ L: 系统级标签初始化（调用一次即可）
+SYSTEM_TAGS = [
+    # 一级标签
+    {"name": "餐饮", "color": "#f5222d"},
+    {"name": "交通", "color": "#1677ff"},
+    {"name": "购物", "color": "#722ed1"},
+    {"name": "住房", "color": "#52c41a"},
+    {"name": "医疗", "color": "#13c2c2"},
+    {"name": "教育", "color": "#fa8c16"},
+    {"name": "娱乐", "color": "#eb2f96"},
+    {"name": "通讯", "color": "#2f54eb"},
+    # 二级标签（挂载到"购物"下）
+    {"name": "日用", "color": "#722ed1", "parent": "购物"},
+    {"name": "数码", "color": "#722ed1", "parent": "购物"},
+    {"name": "服装", "color": "#722ed1", "parent": "购物"},
+]
+
+
+def init_system_tags(db: Session):
+    """初始化系统级标签（幂等调用）"""
+    # 检查是否已有系统标签
+    existing = db.query(Tag).filter(Tag.is_system == True).first()
+    if existing:
+        return  # 已有系统标签，跳过
+    
+    # 创建系统标签
+    parent_map = {}  # name -> id
+    
+    for tag_data in SYSTEM_TAGS:
+        parent_name = tag_data.get("parent")
+        
+        if parent_name:
+            # 二级标签
+            parent_id = parent_map.get(parent_name)
+            if not parent_id:
+                continue  # 父标签不存在，跳过
+            tag = Tag(
+                id=str(uuid.uuid4()),
+                book_id=None,  # 系统标签无账本
+                name=tag_data["name"],
+                color=tag_data.get("color"),
+                parent_id=parent_id,
+                is_system=True,
+            )
+        else:
+            # 一级标签
+            tag = Tag(
+                id=str(uuid.uuid4()),
+                book_id=None,
+                name=tag_data["name"],
+                color=tag_data.get("color"),
+                is_system=True,
+            )
+            parent_map[tag_data["name"]] = tag.id
+        
+        db.add(tag)
+    
+    db.commit()
+    return len(SYSTEM_TAGS)

@@ -6,6 +6,7 @@ from src.core.auth import get_current_user
 from src.modules.auth.models import User
 from .schemas import TagCreate, TagUpdate, TagResponse, TagTreeNode
 from .service import (
+    init_system_tags,
     create_tag, get_tags, get_tag, update_tag, delete_tag,
     get_first_level_tags, get_tags_tree
 )
@@ -125,3 +126,13 @@ def delete(
     if not delete_tag(db, tag_id, bid):
         raise HTTPException(status_code=404, detail="Tag not found")
     return success_response(message="Tag deleted")
+
+
+@router.post("/init-system", response_model=dict)
+def init_system_tags_endpoint(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """初始化系统级标签（仅管理员调用一次）"""
+    count = init_system_tags(db)
+    return {"message": f"已创建 {count} 个系统标签", "count": count}
