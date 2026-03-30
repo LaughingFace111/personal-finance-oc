@@ -726,11 +726,13 @@ def adjust_account_balance(
         raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, 
                           message="调整原因不能为空")
     
-    # 获取账户信息
-    account = get_account_by_id(db, account_id)
+    # 获取账户信息（行级悲观锁，防止并发脏读）
+    account = db.query(Account).filter(
+        Account.id == account_id
+    ).with_for_update().first()
     if not account:
         raise NotFoundException("Account not found")
-    
+
     if account.book_id != book_id:
         raise NotFoundException("Account not found in this book")
     
