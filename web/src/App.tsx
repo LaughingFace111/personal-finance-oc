@@ -2369,10 +2369,13 @@ const AccountFormPage = () => {
     if (!bookId) return
     setLoading(true)
     try {
+      // 使用 accountType 状态变量确保一致性
+      const finalAccountType = accountType
+      
       // 根据账户类型构建不同的 payload
       const payload: any = {
         name: values.name,
-        account_type: values.account_type,
+        account_type: finalAccountType,
         note: values.note || '',
         book_id: bookId
       }
@@ -2411,7 +2414,18 @@ const AccountFormPage = () => {
       <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ account_type: 'cash', opening_balance: 0 }}>
         <Form.Item name="name" label="账户名称" rules={[{ required: true, message: '请输入账户名称' }]}><Input /></Form.Item>
         <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
-          <Select onChange={(value) => setAccountType(value as string)}>
+          <Select 
+            value={accountType}
+            onChange={(value) => {
+              setAccountType(value as string)
+              form.setFieldValue('account_type', value)
+            }}
+            onSelect={(value) => {
+              // 鼠标点击或键盘选择都触发
+              setAccountType(value as string)
+              form.setFieldValue('account_type', value)
+            }}
+          >
             <Select.Option value="cash">现金</Select.Option>
             <Select.Option value="debit_card">借记卡</Select.Option>
             <Select.Option value="credit_card">信用卡</Select.Option>

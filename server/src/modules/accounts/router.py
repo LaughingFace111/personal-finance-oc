@@ -1,4 +1,5 @@
 from typing import List
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -71,8 +72,28 @@ def list_accounts(
     result = []
     for acc in accounts:
         statement_info = calculate_credit_statement_info(db, acc)
+        # 显式转换 Decimal 字段，避免 None 导致序列化失败
         acc_dict = {
-            **acc.__dict__,
+            'id': acc.id,
+            'book_id': acc.book_id,
+            'name': acc.name,
+            'account_type': acc.account_type,
+            'institution_name': acc.institution_name,
+            'card_last4': acc.card_last4,
+            'credit_limit': acc.credit_limit if acc.credit_limit is not None else Decimal("0"),
+            'billing_day': acc.billing_day,
+            'billing_day_rule': acc.billing_day_rule,
+            'repayment_day': acc.repayment_day,
+            'opening_balance': acc.opening_balance if acc.opening_balance is not None else Decimal("0"),
+            'current_balance': acc.current_balance if acc.current_balance is not None else Decimal("0"),
+            'debt_amount': acc.debt_amount if acc.debt_amount is not None else Decimal("0"),
+            'frozen_amount': acc.frozen_amount if acc.frozen_amount is not None else Decimal("0"),
+            'currency': acc.currency,
+            'note': acc.note,
+            'is_active': acc.is_active,
+            'is_deleted': acc.is_deleted,
+            'created_at': acc.created_at,
+            'updated_at': acc.updated_at,
             'current_statement_balance': statement_info['current_statement_balance'],
             'next_repayment_date': statement_info['next_repayment_date'],
             'days_until_repayment': statement_info['days_until_repayment']

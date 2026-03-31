@@ -15,8 +15,8 @@ class AccountBase(BaseModel):
     billing_day: Optional[int] = Field(default=None, ge=1, le=31)
     billing_day_rule: Optional[str] = Field(default="current_cycle")  # "current_cycle" or "next_cycle"
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
-    opening_balance: Decimal = Field(default=Decimal("0"))
-    current_balance: Decimal = Field(default=Decimal("0"))
+    opening_balance: Optional[Decimal] = Field(default=Decimal("0"))
+    current_balance: Optional[Decimal] = Field(default=Decimal("0"))
     currency: str = "CNY"
     note: Optional[str] = None
 
