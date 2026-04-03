@@ -1,8 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch } from 'antd'
+import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton } from 'antd'
 import ReactECharts from 'echarts-for-react'
 const { Content } = Layout
-import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined } from '@ant-design/icons'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
 
@@ -23,6 +23,8 @@ const TagDistributionPage = lazy(() => import('./pages/TagDistributionPage'))
 const TagDetailPage = lazy(() => import('./pages/TagDetailPage'))
 const ImportTemplatesPage = lazy(() => import('./pages/ImportTemplatesPage'))
 const RecurringRulesPage = lazy(() => import('./pages/RecurringRulesPage'))
+const WishlistPage = lazy(() => import('./pages/WishlistPage'))
+const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
 
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
@@ -32,23 +34,9 @@ const LoadingFallback = () => (
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 
-interface AuthContextType {
-  token: string | null;
-  user: any;
-  login: (token: string, user: any) => void;
-  logout: () => void;
-  loading: boolean;
-}
+import { AuthContext, useAuth } from './contexts/AuthContext'
 
-const AuthContext = createContext<AuthContextType>({
-  token: null,
-  user: null,
-  login: () => {},
-  logout: () => {},
-  loading: true,
-})
-
-export const useAuth = () => useContext(AuthContext)
+export { useAuth }
 
 const LoginPage = () => {
   const [username, setUsername] = useState('')
@@ -177,11 +165,14 @@ const menuItems = [
   { key: '/categories', icon: <TagsOutlined />, label: '分类' },
   { key: '/tags', icon: <TagsOutlined />, label: '标签' },
   { key: '/loans', icon: <BankOutlined />, label: '贷款' },
+  { key: '/installments', icon: <ClockCircleOutlined />, label: '分期任务' },
+  { key: '/wishlist', icon: <ShoppingOutlined />, label: '愿望单' },
+  { key: '/assets', icon: <AccountBookOutlined />, label: '日均成本' },
   { key: '/imports', icon: <UploadOutlined />, label: '导入' },
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/wishlist': '愿望单', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
     '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
@@ -312,6 +303,8 @@ return (
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
             <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><InstallmentPage /></Suspense>} />
             <Route path="/installments" element={<Suspense fallback={<LoadingFallback />}><InstallmentTasksPage /></Suspense>} />
+            <Route path="/wishlist" element={<Suspense fallback={<LoadingFallback />}><WishlistPage /></Suspense>} />
+            <Route path="/assets" element={<Suspense fallback={<LoadingFallback />}><DurableAssetsPage /></Suspense>} />
             <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="lend" /></Suspense>} />
             <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="borrow" /></Suspense>} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -868,27 +861,17 @@ const DateDetailPage = () => {
 
 
 import { TransactionBottomDrawer } from './components/TransactionBottomDrawer'
+import TransactionListComponent from './components/TransactionList'
 
+// 🛡️ L: 简化后的 TransactionsPage — 过滤器 + TransactionList + Drawer
 const TransactionsPage = () => {
-  const { user, token } = useAuth()
-  const [data, setData] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const navigate = useNavigate()
+  const { user } = useAuth()
   const bookId = user?.default_book_id
-  
-  // 分类和账户
-  const [categories, setCategories] = useState<any[]>([])
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [tags, setTags] = useState<any[]>([])
-  
+
   // 时间筛选状态
   const [yearRange, setYearRange] = useState({ min_year: null as number | null, max_year: null as number | null })
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null)
-  
-  // 底部Drawer状态
-  const [drawerVisible, setDrawerVisible] = useState(false)
-  const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
 
   // 加载年份范围
   useEffect(() => {
@@ -904,112 +887,47 @@ const TransactionsPage = () => {
       .catch(() => {})
   }, [bookId])
 
-  // 加载分类、账户和标签
+  // 加载分类、账户和标签（供 Drawer 使用）
+  const [categories, setCategories] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [tags, setTags] = useState<any[]>([])
+
   useEffect(() => {
     if (!bookId) return
     Promise.all([
       apiGet(`/api/categories?book_id=${bookId}`),
       apiGet(`/api/accounts?book_id=${bookId}`),
       apiGet(`/api/tags?book_id=${bookId}`)
-    ]).then(([c, a, t]) => { 
+    ]).then(([c, a, t]) => {
       setCategories(c || [])
       setAccounts(a || [])
       setTags(t || [])
     }).catch(() => {})
   }, [bookId])
 
-  // 获取类别名称（支持二级）
-  const getCategoryName = (categoryId: string) => {
-    if (!categoryId) return ''
-    const cat = categories.find((c: any) => c.id === categoryId)
-    if (!cat) return ''
-    if (cat.parent_id) {
-      const parent = categories.find((c: any) => c.id === cat.parent_id)
-      return parent ? `${parent.name}-${cat.name}` : cat.name
-    }
-    return cat.name
-  }
+  // 抽屉状态
+  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
 
-  // 获取账户名称
-  const getAccountName = (accountId: string) => {
-    if (!accountId) return ''
-    const acc = accounts.find((a: any) => a.id === accountId)
-    if (!acc) return '[已删除账户]'
-    if (acc.is_deleted) return '[已删除账户]'
-    return acc?.name || ''
-  }
-
-  // 加载数据
-  const loadData = () => {
-    if (!bookId || !selectedYear) return
-    let url = `/api/transactions?book_id=${bookId}&year=${selectedYear}`
-    if (selectedMonth) {
-      url += `&month=${selectedMonth}`
-    }
-    apiGet(url)
-      .then(res => setData(res.items || []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    if (selectedYear) {
-      loadData()
-    }
-  }, [bookId, selectedYear, selectedMonth])
-
-  // 按天分组
-  const groupedData = (() => {
-    const groups: Record<string, any[]> = {}
-    data.forEach((item: any) => {
-      const date = item.occurred_at?.split('T')[0] || 'unknown'
-      if (!groups[date]) groups[date] = []
-      groups[date].push(item)
-    })
-    return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
-  })()
-
-  // 点击交易项打开底部Drawer
   const handleItemClick = (item: any) => {
     setSelectedTransaction(item)
     setDrawerVisible(true)
-  }
-
-  // 刷新数据
-  const handleRefresh = () => {
-    loadData()
   }
 
   // 生成年份选项
   const yearOptions = (() => {
     if (!yearRange.min_year || !yearRange.max_year) return []
     const years: number[] = []
-    for (let y = yearRange.min_year; y <= yearRange.max_year; y++) {
-      years.push(y)
-    }
+    for (let y = yearRange.min_year; y <= yearRange.max_year; y++) years.push(y)
     return years.sort((a, b) => b - a)
   })()
 
-  // 月份选项
   const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-
-  // 格式化日期显示
-  const formatDateDisplay = (dateStr: string) => {
-    const date = new Date(dateStr)
-    const today = new Date()
-    const yesterday = new Date(today)
-    yesterday.setDate(yesterday.getDate() - 1)
-    
-    if (date.toDateString() === today.toDateString()) return '今天'
-    if (date.toDateString() === yesterday.toDateString()) return '昨天'
-    return `${date.getMonth() + 1}月${date.getDate()}日`
-  }
 
   return (
     <div>
       {/* 时间筛选器 */}
       <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
-        {/* 年份选择器 */}
         <Select
           placeholder="选择年份"
           value={selectedYear}
@@ -1021,23 +939,17 @@ const TransactionsPage = () => {
             <Select.Option key={y} value={y}>{y}年</Select.Option>
           ))}
         </Select>
-        
-        {/* 月份选择器 */}
         <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', paddingBottom: 4 }}>
           {months.map(m => (
             <div
               key={m}
               onClick={() => setSelectedMonth(m)}
               style={{
-                minWidth: 40,
-                padding: '6px 12px',
-                borderRadius: 16,
-                textAlign: 'center',
+                minWidth: 40, padding: '6px 12px', borderRadius: 16, textAlign: 'center',
                 cursor: 'pointer',
                 background: selectedMonth === m ? 'var(--accent-red)' : 'var(--bg-elevated)',
                 color: selectedMonth === m ? '#fff' : 'var(--text-primary)',
-                fontSize: 14,
-                transition: 'all 0.2s'
+                fontSize: 14, transition: 'all 0.2s'
               }}
             >
               {m}月
@@ -1046,141 +958,18 @@ const TransactionsPage = () => {
         </div>
       </div>
 
-      {/* 记录数量 */}
-      <div style={{ marginBottom: 16, color: '#666', fontSize: 14 }}>
-        {loading ? '加载中...' : `${data.length} 条记录`}
-      </div>
-
-      {/* 卡片式列表 */}
-      {loading ? <Spin /> : groupedData.length === 0 ? 
-        <Empty description="暂无交易记录" extra={<Button type="primary" onClick={() => navigate('/transactions/new')}>记一笔</Button>} /> : 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {groupedData.map(([date, items]) => (
-            <div 
-              key={date}
-              style={{
-                background: 'var(--bg-card)',
-                borderRadius: 12,
-                overflow: 'hidden'
-              }}
-            >
-              {/* 日期标题 */}
-              <div style={{ 
-                padding: '12px 16px', 
-                borderBottom: '1px solid var(--border-light)',
-                fontWeight: 500,
-                color: 'var(--text-primary)'
-              }}>
-                {formatDateDisplay(date)}
-              </div>
-              
-              {/* 交易列表 */}
-              <div>
-                {items.map((item: any) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: '12px 16px',
-                      borderBottom: '1px solid var(--border-light)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}
-                    onClick={() => handleItemClick(item)}
-                  >
-                    {/* 左侧信息 */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* 分类名称和标签在同一行 */}
-                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                        <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', flexShrink: 0 }}>
-                          {getCategoryName(item.category_id) || item.merchant || '-'}
-                        </span>
-                        {/* 标签容器 - 横向滚动 */}
-                        {(() => {
-                          let tagNames: string[] = []
-                          if (item.tags) {
-                            try { tagNames = typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags } catch {}
-                          }
-                          // 过滤掉无法映射的标签
-                          const validTags = tagNames.filter((name: string) => {
-                            const tag = tags.find((t: any) => t.name === name)
-                            return tag && tag.id // 只有能映射到有效标签的才显示
-                          }).slice(0, 2) // 最多显示2个
-                          
-                          if (validTags.length > 0) {
-                            return (
-                              <div style={{ 
-                                flex: 1, 
-                                overflowX: 'auto', 
-                                whiteSpace: 'nowrap', 
-                                marginLeft: 8,
-                                paddingLeft: 4,
-                                scrollbarWidth: 'none',
-                                msOverflowStyle: 'none'
-                              }}>
-                                <style>{`::-webkit-scrollbar { display: none; }`}</style>
-                                {validTags.map((name: string, idx: number) => {
-                                  const tag = tags.find((t: any) => t.name === name)
-                                  return (
-                                    <Tag 
-                                      key={idx} 
-                                      color={tag?.color || 'blue'} 
-                                      style={{ 
-                                        fontSize: 11, 
-                                        padding: '0 6px', 
-                                        margin: 0,
-                                        display: 'inline-block'
-                                      }}
-                                    >
-                                      {name}
-                                    </Tag>
-                                  )
-                                })}
-                              </div>
-                            )
-                          }
-                          return null
-                        })()}
-                      </div>
-                      
-                      {/* 备注 - 设置固定高度保持行高一致 */}
-                      <div style={{ 
-                        fontSize: 13, 
-                        color: 'var(--text-secondary)', 
-                        minHeight: 20,
-                        lineHeight: '20px',
-                        overflow: 'hidden', 
-                        textOverflow: 'ellipsis', 
-                        whiteSpace: 'nowrap' 
-                      }}>
-                        {item.note || ''}
-                      </div>
-                    </div>
-                    
-                    {/* 右侧金额 */}
-                    <div style={{ textAlign: 'right', marginLeft: 16, flexShrink: 0 }}>
-                      <div style={{ color: item.direction === 'in' ? '#52c41a' : item.direction === 'refund' ? '#1890ff' : '#ff4d4f', fontWeight: 600, fontSize: 16 }}>
-                        {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}¥{Number(item.amount).toFixed(2)}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                        {getAccountName(item.account_id)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      }
+      {/* 交易列表（独立组件，支持无限滚动） */}
+      <TransactionListComponent
+        onItemClick={handleItemClick}
+        selectedMonth={selectedMonth}
+      />
 
       {/* 底部编辑Drawer */}
       <TransactionBottomDrawer
         visible={drawerVisible}
         transaction={selectedTransaction}
         onClose={() => setDrawerVisible(false)}
-        onRefresh={handleRefresh}
+        onRefresh={() => {}}
         accounts={accounts}
         categories={categories}
         tags={tags}
@@ -2871,6 +2660,7 @@ const SettingsPage = () => {
   const { user, logout } = useAuth()
   const { mode, setMode } = useTheme()
   const navigate = useNavigate()
+  const { showHiddenTransactions, toggleHiddenTransactions } = useAppStore()
   
   return (
     <div>
@@ -2920,6 +2710,22 @@ const SettingsPage = () => {
         </Radio.Group>
       </Card>
       
+      {/* 🛡️ L: 隐身账单开关 */}
+      <Card title="隐私" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 500 }}>显示已隐藏的交易</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              开启后，备注含"隐藏"的交易将在流水列表中显示
+            </div>
+          </div>
+          <Switch checked={showHiddenTransactions} onChange={toggleHiddenTransactions} />
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 12, padding: '8px 12px', background: 'var(--bg-elevated)', borderRadius: 8 }}>
+          💡 隐藏技巧：在备注中输入"隐藏"二字，创建账单时系统自动将其设为隐身
+        </div>
+      </Card>
+
       <Card title="关于" style={{ marginBottom: 16 }}>
         <List size="small">
           <List.Item>版本: 1.0.0</List.Item>
