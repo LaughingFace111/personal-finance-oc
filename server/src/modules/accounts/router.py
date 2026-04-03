@@ -57,7 +57,7 @@ def create(
     return create_account(db, bid, data)
 
 
-@router.get("", response_model=List[AccountResponse])
+@router.get("")
 def list_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -95,15 +95,16 @@ def list_accounts(
             'created_at': acc.created_at,
             'updated_at': acc.updated_at,
             'current_statement_balance': statement_info['current_statement_balance'],
-            'next_repayment_date': statement_info['next_repayment_date'],
-            'days_until_repayment': statement_info['days_until_repayment']
+            'repayment_date': statement_info['next_repayment_date'],
+            'days_until_repayment': statement_info['days_until_repayment'],
+            'is_overdue': statement_info['is_overdue']
         }
         result.append(acc_dict)
     
     return result
 
 
-@router.get("/{account_id}", response_model=AccountResponse)
+@router.get("/{account_id}")
 def get(
     account_id: str, 
     current_user: User = Depends(get_current_user),
@@ -120,10 +121,30 @@ def get(
     # 🛡️ L: 计算本期待还信息
     statement_info = calculate_credit_statement_info(db, account)
     return {
-        **account.__dict__,
+        'id': account.id,
+        'book_id': account.book_id,
+        'name': account.name,
+        'account_type': account.account_type,
+        'institution_name': account.institution_name,
+        'card_last4': account.card_last4,
+        'credit_limit': account.credit_limit if account.credit_limit is not None else Decimal("0"),
+        'billing_day': account.billing_day,
+        'billing_day_rule': account.billing_day_rule,
+        'repayment_day': account.repayment_day,
+        'opening_balance': account.opening_balance if account.opening_balance is not None else Decimal("0"),
+        'current_balance': account.current_balance if account.current_balance is not None else Decimal("0"),
+        'debt_amount': account.debt_amount if account.debt_amount is not None else Decimal("0"),
+        'frozen_amount': account.frozen_amount if account.frozen_amount is not None else Decimal("0"),
+        'currency': account.currency,
+        'note': account.note,
+        'is_active': account.is_active,
+        'is_deleted': account.is_deleted,
+        'created_at': account.created_at,
+        'updated_at': account.updated_at,
         'current_statement_balance': statement_info['current_statement_balance'],
-        'next_repayment_date': statement_info['next_repayment_date'],
-        'days_until_repayment': statement_info['days_until_repayment']
+        'repayment_date': statement_info['next_repayment_date'],
+        'days_until_repayment': statement_info['days_until_repayment'],
+        'is_overdue': statement_info['is_overdue']
     }
 
 

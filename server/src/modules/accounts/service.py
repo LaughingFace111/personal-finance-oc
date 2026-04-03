@@ -1,15 +1,53 @@
 from decimal import Decimal
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import date, datetime, timedelta
+from calendar import monthrange
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from src.common.enums import AccountType, TransactionType, TransactionDirection
+from src.common.enums import AccountType, TransactionType, TransactionDirection, SourceType
 from src.core import ErrorCode, AppException, generate_uuid, NotFoundException
 
 from .models import Account
 from .schemas import AccountCreate, AccountUpdate
+
+
+def _safe_date(year: int, month: int, day: int) -> date:
+    """Clamp day to the last valid day of the target month."""
+    return date(year, month, min(day, monthrange(year, month)[1]))
+
+
+def _get_billing_cycle_dates(today: date, billing_day: int, billing_day_rule: str = "current_cycle") -> Tuple[date, date]:
+    """Return the latest bill date and the unbilled-cycle start date."""
+    current_month_bill_date = _safe_date(today.year, today.month, billing_day)
+    if today >= current_month_bill_date:
+        last_bill_date = current_month_bill_date
+    else:
+        if today.month == 1:
+            last_bill_date = _safe_date(today.year - 1, 12, billing_day)
+        else:
+            last_bill_date = _safe_date(today.year, today.month - 1, billing_day)
+
+    if billing_day_rule == "next_cycle":
+        cycle_start_date = last_bill_date
+    else:
+        cycle_start_date = last_bill_date + timedelta(days=1)
+
+    return last_bill_date, cycle_start_date
+
+
+def _get_statement_due_date(last_bill_date: date, repayment_day: int) -> date:
+    """Return the due date for the statement generated on last_bill_date."""
+    due_year = last_bill_date.year
+    due_month = last_bill_date.month
+    if repayment_day <= last_bill_date.day:
+        if due_month == 12:
+            due_year += 1
+            due_month = 1
+        else:
+            due_month += 1
+    return _safe_date(due_year, due_month, repayment_day)
 
 
 def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
@@ -113,8 +151,10 @@ def delete_account(db: Session, account_id: str, book_id: str) -> Account:
 
 
 def update_account_balance(db: Session, account_id: str, amount: Decimal, is_increase: bool) -> None:
-    """Update account balance"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+    """Update account balance — MUST be called within a transaction with proper locking."""
+    account = db.query(Account).filter(
+        Account.id == account_id
+    ).with_for_update().first()
     if not account:
         return
 
@@ -125,8 +165,10 @@ def update_account_balance(db: Session, account_id: str, amount: Decimal, is_inc
 
 
 def update_account_debt(db: Session, account_id: str, amount: Decimal, is_increase: bool) -> None:
-    """Update account debt"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+    """Update account debt — MUST be called within a transaction with proper locking."""
+    account = db.query(Account).filter(
+        Account.id == account_id
+    ).with_for_update().first()
     if not account:
         return
 
@@ -138,7 +180,9 @@ def update_account_debt(db: Session, account_id: str, amount: Decimal, is_increa
 
 def update_account_frozen(db: Session, account_id: str, amount: Decimal, is_increase: bool) -> None:
     """🛡️ L: Update account frozen amount (for installment plans)"""
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id
+    ).with_for_update().first()
     if not account:
         return
 
@@ -148,7 +192,7 @@ def update_account_frozen(db: Session, account_id: str, amount: Decimal, is_incr
         account.frozen_amount -= amount
         # 确保不会变成负数
         if account.frozen_amount < 0:
-            account.frozen_amount = 0
+            account.frozen_amount = Decimal("0")
 
 
 def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, Any]:
@@ -166,7 +210,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
         return {
             'current_statement_balance': None,
             'next_repayment_date': None,
-            'days_until_repayment': None
+            'days_until_repayment': None,
+            'is_overdue': False
         }
     
     # 如果未设置账单日或还款日，返回 None
@@ -177,7 +222,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
         return {
             'current_statement_balance': None,
             'next_repayment_date': None,
-            'days_until_repayment': None
+            'days_until_repayment': None,
+            'is_overdue': False
         }
     
     try:
@@ -187,44 +233,22 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
         return {
             'current_statement_balance': None,
             'next_repayment_date': None,
-            'days_until_repayment': None
+            'days_until_repayment': None,
+            'is_overdue': False
         }
     
     today = date.today()
-    current_year = today.year
-    current_month = today.month
-    
-    # 推算最近一次出账日（D_last_bill）
-    # 出账日 = 每月 billing_day
-    # 如果今天 >= 本月账单日，则最近出账日是本月账单日
-    # 否则，上月账单日
-    if today.day >= billing_day:
-        last_bill_date = date(current_year, current_month, billing_day)
-    else:
-        # 上个月
-        if current_month == 1:
-            last_bill_date = date(current_year - 1, 12, billing_day)
-        else:
-            last_bill_date = date(current_year, current_month - 1, billing_day)
-    
-    # 推算下一个还款日（D_next_repay）
-    # 还款日通常在出账日之后
-    # 找到下一个还款日：如果今天 <= 本月还款日，则为本月；否则为下月
-    if today.day <= repayment_day:
-        next_repay_date = date(current_year, current_month, repayment_day)
-    else:
-        # 下个月
-        if current_month == 12:
-            next_repay_date = date(current_year + 1, 1, repayment_day)
-        else:
-            next_repay_date = date(current_year, current_month + 1, repayment_day)
-    
-    # 计算距还款日天数
+    billing_day_rule = account.billing_day_rule or "current_cycle"
+    last_bill_date, cycle_start_date = _get_billing_cycle_dates(today, billing_day, billing_day_rule)
+
+    # 还款日基于最近一次已出账账单计算，而不是简单取下一个自然月还款日。
+    next_repay_date = _get_statement_due_date(last_bill_date, repayment_day)
+    is_overdue = today > next_repay_date
     days_until = (next_repay_date - today).days
     
     # 查询 D_last_bill 之后的交易（计算未出账净消费）
     # Unbilled_Net_Expense = 支出总额 - 退款总额（出账日之后）
-    last_bill_datetime = datetime.combine(last_bill_date, datetime.min.time())
+    cycle_start_datetime = datetime.combine(cycle_start_date, datetime.min.time())
     
     # 延迟导入避免循环依赖
     from src.modules.transactions.models import Transaction as TxnModel
@@ -232,9 +256,13 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     # 净消费 = 支出总额 - 退款总额（出账日之后）
     expense_query = db.query(func.sum(TxnModel.amount)).filter(
         TxnModel.account_id == account.id,
-        TxnModel.occurred_at >= last_bill_datetime,
+        TxnModel.occurred_at >= cycle_start_datetime,
         TxnModel.status == "confirmed",
         TxnModel.direction == TransactionDirection.OUT.value,
+        ~(
+            (TxnModel.source_type == SourceType.SYSTEM.value) &
+            (TxnModel.business_key.like("installment:%"))
+        ),
         TxnModel.transaction_type.in_([
             TransactionType.EXPENSE.value,
             TransactionType.FEE.value,
@@ -244,9 +272,11 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     expense_total = expense_query.scalar() or Decimal("0")
     
     # 退款（减少负债）
+    # 当前为简化实现：所有账单日后的退款均视为冲抵未出账消费。
+    # 完整实现需要区分退款对应的原消费是否已经出账。
     refund_query = db.query(func.sum(TxnModel.amount)).filter(
         TxnModel.account_id == account.id,
-        TxnModel.occurred_at >= last_bill_datetime,
+        TxnModel.occurred_at >= cycle_start_datetime,
         TxnModel.status == "confirmed",
         TxnModel.transaction_type == TransactionType.REFUND.value
     )
@@ -263,7 +293,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     return {
         'current_statement_balance': statement_balance,
         'next_repayment_date': next_repay_date.isoformat(),
-        'days_until_repayment': max(0, days_until)
+        'days_until_repayment': max(0, days_until),
+        'is_overdue': is_overdue
     }
 
 
