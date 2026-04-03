@@ -37,17 +37,27 @@ def _get_billing_cycle_dates(today: date, billing_day: int, billing_day_rule: st
     return last_bill_date, cycle_start_date
 
 
-def _get_statement_due_date(last_bill_date: date, repayment_day: int) -> date:
-    """Return the due date for the statement generated on last_bill_date."""
+def _get_statement_due_date(last_bill_date: date, repayment_day: int, today: date) -> date:
+    """Return the due date for the statement generated on last_bill_date.
+    If the computed due date is in the past relative to today, advance to the next cycle."""
     due_year = last_bill_date.year
     due_month = last_bill_date.month
-    if repayment_day <= last_bill_date.day:
+    # Always advance one month from the billing date
+    if due_month == 12:
+        due_year += 1
+        due_month = 1
+    else:
+        due_month += 1
+    due_date = _safe_date(due_year, due_month, repayment_day)
+    # If this due date is already past, advance one more month
+    if due_date <= today:
         if due_month == 12:
             due_year += 1
             due_month = 1
         else:
             due_month += 1
-    return _safe_date(due_year, due_month, repayment_day)
+        due_date = _safe_date(due_year, due_month, repayment_day)
+    return due_date
 
 
 def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
@@ -242,7 +252,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     last_bill_date, cycle_start_date = _get_billing_cycle_dates(today, billing_day, billing_day_rule)
 
     # 还款日基于最近一次已出账账单计算，而不是简单取下一个自然月还款日。
-    next_repay_date = _get_statement_due_date(last_bill_date, repayment_day)
+    next_repay_date = _get_statement_due_date(last_bill_date, repayment_day, today)
     is_overdue = today > next_repay_date
     days_until = (next_repay_date - today).days
     
@@ -293,7 +303,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     return {
         'current_statement_balance': statement_balance,
         'next_repayment_date': next_repay_date.isoformat(),
-        'days_until_repayment': max(0, days_until),
+        'days_until_repayment': days_until,
         'is_overdue': is_overdue
     }
 

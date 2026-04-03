@@ -255,16 +255,35 @@ return (
         <Button type="text" icon={<MenuOutlined style={{ fontSize: 20 }} />} onClick={() => setDrawerOpen(true)} style={{ marginRight: 16 }} />
         <span style={{ fontSize: 18, fontWeight: 500 }}>{currentTitle}</span>
       </div>)}
-      <Drawer title={<span style={{ fontSize: 18, fontWeight: 600 }}>个人记账</span>} placement="left" onClose={() => setDrawerOpen(false)} open={drawerOpen} width={DRAWER_WIDTH} bodyStyle={{ padding: 0 }} extra={<Button type="text" icon={<CloseOutlined />} onClick={() => setDrawerOpen(false)} />}>
-        <div style={{ padding: '16px 0' }}>
+      <Drawer
+        title={<span style={{ fontSize: 18, fontWeight: 600 }}>个人记账</span>}
+        placement="left"
+        onClose={() => setDrawerOpen(false)}
+        open={drawerOpen}
+        width={DRAWER_WIDTH}
+        bodyStyle={{ padding: 0, height: 'calc(100vh - 55px)', overflow: 'hidden' }}
+        extra={<Button type="text" icon={<CloseOutlined />} onClick={() => setDrawerOpen(false)} />}
+      >
+        <div
+          style={{
+            height: '100vh',
+            maxHeight: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+          }}
+        >
+          <div style={{ padding: '16px 0', flex: 1 }}>
           <div style={{ padding: '0 24px 16px', borderBottom: '1px solid #f0f0f0', marginBottom: 8 }}>
             <Avatar style={{ backgroundColor: '#1677ff', marginRight: 12 }}>{user?.email?.[0]?.toUpperCase() || 'U'}</Avatar>
             <span>{user?.email || '用户'}</span>
           </div>
           <Menu mode="inline" selectedKeys={[location.pathname]} items={menuItems} onClick={({ key }) => navigate(key)} style={{ border: 'none' }} />
-        </div>
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, borderTop: '1px solid #f0f0f0' }}>
+          </div>
+        <div style={{ padding: 16, borderTop: '1px solid #f0f0f0', background: 'var(--bg-card)' }}>
           <Button block onClick={logout} icon={<SettingOutlined />}>退出登录</Button>
+        </div>
         </div>
       </Drawer>
       <Layout style={{ marginTop: showHeader ? 56 : 0, marginBottom: 80 }}>
@@ -656,8 +675,8 @@ const CreditRepaymentSummary = () => {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-secondary)' }}>
                 <span>还款日: {item.repayment_date}</span>
-                <span style={{ color: item.days_until_repayment <= 5 ? '#ff4d4f' : 'inherit' }}>
-                  {item.days_until_repayment === 0 ? '今天还款' : `还有 ${item.days_until_repayment} 天`}
+                <span style={{ color: item.is_overdue ? '#ff4d4f' : (item.days_until_repayment <= 5 ? '#ff4d4f' : 'inherit') }}>
+                  {item.is_overdue ? `已逾期 ${Math.abs(item.days_until_repayment)} 天` : (item.days_until_repayment === 0 ? '今天还款' : `还有 ${item.days_until_repayment} 天`)}
                 </span>
               </div>
             </div>
