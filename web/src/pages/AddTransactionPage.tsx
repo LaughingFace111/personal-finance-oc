@@ -14,6 +14,7 @@ import {
   AccountOption,
   CategoryOption,
   TagOption,
+  getAccountOptionLabel,
   getCategoryLabel,
   getDefaultBookId,
   loadTransactionFormData,
@@ -181,7 +182,7 @@ export default function AddTransactionPage() {
               <option value="">选择账户</option>
               {accounts.map(account => (
                 <option key={account.id} value={account.id}>
-                  {account.name} (余额: ¥{account.current_balance})
+                  {getAccountOptionLabel(account)}
                 </option>
               ))}
             </select>

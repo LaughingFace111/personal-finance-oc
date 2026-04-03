@@ -46,7 +46,7 @@ export function CategorySelector({
     <>
       <div
         onClick={() => setModalOpen(true)}
-        className="h-11 rounded-xl border border-slate-300 bg-white px-3.5 text-sm text-slate-700 outline-none transition hover:border-slate-400 cursor-pointer flex items-center justify-between"
+        className="flex h-11 cursor-pointer items-center justify-between rounded-xl border border-[var(--border-color)] bg-[var(--bg-input)] px-3.5 text-sm text-[var(--text-primary)] outline-none transition hover:brightness-95"
         style={{
           color: selectedLabel ? 'var(--text-primary)' : 'var(--text-tertiary)'
         }}
@@ -58,7 +58,7 @@ export function CategorySelector({
               e.stopPropagation();
               onChange('');
             }}
-            className="ml-2 text-slate-400 hover:text-slate-600"
+            className="ml-2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
           >
             ×
           </span>

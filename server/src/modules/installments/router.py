@@ -58,7 +58,16 @@ def list_plans(
 ):
     """Get installment plans"""
     bid = get_current_book_id(current_user, db, book_id)
-    return get_installment_plans(db, bid, account_id, status)
+    plans = get_installment_plans(db, bid, account_id, status)
+    # 🛡️ L: 注入 account_name 以便前端卡片展示关联账户
+    if plans:
+        from src.modules.accounts.models import Account
+        account_ids = list({p.account_id for p in plans})
+        accounts = db.query(Account.id, Account.name).filter(Account.id.in_(account_ids)).all()
+        name_map = {a.id: a.name for a in accounts}
+        for plan in plans:
+            plan.account_name = name_map.get(plan.account_id)
+    return plans
 
 
 @router.get("/upcoming", response_model=List[InstallmentScheduleResponse])

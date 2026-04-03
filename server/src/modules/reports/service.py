@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import alias, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from src.common.enums import AccountType, TransactionType, TransactionStatus
 from src.modules.categories.models import Category
@@ -15,6 +15,9 @@ from src.modules.transactions.models import Transaction
 from src.modules.accounts.models import Account
 from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
 from src.modules.loans.models import LoanPlan, LoanSchedule
+
+# 🛡️ L: 共享应用缓存（统一失效机制）
+from src.core.cache import get_cached_overview, set_cached_overview
 
 
 ASSET_ACCOUNT_TYPES = {
@@ -50,7 +53,11 @@ def _load_report_transactions(
 ) -> list[Transaction]:
     transaction_types, direction_value = _resolve_direction_types(direction)
     dt_from, dt_to = _datetime_range(date_from, date_to)
-    return db.query(Transaction).filter(
+    # 🛡️ L: 预加载 category 关系，消除 N+1（reports 层遍历每条 transaction.category 时无需再查库）
+    return db.query(Transaction).options(
+        selectinload(Transaction.category),
+        selectinload(Transaction.account),
+    ).filter(
         Transaction.book_id == book_id,
         Transaction.transaction_type.in_(transaction_types),
         Transaction.direction == direction_value,
@@ -467,7 +474,12 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
     - 收入 = income
     - 支出 = expense + fee + installment_purchase - refund冲减
     - 现金流 = income + expense(资产) + fee
+    🛡️ L: 5 分钟 TTL 缓存，记账即失效
     """
+    # 🛡️ L: 缓存命中则直接返回
+    cached = get_cached_overview(book_id, str(date_from), str(date_to))
+    if cached is not None:
+        return cached
     metrics = _get_period_metrics(db, book_id, date_from, date_to)
     income = metrics["income"]
     expense_txns = metrics["gross_expense"]
@@ -498,7 +510,7 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
     ).all()
     total_loan_debt = sum(a.debt_amount for a in loan_accounts)
 
-    return {
+    result = {
         "period": {"date_from": date_from, "date_to": date_to},
         "income": income,
         "gross_expense": expense_txns,
@@ -510,6 +522,9 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
         "total_loan_debt": total_loan_debt,
         "total_debt": total_credit_debt + total_loan_debt,
     }
+    # 🛡️ L: 写入缓存
+    set_cached_overview(book_id, str(date_from), str(date_to), result)
+    return result
 
 
 def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to: date) -> list:

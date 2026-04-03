@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiGet } from '../services/api'
 import { Skeleton, Empty, Button } from 'antd'
@@ -24,12 +24,21 @@ interface TransactionItem {
   [key: string]: any
 }
 
+interface CategoryItem {
+  id: string
+  name: string
+  icon?: string
+  color?: string
+  parent_id?: string
+}
+
 export default function TransactionList({ onItemClick, selectedMonth }: TransactionListProps) {
   const { user } = useAuth()
   const bookId = user?.default_book_id
   const { showHiddenTransactions } = useAppStore()
 
   const [data, setData] = useState<TransactionItem[]>([])
+  const [categories, setCategories] = useState<CategoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -55,7 +64,15 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [bookId, selectedMonth])
+  }, [bookId, selectedMonth, showHiddenTransactions])
+
+  useEffect(() => {
+    if (!bookId) return
+
+    apiGet(`/api/categories?book_id=${bookId}`)
+      .then((res) => setCategories(Array.isArray(res) ? res : []))
+      .catch(() => setCategories([]))
+  }, [bookId])
 
   // 首次加载或月份变化时重置
   useEffect(() => {
@@ -64,8 +81,11 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     loadPage(1)
   }, [loadPage])
 
-  // 按天分组
-  const groupedData = (() => {
+  const categoryMap = useMemo(() => {
+    return new Map(categories.map((category) => [category.id, category]))
+  }, [categories])
+
+  const groupedData = useMemo(() => {
     const groups: Record<string, TransactionItem[]> = {}
     data.forEach((item: TransactionItem) => {
       const date = item.occurred_at?.split('T')[0] || 'unknown'
@@ -73,7 +93,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       groups[date].push(item)
     })
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
-  })()
+  }, [data])
 
   const formatDateDisplay = (dateStr: string) => {
     const date = new Date(dateStr)
@@ -83,6 +103,39 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     if (date.toDateString() === today.toDateString()) return '今天'
     if (date.toDateString() === yesterday.toDateString()) return '昨天'
     return `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+
+  const formatDateSubline = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+  }
+
+  const formatTimeDisplay = (dateStr: string) => {
+    const date = new Date(dateStr)
+    if (Number.isNaN(date.getTime())) return ''
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  }
+
+  const getCategoryMeta = (item: TransactionItem) => {
+    const category = item.category_id ? categoryMap.get(item.category_id) : undefined
+    const parent = category?.parent_id ? categoryMap.get(category.parent_id) : undefined
+    const label = category
+      ? parent ? `${parent.name} / ${category.name}` : category.name
+      : '未分类'
+
+    return {
+      icon: category?.icon || (item.direction === 'in' ? '↗' : '↘'),
+      label,
+      color: category?.color || (item.direction === 'in' ? '#16a34a' : '#dc2626')
+    }
+  }
+
+  const getAmountMeta = (item: TransactionItem) => {
+    const isIncome = item.direction === 'in'
+    return {
+      prefix: isIncome ? '+' : '-',
+      color: isIncome ? '#16a34a' : '#dc2626'
+    }
   }
 
   // 骨架屏占位
@@ -112,68 +165,152 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
         {groupedData.map(([date, items]) => (
           <div
             key={date}
-            style={{ background: 'var(--bg-card)', borderRadius: 12, overflow: 'hidden' }}
+            style={{
+              background: 'var(--bg-card)',
+              borderRadius: 18,
+              overflow: 'hidden',
+              border: '1px solid var(--border-light)',
+              boxShadow: '0 8px 24px rgba(15, 23, 42, 0.05)'
+            }}
           >
-            {/* 日期标题 */}
             <div style={{
-              padding: '12px 16px',
-              borderBottom: '1px solid var(--border-light)',
-              fontWeight: 500,
-              color: 'var(--text-primary)'
+              padding: '14px 16px',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              gap: 12,
+              background: 'linear-gradient(180deg, rgba(148, 163, 184, 0.08), rgba(148, 163, 184, 0))'
             }}>
-              {formatDateDisplay(date)}
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  {formatDateDisplay(date)}
+                </div>
+                <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {formatDateSubline(date)}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                {items.length} 笔
+              </div>
             </div>
 
-            {/* 交易列表 */}
             <div>
-              {items.map((item: TransactionItem) => (
-                <div
-                  key={item.id}
-                  style={{
-                    padding: '12px 16px',
-                    borderBottom: '1px solid var(--border-light)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}
-                  onClick={() => onItemClick?.(item)}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                      <span style={{ fontWeight: 500, fontSize: 15, color: 'var(--text-primary)', flexShrink: 0 }}>
-                        {item.merchant || '-'}
-                      </span>
+              {items.map((item: TransactionItem, index) => {
+                const categoryMeta = getCategoryMeta(item)
+                const amountMeta = getAmountMeta(item)
+
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: '14px 16px',
+                      borderTop: index === 0 ? '1px solid var(--border-light)' : '1px solid var(--border-light)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 14
+                    }}
+                    onClick={() => onItemClick?.(item)}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: 14,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        fontSize: 20,
+                        background: `${categoryMeta.color}18`,
+                        color: categoryMeta.color
+                      }}
+                    >
+                      {categoryMeta.icon}
                     </div>
-                    <div style={{
-                      fontSize: 13,
-                      color: 'var(--text-secondary)',
-                      minHeight: 20,
-                      lineHeight: '20px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {item.note || ''}
+
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12
+                      }}>
+                        <div style={{
+                          fontWeight: 600,
+                          fontSize: 15,
+                          color: 'var(--text-primary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {item.merchant || item.note || '未命名交易'}
+                        </div>
+                        <div style={{
+                          marginLeft: 12,
+                          flexShrink: 0,
+                          textAlign: 'right',
+                          minWidth: 112
+                        }}>
+                          <div style={{
+                            color: amountMeta.color,
+                            fontWeight: 700,
+                            fontSize: 17,
+                            fontVariantNumeric: 'tabular-nums'
+                          }}>
+                            {amountMeta.prefix}¥{Number(item.amount).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{
+                        marginTop: 6,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12
+                      }}>
+                        <div style={{
+                          minWidth: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          overflow: 'hidden'
+                        }}>
+                          <span style={{
+                            fontSize: 12,
+                            color: 'var(--text-secondary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {categoryMeta.label}
+                          </span>
+                          {item.note && item.note !== item.merchant && (
+                            <span style={{
+                              fontSize: 12,
+                              color: 'var(--text-tertiary)',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {item.note}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{
+                          flexShrink: 0,
+                          fontSize: 12,
+                          color: 'var(--text-secondary)',
+                          fontVariantNumeric: 'tabular-nums'
+                        }}>
+                          {formatTimeDisplay(item.occurred_at)}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <div style={{ textAlign: 'right', marginLeft: 16, flexShrink: 0 }}>
-                    <div style={{
-                      color: item.direction === 'in' ? '#52c41a'
-                        : item.direction === 'refund' ? '#1890ff'
-                        : '#ff4d4f',
-                      fontWeight: 600,
-                      fontSize: 16
-                    }}>
-                      {item.direction === 'in' ? '+' : item.direction === 'refund' ? '↩' : '-'}
-                      ¥{Number(item.amount).toFixed(2)}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-                      {item.account_id ? `[账户]` : ''}
-                    </div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         ))}

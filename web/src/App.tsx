@@ -25,6 +25,8 @@ const ImportTemplatesPage = lazy(() => import('./pages/ImportTemplatesPage'))
 const RecurringRulesPage = lazy(() => import('./pages/RecurringRulesPage'))
 const WishlistPage = lazy(() => import('./pages/WishlistPage'))
 const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
+const SettingsPageView = lazy(() => import('./pages/SettingsPage'))
+const ImportsPageView = lazy(() => import('./pages/ImportsPage'))
 
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
@@ -35,6 +37,7 @@ import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 
 import { AuthContext, useAuth } from './contexts/AuthContext'
+import { useAppStore } from './stores/appStore'
 
 export { useAuth }
 
@@ -306,7 +309,7 @@ return (
             <Route path="/tags/new" element={<TagFormPage />} />
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/loans/new" element={<LoanFormPage />} />
-            <Route path="/imports" element={<ImportsPage />} />
+            <Route path="/imports" element={<Suspense fallback={<LoadingFallback />}><ImportsPageView /></Suspense>} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/reports/home" element={<Suspense fallback={<LoadingFallback />}><ReportsHomePage /></Suspense>} />
             <Route path="/reports/monthly-summary" element={<Suspense fallback={<LoadingFallback />}><MonthlySummaryPage /></Suspense>} />
@@ -326,7 +329,7 @@ return (
             <Route path="/assets" element={<Suspense fallback={<LoadingFallback />}><DurableAssetsPage /></Suspense>} />
             <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="lend" /></Suspense>} />
             <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="borrow" /></Suspense>} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<Suspense fallback={<LoadingFallback />}><SettingsPageView /></Suspense>} />
             <Route path="/settings/import-templates" element={<Suspense fallback={<LoadingFallback />}><ImportTemplatesPage /></Suspense>} />
             <Route path="/settings/recurring-rules" element={<Suspense fallback={<LoadingFallback />}><RecurringRulesPage /></Suspense>} />
             <Route path="/settings/rules" element={<MatchRulesPage />} />

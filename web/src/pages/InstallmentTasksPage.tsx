@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card, Button, Tag, Empty, Spin, message, Progress } from 'antd'
 import { useAuth } from '../App'
 import { apiGet, apiPost } from '../services/api'
+import { useAppStore } from '../stores/appStore'
 
 export default function InstallmentTasksPage() {
   const { user } = useAuth()
@@ -29,12 +30,16 @@ export default function InstallmentTasksPage() {
     }
   }
 
+  const triggerRefresh = useAppStore((s) => s.triggerRefresh)
+
   const executePeriod = async (planId: string) => {
     try {
       setExecutingId(planId)
       await apiPost(`/api/installments/${planId}/execute`, {})
       message.success('执行成功')
       loadPlans()
+      // 🛡️ L: 通知全局刷新 — Dashboard 等页面无需 F5 即可看到最新额度
+      triggerRefresh()
     } catch (err: any) {
       message.error(err.message || '执行失败')
     } finally {
@@ -52,20 +57,9 @@ export default function InstallmentTasksPage() {
 
   return (
     <div style={{ padding: 16 }}>
-      {/* 顶部导航 */}
+      {/* 顶部操作栏 */}
       <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            onClick={() => navigate(-1)}
-            style={{
-              width: 36, height: 36, borderRadius: 8, border: '1px solid #d9d9d9',
-              background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}
-          >
-            ←
-          </button>
-          <h2 style={{ margin: 0 }}>分期任务</h2>
-        </div>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>分期任务</h2>
         <button
           onClick={() => navigate('/other/installment')}
           style={{
@@ -100,6 +94,9 @@ export default function InstallmentTasksPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                   <div>
                     <div style={{ fontSize: 16, fontWeight: 600 }}>{plan.plan_name || plan.merchant}</div>
+                    <div style={{ fontSize: 12, color: '#1677ff', marginTop: 2 }}>
+                      {plan.account_name ? `🏦 ${plan.account_name}` : ''}
+                    </div>
                     <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
                       总金额: ¥{Number(plan.total_amount).toFixed(2)} | 每期: ¥{Number(plan.installment_amount || plan.total_due).toFixed(2)}
                     </div>

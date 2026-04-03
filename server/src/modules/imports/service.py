@@ -294,99 +294,66 @@ def confirm_import(db: Session, batch_id: str, book_id: str, data: ConfirmImport
     try:
         with db.begin():
             for row in rows_to_process:
+                # 🛡️ L: 嵌套事务 savepoint — 单行失败仅回滚当前层，不污染整批
                 try:
-                    # Check for duplicate (by business_key)
-                    external_txn_id = ""
-                    if row.normalized_data:
+                    with db.begin_nested():
+                        if not row.normalized_data:
+                            row.confirm_status = ConfirmStatus.SKIPPED.value
+                            skipped_count += 1
+                            continue
+
                         normalized = json.loads(row.normalized_data)
-                        external_txn_id = normalized.get("external_txn_id", "")
-                    
-                    # Use content hash as fallback for idempotency
-                    if external_txn_id:
-                        business_key = f"external:{row.guessed_account_id}:{external_txn_id}"
-                    else:
-                        # Use raw_data hash for idempotency when no external_id
-                        import hashlib
-                        raw_hash = hashlib.sha256(row.raw_data.encode()).hexdigest()[:16]
-                        business_key = f"import:{book_id}:{raw_hash}"
-                    
-                    # Check idempotency
-                    existing = db.query(Transaction).filter(
-                        Transaction.book_id == book_id,
-                        Transaction.business_key == business_key
-                    ).first()
-                    
-                    if existing:
-                        row.confirm_status = ConfirmStatus.DUPLICATE.value
-                        duplicate_count += 1
-                        continue
+                        if not normalized.get("amount"):
+                            row.confirm_status = ConfirmStatus.SKIPPED.value
+                            skipped_count += 1
+                            continue
 
-                    # Skip if no amount
-                    if not row.normalized_data:
-                        row.confirm_status = ConfirmStatus.SKIPPED.value
-                        skipped_count += 1
-                        continue
+                        account = accounts.get(row.guessed_account_id)
+                        if not account:
+                            row.error_message = "Account not found"
+                            row.confirm_status = ConfirmStatus.SKIPPED.value
+                            error_count += 1
+                            continue
 
-                    normalized = json.loads(row.normalized_data)
-                    if not normalized.get("amount"):
-                        row.confirm_status = ConfirmStatus.SKIPPED.value
-                        skipped_count += 1
-                        continue
+                        if normalized.get("external_txn_id"):
+                            business_key = f"external:{row.guessed_account_id}:{normalized['external_txn_id']}"
+                        else:
+                            import hashlib
+                            raw_hash = hashlib.sha256(row.raw_data.encode()).hexdigest()[:16]
+                            business_key = f"import:{book_id}:{raw_hash}"
 
-                    # Get account
-                    account = accounts.get(row.guessed_account_id)
-                    if not account:
-                        row.error_message = "Account not found"
-                        row.confirm_status = ConfirmStatus.SKIPPED.value
-                        error_count += 1
-                        continue
+                        tx_type = normalized.get("transaction_type", "expense")
+                        direction = normalized.get("direction", "out")
 
-                    # 🛡️ L: 确定交易类型和方向，设置收支开关
-                    tx_type = normalized.get("transaction_type", "expense")
-                    direction = normalized.get("direction", "out")
-                    
-                    # 支出交易计入支出，收入交易计入收入
-                    is_expense = tx_type == "expense" or direction == "out"
-                    is_income = tx_type == "income" or direction == "in"
+                        txn_data = TransactionCreate(
+                            occurred_at=datetime.fromisoformat(normalized["occurred_at"]) if normalized.get("occurred_at") else datetime.utcnow(),
+                            transaction_type=tx_type,
+                            direction=direction,
+                            amount=Decimal(normalized["amount"]),
+                            account_id=row.guessed_account_id,
+                            category_id=row.guessed_category_id,
+                            merchant=normalized.get("merchant"),
+                            note=normalized.get("description"),
+                            source_type=SourceType.IMPORT,
+                            source_batch_id=batch_id,
+                            source_row_no=row.row_no,
+                            business_key=business_key,
+                            include_expense_override=(tx_type == "expense" or direction == "out"),
+                            include_income_override=(tx_type == "income" or direction == "in"),
+                            include_cashflow_override=True,
+                        )
 
-                    # Create transaction
-                    txn_data = TransactionCreate(
-                        occurred_at=datetime.fromisoformat(normalized["occurred_at"]) if normalized.get("occurred_at") else datetime.utcnow(),
-                        transaction_type=tx_type,
-                        direction=direction,
-                        amount=Decimal(normalized["amount"]),
-                        account_id=row.guessed_account_id,
-                        category_id=row.guessed_category_id,
-                        merchant=normalized.get("merchant"),
-                        note=normalized.get("description"),
-                        source_type=SourceType.IMPORT,
-                        source_batch_id=batch_id,
-                        source_row_no=row.row_no,
-                        business_key=business_key,
-                        # 🛡️ L: 显式设置收支开关
-                        include_expense_override=is_expense,
-                        include_income_override=is_income,
-                        include_cashflow_override=True,  # 导入的交易默认计入现金流
-                        # 🛡️ L: 初始化标签为空数组，避免 None 导致 Pydantic 校验失败
-                        tags=[],
-                    )
-
-                    try:
                         create_transaction(db, book_id, txn_data)
                         row.confirm_status = ConfirmStatus.CONFIRMED.value
                         confirmed_count += 1
-                    except IntegrityError as ie:
-                        # 🛡️ L: 数据库唯一约束冲突 - 标记为重复
-                        db.rollback()  # 回滚当前事务
-                        row.error_message = f"重复数据: {str(ie)}"
-                        row.confirm_status = ConfirmStatus.DUPLICATE.value
-                        duplicate_count += 1
 
-                except IntegrityError as ie:
-                    # 🛡️ L: 外层捕获 - 防止整个导入请求报 500
-                    row.error_message = f"重复数据: {str(ie)}"
+                except IntegrityError:
+                    # 唯一键冲突 → 仅标记重复，继续下一行
+                    row.error_message = "重复数据"
                     row.confirm_status = ConfirmStatus.DUPLICATE.value
                     duplicate_count += 1
+                    continue
+
                 except Exception as e:
                     row.error_message = str(e)
                     row.confirm_status = ConfirmStatus.SKIPPED.value

@@ -90,14 +90,13 @@ export default function WishlistPage() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      {/* 顶部操作栏 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 rounded-2xl border p-5 shadow-sm" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
         <div>
-          <span style={{ fontSize: 18, fontWeight: 600 }}>愿望单</span>
-          <span style={{ marginLeft: 8, color: '#999', fontSize: 13 }}>
-            {items.filter(i => i.status === 'pending').length} 件待购
-          </span>
+          <h1 className="text-lg font-semibold text-[var(--text-primary)]">愿望单</h1>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            {items.filter(i => i.status === 'pending').length} 件待购，统一记录想买但还没下单的物品。
+          </p>
         </div>
         <Button
           type="primary"
@@ -108,32 +107,36 @@ export default function WishlistPage() {
         </Button>
       </div>
 
-      {/* 列表 */}
       {items.length === 0 ? (
-        <Empty
-          image={<ShoppingOutlined style={{ fontSize: 48, color: '#ccc' }} />}
-          description="愿望单是空的，加一个吧～"
-        />
+        <div className="rounded-2xl border p-8 shadow-sm" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
+          <Empty
+            image={<ShoppingOutlined style={{ fontSize: 48, color: '#ccc' }} />}
+            description="愿望单是空的，加一个吧～"
+          />
+        </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="space-y-3">
           {items.map(item => (
             <Card
               key={item.id}
               size="small"
               style={{
                 opacity: item.status === 'purchased' ? 0.6 : 1,
-                border: item.status === 'purchased' ? '1px solid #d9d9d9' : '1px solid #91caff'
+                border: item.status === 'purchased' ? '1px solid var(--border-color)' : '1px solid #91caff',
+                borderRadius: 16,
+                background: 'var(--bg-card)',
+                boxShadow: 'var(--shadow-card)',
               }}
-              bodyStyle={{ padding: 12 }}
+              bodyStyle={{ padding: 16 }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                     <span style={{
-                      fontSize: 15,
+                      fontSize: 16,
                       fontWeight: 600,
                       textDecoration: item.status === 'purchased' ? 'line-through' : 'none',
-                      color: item.status === 'purchased' ? '#999' : '#262626'
+                      color: item.status === 'purchased' ? 'var(--text-tertiary)' : 'var(--text-primary)'
                     }}>
                       {item.name}
                     </span>

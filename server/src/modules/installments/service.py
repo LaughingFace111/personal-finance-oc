@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import json
 from typing import List, Optional
 from dateutil.relativedelta import relativedelta
 import calendar
@@ -11,10 +12,44 @@ from src.core import generate_uuid, NotFoundException
 
 from .models import InstallmentPlan, InstallmentSchedule
 from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
-from src.modules.accounts.service import get_account, update_account_debt, update_account_frozen
+from src.modules.accounts.service import update_account_debt, update_account_frozen
 from src.modules.transactions.service import create_transaction
 from src.modules.transactions.schemas import TransactionCreate
+from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
+
+
+def _write_installment_balance_snapshot(db: Session, account, plan, executed_period: int) -> None:
+    """🛡️ L: 分期执行后同步写入余额快照"""
+    from src.modules.account_balance_snapshots import AccountBalanceSnapshot
+    from src.modules.books.models import Book
+    from datetime import date as date_type
+
+    book = db.query(Book).filter(Book.id == plan.book_id).with_for_update().first()
+    if not book:
+        return
+
+    snapshot_date = date_type.today()
+    balance_value = account.debt_amount  # 信用账户快照用负债额
+
+    existing = db.query(AccountBalanceSnapshot).filter(
+        AccountBalanceSnapshot.account_id == account.id,
+        AccountBalanceSnapshot.snapshot_date == snapshot_date
+    ).with_for_update().first()
+
+    if existing:
+        existing.end_of_day_balance = balance_value
+        existing.updated_at = datetime.utcnow()
+    else:
+        snap = AccountBalanceSnapshot(
+            id=generate_uuid(),
+            user_id=book.user_id,
+            account_id=account.id,
+            snapshot_date=snapshot_date,
+            end_of_day_balance=balance_value,
+        )
+        db.add(snap)
+
 
 
 def _safe_date(year: int, month: int, day: int) -> date:
@@ -57,35 +92,73 @@ def _calculate_next_execution_date(current_date: date, repayment_day: int) -> da
         return date(next_month.year, next_month.month, target_day)
 
 
-def create_installment_with_transaction(db: Session, book_id: str, data: CreateInstallmentRequest) -> tuple:
-    """Create installment plan with the initial purchase transaction - 包含冻结额度逻辑"""
+def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmentRequest) -> List[InstallmentSchedule]:
+    """Generate schedules using the user-provided first billing/execution date as period 1."""
+    schedules = []
+    first_schedule_date = data.first_billing_date or data.first_execution_date
+    if first_schedule_date is None:
+        first_schedule_date = data.start_date + relativedelta(months=1)
 
-    # Validate account is credit type
-    account = get_account(db, data.account_id, book_id)
+    from decimal import ROUND_DOWN
+    total = Decimal(str(data.total_amount))
+    periods = Decimal(str(data.total_periods))
+    base_principal = (total / periods).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+
+    for period in range(1, data.total_periods + 1):
+        due_date = first_schedule_date + relativedelta(months=period - 1)
+
+        # 尾差兜底：最后一期用减法确保总额精确等于 total_amount
+        if period < data.total_periods:
+            period_principal = base_principal
+        else:
+            period_principal = total - (base_principal * (data.total_periods - 1))
+
+        schedule = InstallmentSchedule(
+            id=generate_uuid(),
+            installment_plan_id=plan.id,
+            period_no=period,
+            due_date=due_date,
+            principal_amount=period_principal,
+            fee_amount=plan.fee_per_period,
+            total_due=period_principal + plan.fee_per_period,
+            status="pending"
+        )
+        schedules.append(schedule)
+
+    return schedules
+
+
+def create_installment_with_transaction(db: Session, book_id: str, data: CreateInstallmentRequest) -> tuple:
+    """Create installment plan and freeze credit without generating any transaction."""
+
+    # 🛡️ L: 获取账户行级锁，防止并发创建分期击穿冻结逻辑
+    from src.modules.accounts.models import Account
+    account = db.query(Account).filter(
+        Account.id == data.account_id
+    ).with_for_update().first()
     if not account:
         raise NotFoundException("Account not found")
 
     if account.account_type not in ["credit_card", "credit_line"]:
         raise ValueError("Account must be credit card or credit line type")
 
-    # 🛡️ L: 计算冻结金额 = 每期金额 * 剩余期数
-    # 首期已支付（或者计入当前待还），后续期数需要冻结
-    remaining_periods = data.total_periods - 1  # 除去第一期
-    
     # 🛡️ L: 计算每期本金（如果未提供）
     if data.principal_per_period is not None:
         principal_per_period = data.principal_per_period
     else:
         # 如果未提供，则从 total_amount / total_periods 计算
         principal_per_period = Decimal(str(data.total_amount)) / Decimal(str(data.total_periods))
-    
-    # 🛡️ L: 计算冻结金额 = 每期金额 * 剩余期数
-    if data.installment_amount and data.installment_amount > 0:
-        frozen_amount = Decimal(str(data.installment_amount)) * remaining_periods if remaining_periods > 0 else Decimal("0")
-    else:
-        # 如果未提供每期金额，则使用计算出的每期本金 + 手续费
-        installment_amount = principal_per_period + data.fee_per_period
-        frozen_amount = installment_amount * remaining_periods if remaining_periods > 0 else Decimal("0")
+
+    # 🛡️ L: 冻结额度按总本金冻结；每期冻结额用于执行期释放
+    installment_amount = (
+        Decimal(str(data.installment_amount))
+        if data.installment_amount and data.installment_amount > 0
+        else principal_per_period + data.fee_per_period
+    )
+    serialized_tags = json.dumps(data.tags, ensure_ascii=False) if data.tags else None
+    frozen_amount = Decimal(str(data.total_amount))
+    first_execution_date = data.first_execution_date or data.start_date + relativedelta(months=1)
+    first_billing_date = data.first_billing_date or data.start_date + relativedelta(months=1)
 
     # 使用事务保证原子性
     try:
@@ -98,7 +171,7 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
             category_id=data.category_id,
             plan_name=data.plan_name or data.merchant,
             total_amount=data.total_amount,
-            installment_amount=data.installment_amount,
+            installment_amount=installment_amount,
             total_periods=data.total_periods,
             executed_periods=0,  # 🛡️ L: 已执行期数
             current_period=0,  # 🛡️ L: 当前期数（0表示未开始执行）
@@ -109,73 +182,33 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
             interest=Decimal("0"),  # 🛡️ L: 利息（可扩展）
             start_date=data.start_date,
             application_date=datetime.utcnow(),  # 🛡️ L: 申请日期
-            first_billing_date=data.start_date + relativedelta(months=1),  # 🛡️ L: 首次账单日
+            first_execution_date=first_execution_date,
+            first_billing_date=first_billing_date,
             first_repayment_date=data.start_date + relativedelta(months=1),
-            next_execution_date=data.start_date + relativedelta(months=1),  # 🛡️ L: 下次执行日期
+            next_execution_date=first_execution_date,  # 🛡️ L: 下次执行日期
             repayment_day=data.repayment_day,
             status=PlanStatus.ACTIVE.value,
+            tags=serialized_tags,
             note=data.note,
         )
         db.add(plan)
 
-        # 2. 生成还款计划
-        schedules = []
-        current_date = data.start_date + relativedelta(months=1)
-        for period in range(1, data.total_periods + 1):
-            if data.repayment_day:
-                due_date = _safe_date(current_date.year, current_date.month, data.repayment_day)
-            else:
-                due_date = current_date
-
-            schedule = InstallmentSchedule(
-                id=generate_uuid(),
-                installment_plan_id=plan.id,
-                period_no=period,
-                due_date=due_date,
-                principal_amount=plan.principal_per_period,
-                fee_amount=plan.fee_per_period,
-                total_due=plan.principal_per_period + plan.fee_per_period,
-                status="pending"
-            )
-            schedules.append(schedule)
-            current_date = current_date + relativedelta(months=1)
-
+        # 2. 生成还款计划：第1期严格使用用户配置的首次日期
+        schedules = generate_installment_schedules(plan, data)
         db.add_all(schedules)
 
-        # 3. 创建初始消费交易（分期本金+手续费，计入支出）
-        total_with_fee = data.total_amount + (data.fee_per_period * data.total_periods)
-        txn_data = TransactionCreate(
-            occurred_at=data.occurred_at,
-            transaction_type=TransactionType.INSTALLMENT_PURCHASE,
-            direction=TransactionDirection.OUT,
-            amount=total_with_fee,
-            account_id=data.account_id,
-            category_id=data.category_id,
-            merchant=data.merchant,
-            note=data.note or f"分期消费: {plan.plan_name}",
-            business_key=f"installment:{plan.id}",
-            source_type=SourceType.MANUAL,
-            include_expense_override=True,
-            include_cashflow_override=False,
-        )
-        transaction = create_transaction(db, book_id, txn_data)
-
-        # 4. 增加账户欠款
-        update_account_debt(db, data.account_id, total_with_fee, is_increase=True)
-
-        # 5. 🛡️ L: 冻结后续期数的额度
+        # 3. 创建分期时只冻结额度，不生成交易，也不增加 debt_amount
         if frozen_amount > 0:
-            update_account_frozen(db, data.account_id, frozen_amount, is_increase=True)
-
-        # 6. 更新计划的 transaction_id
-        plan.transaction_id = transaction.id
+            account.frozen_amount = (account.frozen_amount or Decimal("0")) + frozen_amount
 
         db.commit()
         db.refresh(plan)
-        return plan, transaction
+        clear_overview_cache()  # 🛡️ L: create_installment_with_transaction
+        return plan, None
         
     except Exception as e:
         db.rollback()
+        clear_overview_cache()  # 🛡️ L: 异常时也清除
         raise e
 
 
@@ -211,44 +244,42 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
     if not schedule:
         raise ValueError(f"第 {next_period} 期还款计划不存在")
     
+    # 🛡️ L: 获取账户行级锁，防止并发执行同一期
+    from src.modules.accounts.models import Account
+    account = db.query(Account).filter(
+        Account.id == plan.account_id
+    ).with_for_update().first()
+
     try:
-        # 1. 创建单期交易记录
-        # 格式: "[当前期数]/[总期数] 期"
+        # 1. 为本期分期生成一笔支出账单，发生日期以计划日为准
         note = f"[{next_period}/{plan.total_periods}] 期 - {plan.plan_name}"
-        
-        # 🛡️ L: 使用 round 避免浮点精度问题
-        amount = round(float(schedule.total_due), 2)
-        
+        amount = Decimal(str(schedule.total_due))
+        occurred_at = datetime.combine(schedule.due_date, datetime.min.time())
+
         txn_data = TransactionCreate(
-            occurred_at=datetime.utcnow(),
-            transaction_type=TransactionType.INSTALLMENT_REPAYMENT,
-            direction=TransactionDirection.IN,  # 还款入账
-            amount=Decimal(str(amount)),
+            occurred_at=occurred_at,
+            transaction_type=TransactionType.EXPENSE,
+            direction=TransactionDirection.OUT,
+            amount=amount,
             account_id=plan.account_id,
             category_id=plan.category_id,
             merchant=plan.plan_name,
             note=note,
             business_key=f"installment:{plan.id}:p{next_period}",
-            source_type=SourceType.SYSTEM,  # 🛡️ L: 系统自动生成
-            include_expense_override=True,  # 计入支出
+            source_type=SourceType.SYSTEM,
+            include_expense_override=True,
             include_cashflow_override=False,
         )
         transaction = create_transaction(db, book_id, txn_data)
 
-        # 2. 更新账户欠款（减少）- 使用同样四舍五入的金额
-        update_account_debt(db, plan.account_id, Decimal(str(amount)), is_increase=False)
+        # 2. 迁移额度：本期应还转为欠款，同时释放对应冻结额度
+        frozen_amount = Decimal(str(schedule.total_due))
+        debt_amount = Decimal(str(schedule.total_due))
+        update_account_debt(db, plan.account_id, debt_amount, is_increase=True)
+        update_account_frozen(db, plan.account_id, frozen_amount, is_increase=False)
+        db.refresh(account)
 
-        # 3. 🛡️ L: 减少冻结金额
-        if plan.executed_periods < plan.total_periods:
-            # 还清一期，冻结金额减少一期
-            update_account_frozen(
-                db, 
-                plan.account_id, 
-                Decimal(str(amount)), 
-                is_increase=False  # 减少冻结
-            )
-
-        # 4. 更新计划已执行期数
+        # 4. 更新计划进度
         plan.executed_periods = next_period
         plan.current_period = next_period
 
@@ -256,26 +287,34 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         if next_period < plan.total_periods:
             current_exec_date = plan.next_execution_date or datetime.now().date()
             plan.next_execution_date = _calculate_next_execution_date(
-                current_exec_date, 
-                plan.repayment_day or 15  # 默认15日
+                current_exec_date,
+                plan.repayment_day or 15
             )
 
-        # 6. 检查是否完成
+        # 6. 🛡️ L: 同步写入余额快照
+        _write_installment_balance_snapshot(db, account, plan, next_period)
+
+        # 7. 检查是否完成
         if plan.executed_periods >= plan.total_periods:
             plan.status = PlanStatus.COMPLETED.value
+            # 全额解冻
+            account.frozen_amount = Decimal("0")
 
         db.commit()
         db.refresh(plan)
-        
-        return {
+
+        result = {
             "plan": plan,
             "schedule": schedule,
             "transaction": transaction,
             "next_execution_date": plan.next_execution_date
         }
-        
+        clear_overview_cache()  # 🛡️ L: execute_installment_period（return 之前清除）
+        return result
+
     except Exception as e:
         db.rollback()
+        clear_overview_cache()  # 🛡️ L: 异常时也清除缓存
         raise e
 
 
@@ -327,6 +366,7 @@ def update_installment_plan(db: Session, plan_id: str, book_id: str, data: Insta
 
     db.commit()
     db.refresh(plan)
+    clear_overview_cache()  # 🛡️ L: update plan
     return plan
 
 
@@ -349,7 +389,7 @@ def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str,
     total_repayment = schedule.principal_amount + schedule.fee_amount
     txn_data = TransactionCreate(
         occurred_at=occurred_at,
-        transaction_type=TransactionType.INSTALLMENT_REPAYMENT,
+        transaction_type=TransactionType.REPAYMENT_CREDIT_CARD,
         direction=TransactionDirection.INTERNAL,
         amount=total_repayment,
         account_id=account_id,
@@ -374,6 +414,7 @@ def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str,
 
     db.commit()
     db.refresh(schedule)
+    clear_overview_cache()  # 🛡️ L: settle_installment
     return schedule, transaction
 
 

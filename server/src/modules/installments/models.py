@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from src.core.database import Base
@@ -28,12 +28,14 @@ class InstallmentPlan(Base):
     interest = Column(Numeric(15, 2), default=0)  # 🛡️ L: 利息
     start_date = Column(Date, nullable=False)  # 开始日期（申请日期）
     application_date = Column(DateTime)  # 🛡️ L: 申请日期
+    first_execution_date = Column(Date)  # 🛡️ L: 首次执行日期
     first_billing_date = Column(Date)  # 🛡️ L: 首次账单日
     first_repayment_date = Column(Date)
     next_execution_date = Column(Date)  # 🛡️ L: 下次执行日期
     repayment_day = Column(Integer)
     status = Column(String(20), default="active")
     early_settlement_supported = Column(Boolean, default=True)
+    tags = Column(Text)  # 🛡️ L: 标签ID数组(JSON)
     note = Column(String(500))  # 🛡️ L: 备注
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

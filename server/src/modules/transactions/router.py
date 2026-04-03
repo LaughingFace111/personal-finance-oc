@@ -11,10 +11,10 @@ from src.modules.auth.models import User
 
 from .schemas import (
     TransactionCreate, TransactionResponse, TransactionUpdate,
-    TransferCreate, RefundCreate, TransactionFilter, TransactionSummary
+    TransferCreate, CreditCardRepaymentCreate, RefundCreate, TransactionFilter, TransactionSummary
 )
 from .service import (
-    create_transaction, create_transfer, create_refund,
+    create_transaction, create_transfer, create_credit_card_repayment, create_refund,
     get_transactions, get_transaction, update_transaction, delete_transaction,
     adjust_account_balance
 )
@@ -87,6 +87,18 @@ def transfer(
     return create_transfer(db, bid, data)
 
 
+@router.post("/repayment/credit-card", response_model=TransactionResponse)
+def credit_card_repayment(
+    data: CreditCardRepaymentCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Create credit card repayment"""
+    bid = get_current_book_id(current_user, db, book_id)
+    return create_credit_card_repayment(db, bid, data)
+
+
 @router.post("/refund", response_model=TransactionResponse)
 def refund(
     data: RefundCreate, 
@@ -140,7 +152,8 @@ def list_transactions(
     keyword: str = None,
     tag: str = None,
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=100)
+    page_size: int = Query(50, ge=1, le=100),
+    include_hidden: bool = False  # 🛡️ L: 是否包含隐身账单
 ):
     """Get transactions with filters"""
     from datetime import datetime, timedelta
@@ -185,7 +198,8 @@ def list_transactions(
         "keyword": keyword,
         "tag": tag,
         "page": page,
-        "page_size": page_size
+        "page_size": page_size,
+        "include_hidden": include_hidden  # 🛡️ L: 传递隐身账单过滤
     }
 
     items, total = get_transactions(db, bid, filters)

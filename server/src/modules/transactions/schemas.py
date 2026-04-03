@@ -68,6 +68,7 @@ class TransactionResponse(TransactionBase):
     created_at: datetime
     updated_at: datetime
     has_refund: bool = False  # 是否已有退款
+    is_hidden: bool = False  # 🛡️ L: 隐身账单标记（列表展示用）
 
     class Config:
         from_attributes = True
@@ -78,6 +79,16 @@ class TransferCreate(BaseModel):
     occurred_at: datetime
     from_account_id: str
     to_account_id: str
+    amount: Decimal = Field(..., gt=0)
+    currency: str = "CNY"
+    note: Optional[str] = None
+    tags: Optional[str] = None
+
+
+class CreditCardRepaymentCreate(BaseModel):
+    occurred_at: datetime
+    from_account_id: str
+    credit_card_account_id: str
     amount: Decimal = Field(..., gt=0)
     currency: str = "CNY"
     note: Optional[str] = None
@@ -104,6 +115,7 @@ class TransactionFilter(BaseModel):
     keyword: Optional[str] = None
     page: int = 1
     page_size: int = 50
+    include_hidden: bool = False  # 🛡️ L: 是否包含隐身账单（默认不包含）
 
 
 # Transaction summary

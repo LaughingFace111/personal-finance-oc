@@ -5,6 +5,9 @@ export interface AccountOption {
   name: string;
   account_type: string;
   current_balance: number;
+  credit_limit?: number;
+  debt_amount?: number;
+  frozen_amount?: number;
 }
 
 export interface CategoryOption {
@@ -71,4 +74,17 @@ export function getCategoryLabel(categories: CategoryOption[], categoryId: strin
 
   const parent = categories.find((item) => item.id === category.parent_id);
   return parent ? `${parent.name}-${category.name}` : category.name;
+}
+
+export function getAccountOptionLabel(account: AccountOption) {
+  if (account.account_type === 'credit_card' || account.account_type === 'credit_line') {
+    const availableCredit =
+      Number(account.credit_limit || 0) -
+      Number(account.debt_amount || 0) -
+      Number(account.frozen_amount || 0);
+
+    return `${account.name} (可用额度: ¥${availableCredit.toFixed(2)})`;
+  }
+
+  return `${account.name} (余额: ¥${Number(account.current_balance || 0).toFixed(2)})`;
 }

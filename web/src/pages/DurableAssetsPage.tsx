@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Card, Button, Tag, Empty, Spin, message, Modal, Form, InputNumber, Input, Popconfirm, DatePicker, Tooltip } from 'antd'
-import { PlusOutlined, DeleteOutlined, FallOutlined, AccountBookOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, AccountBookOutlined } from '@ant-design/icons'
 import { apiGet, apiPost, apiPatch, apiDelete } from '../services/api'
 import { useAuth } from '../App'
 import dayjs from 'dayjs'
@@ -104,39 +104,41 @@ export default function DurableAssetsPage() {
   }
 
   return (
-    <div style={{ padding: 16 }}>
-      {/* 顶部操作栏 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3 rounded-2xl border p-5 shadow-sm" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
         <div>
-          <span style={{ fontSize: 18, fontWeight: 600 }}>大件日均成本</span>
-          {assets.length > 0 && (
-            <span style={{ marginLeft: 8, color: '#999', fontSize: 13 }}>
-              {assets.filter(a => !a.is_retired).length} 件在用 · 总价值 ¥{formatPrice(totalValue)}
-            </span>
-          )}
+          <h1 className="text-lg font-semibold text-[var(--text-primary)]">大件日均成本</h1>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+            {assets.length > 0
+              ? `${assets.filter(a => !a.is_retired).length} 件在用 · 总价值 ¥${formatPrice(totalValue)}`
+              : '追踪高价物品的使用天数和摊销后的日均成本。'}
+          </p>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
           登记大件
         </Button>
       </div>
 
-      {/* 汇总卡片 */}
       {assets.length > 0 && (
-        <Card size="small" style={{ marginBottom: 16, background: '#f0f5ff', border: '1px solid #adc6ff' }} bodyStyle={{ padding: '12 16' }}>
-          <div style={{ display: 'flex', gap: 32 }}>
+        <Card
+          size="small"
+          style={{ borderRadius: 16, background: 'var(--bg-card)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-card)' }}
+          bodyStyle={{ padding: 16 }}
+        >
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
             <div>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 2 }}>总购置成本</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#333' }}>¥{formatPrice(totalValue)}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 2 }}>总购置成本</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>¥{formatPrice(totalValue)}</div>
             </div>
             <div>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 2 }}>日均成本合计</div>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 2 }}>日均成本合计</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: '#f45b26', display: 'flex', alignItems: 'center', gap: 4 }}>
                 ⬇️ ¥{avgDailyCost.toFixed(2)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 12, color: '#666', marginBottom: 2 }}>总在用天数</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#333' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 2 }}>总在用天数</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)' }}>
                 {assets.filter(a => !a.is_retired).reduce((s, a) => s + a.days_used, 0)} 天
               </div>
             </div>
@@ -144,32 +146,36 @@ export default function DurableAssetsPage() {
         </Card>
       )}
 
-      {/* 列表 */}
       {assets.length === 0 ? (
-        <Empty
-          image={<AccountBookOutlined style={{ fontSize: 48, color: '#ccc' }} />}
-          description="还没有登记大件，来记一笔吧～"
-        />
+        <div className="rounded-2xl border p-8 shadow-sm" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
+          <Empty
+            image={<AccountBookOutlined style={{ fontSize: 48, color: '#ccc' }} />}
+            description="还没有登记大件，来记一笔吧～"
+          />
+        </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="space-y-3">
           {assets.map(asset => (
             <Card
               key={asset.id}
               size="small"
               style={{
                 opacity: asset.is_retired ? 0.55 : 1,
-                border: asset.is_retired ? '1px solid #d9d9d9' : '1px solid #91caff'
+                border: asset.is_retired ? '1px solid var(--border-color)' : '1px solid #91caff',
+                borderRadius: 16,
+                background: 'var(--bg-card)',
+                boxShadow: 'var(--shadow-card)',
               }}
-              bodyStyle={{ padding: 14 }}
+              bodyStyle={{ padding: 16 }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <AccountBookOutlined style={{ color: '#1677ff', fontSize: 16 }} />
                     <span style={{
                       fontSize: 16,
                       fontWeight: 600,
-                      color: asset.is_retired ? '#999' : '#262626',
+                      color: asset.is_retired ? 'var(--text-tertiary)' : 'var(--text-primary)',
                       textDecoration: asset.is_retired ? 'line-through' : 'none'
                     }}>
                       {asset.name}
@@ -182,16 +188,16 @@ export default function DurableAssetsPage() {
                   <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                     {/* 购置原价 */}
                     <div>
-                      <div style={{ fontSize: 11, color: '#999', marginBottom: 1 }}>购置原价</div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#333' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 1 }}>购置原价</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
                         ¥{formatPrice(asset.purchase_price)}
                       </div>
                     </div>
 
                     {/* 已陪伴天数 */}
                     <div>
-                      <div style={{ fontSize: 11, color: '#999', marginBottom: 1 }}>已陪伴</div>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: '#555' }}>
+                      <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 1 }}>已陪伴</div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)' }}>
                         {asset.days_used} 天
                       </div>
                     </div>
@@ -199,7 +205,7 @@ export default function DurableAssetsPage() {
                     {/* 日均成本 */}
                     {!asset.is_retired && (
                       <div>
-                        <div style={{ fontSize: 11, color: '#999', marginBottom: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
                           日均成本
                           <Tooltip title="每天摊薄一点，钱没白花 💰">
                             <span style={{ cursor: 'help', fontSize: 10 }}>ⓘ</span>
@@ -214,8 +220,8 @@ export default function DurableAssetsPage() {
 
                     {asset.is_retired && asset.retire_date && (
                       <div>
-                        <div style={{ fontSize: 11, color: '#999', marginBottom: 1 }}>退役日期</div>
-                        <div style={{ fontSize: 14, color: '#999' }}>{asset.retire_date}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 1 }}>退役日期</div>
+                        <div style={{ fontSize: 14, color: 'var(--text-tertiary)' }}>{asset.retire_date}</div>
                       </div>
                     )}
                   </div>

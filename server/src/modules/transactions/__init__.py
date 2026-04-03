@@ -2,10 +2,10 @@ from .models import Transaction
 from .router import router
 from .schemas import (
     TransactionCreate, TransactionResponse, TransactionUpdate,
-    TransferCreate, RefundCreate, TransactionFilter, TransactionSummary
+    TransferCreate, CreditCardRepaymentCreate, RefundCreate, TransactionFilter, TransactionSummary
 )
 from .service import (
-    create_transaction, create_transfer, create_refund,
+    create_transaction, create_transfer, create_credit_card_repayment, create_refund,
     get_transactions, get_transaction, update_transaction, delete_transaction
 )
 
@@ -16,11 +16,13 @@ __all__ = [
     "TransactionResponse",
     "TransactionUpdate",
     "TransferCreate",
+    "CreditCardRepaymentCreate",
     "RefundCreate",
     "TransactionFilter",
     "TransactionSummary",
     "create_transaction",
     "create_transfer",
+    "create_credit_card_repayment",
     "create_refund",
     "get_transactions",
     "get_transaction",

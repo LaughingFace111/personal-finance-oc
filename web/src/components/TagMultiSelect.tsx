@@ -17,7 +17,7 @@ export function TagMultiSelect<T extends TagId>({ allTags, value, onChange }: { 
   return (
     <div className='space-y-3'>
       <input
-        className='h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
+        className='h-11 w-full rounded-xl border border-[var(--border-color)] bg-[var(--bg-input)] px-3.5 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-tertiary)] focus:border-blue-500 focus:ring-4 focus:ring-blue-100'
         placeholder='搜索标签（如：西双版纳自驾游）'
         value={keyword}
         onChange={e => setKeyword(e.target.value)}
@@ -28,7 +28,11 @@ export function TagMultiSelect<T extends TagId>({ allTags, value, onChange }: { 
             type='button'
             key={tag.id}
             onClick={() => toggle(tag.id)}
-            className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${selected.has(tag.id) ? 'bg-blue-500 text-white shadow-sm' : 'bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-50'}`}
+            className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+              selected.has(tag.id)
+                ? 'bg-blue-500 text-white shadow-sm'
+                : 'bg-[var(--bg-card)] text-[var(--text-primary)] hover:brightness-95'
+            }`}
             style={{ borderColor: selected.has(tag.id) ? '#3b82f6' : tag.color }}
           >
             #{tag.name}

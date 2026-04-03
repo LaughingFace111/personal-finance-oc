@@ -13,5 +13,26 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // 🛡️ L: 图表库强制独立分包，大幅缩短核心 JS 解析时间
+        manualChunks(id) {
+          if (id.includes('node_modules/echarts') || id.includes('node_modules/zrender')) {
+            return 'vendor-charts'
+          }
+          if (id.includes('node_modules/antd')) {
+            return 'vendor-antd'
+          }
+          if (id.includes('node_modules/@ant-design') || id.includes('node_modules/rc-')) {
+            return 'vendor-antd-large'
+          }
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            return 'vendor-react'
+          }
+        },
+      },
+    },
+  },
 })
