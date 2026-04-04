@@ -1,43 +1,42 @@
-from importlib import import_module
+from .service import BillParseError
+from .parsers import WechatBillParser, AlipayBillParser, JdBillParser, BillParser
+from .router import router
+from .schemas import (
+    BillImportResponse,
+    ParsedBillRecord,
+    ParsedBillItem,
+    ParseBillResponse,
+    ConfirmImportRequest,
+    ConfirmImportResponse,
+    MatchBillRequest,
+)
+from .service import (
+    import_bill_file,
+    parse_bill_file,
+    get_parse_result,
+    confirm_import,
+    apply_match_rules_to_parse,
+    get_bill_parser,
+)
 
 __all__ = [
     "router",
+    "BillParseError",
+    "WechatBillParser",
+    "AlipayBillParser",
+    "JdBillParser",
+    "BillParser",
     "BillImportResponse",
     "ParsedBillRecord",
     "ParsedBillItem",
     "ParseBillResponse",
     "ConfirmImportRequest",
     "ConfirmImportResponse",
+    "MatchBillRequest",
     "import_bill_file",
     "parse_bill_file",
     "get_parse_result",
     "confirm_import",
+    "apply_match_rules_to_parse",
+    "get_bill_parser",
 ]
-
-
-def __getattr__(name: str):
-    if name == "router":
-        module = import_module(".router", __name__)
-        return getattr(module, name)
-
-    if name in {
-        "BillImportResponse",
-        "ParsedBillRecord",
-        "ParsedBillItem",
-        "ParseBillResponse",
-        "ConfirmImportRequest",
-        "ConfirmImportResponse",
-    }:
-        module = import_module(".schemas", __name__)
-        return getattr(module, name)
-
-    if name in {
-        "import_bill_file",
-        "parse_bill_file",
-        "get_parse_result",
-        "confirm_import",
-    }:
-        module = import_module(".service", __name__)
-        return getattr(module, name)
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
