@@ -13,19 +13,21 @@ from .base import BillParser, BillRecord
 class WechatBillParser(BillParser):
     """微信支付账单解析器"""
 
-    # 精确匹配：微信标准列头
+    KEY_HEADER_COLS = {
+        "交易时间",
+        "收/支",
+        "金额(元)",
+    }
     REQUIRED_HEADERS = {
         "交易时间",
         "交易类型",
         "交易对方",
         "商品",
         "收/支",
-        "金额(元)",  # 注意：是 "金额(元)" 不是 "金额"
+        "金额(元)",
         "当前状态",
         "交易单号",
     }
-    # 智能表头定位：只需这三列同时出现即认定是表头行
-    KEY_HEADER_COLS = {"交易时间", "收/支", "金额(元)"}
     ENCODINGS = ("utf-8-sig", "gbk", "gb2312")
 
     ACCEPTED_STATUS = {
@@ -78,6 +80,7 @@ class WechatBillParser(BillParser):
 
             csv_payload = "\n".join(lines[header_index:])
             reader = csv.DictReader(io.StringIO(csv_payload))
+            self._extract_headers(reader.fieldnames or [])
             return self._parse_rows(reader)
         except ValueError:
             raise
@@ -87,51 +90,24 @@ class WechatBillParser(BillParser):
     def _parse_xlsx(self, content: bytes) -> List[BillRecord]:
         try:
             import openpyxl
-        except ImportError as exc:
-            raise ValueError("缺少 openpyxl，暂时无法解析微信 xlsx 账单，请运行: pip install openpyxl") from exc
 
-        try:
             wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
             ws = wb.active
-
-            # ── 动态表头定位：跳过微信前 N 行元数据 ──
-            # 微信 xlsx 前 17 行左右是账户统计元数据，真表头在第 17/18 行
-            # 算法：逐行扫描，找到同时包含 "交易时间" + "收/支" + "金额(元)" 的行
-            header_index = -1
-            for row_idx in range(1, min(30, ws.max_row + 1)):
-                row_values = [
-                    self._normalize_cell_value(ws.cell(row_idx, col).value)
-                    for col in range(1, 20)
-                ]
-                present = {v for v in row_values if v}
-                if self.KEY_HEADER_COLS.issubset(present):
-                    header_index = row_idx
-                    break
-
+            header_index = self._find_sheet_header_index(ws)
             if header_index < 0:
-                raise ValueError("未找到微信账单表头，请确认文件是从微信支付账单导出的")
+                raise ValueError("未找到微信账单表头，请确认文件格式")
 
-            # ── 提取列头 ──
-            headers = [
-                self._normalize_cell_value(ws.cell(header_index, col).value)
-                for col in range(1, ws.max_column + 1)
-            ]
-
-            # ── 逐行提取数据 ──
+            headers = self._extract_headers(
+                [self._normalize_cell_value(cell.value) for cell in ws[header_index]]
+            )
             rows: List[Dict[str, str]] = []
             for row_idx in range(header_index + 1, ws.max_row + 1):
                 row_data: Dict[str, str] = {}
-                has_data = False
                 for col_idx, header in enumerate(headers, start=1):
                     if not header:
                         continue
-                    cell_val = self._normalize_cell_value(ws.cell(row_idx, col_idx).value)
-                    row_data[header] = cell_val
-                    if cell_val:
-                        has_data = True
-                # 跳过空行
-                if has_data:
-                    rows.append(row_data)
+                    row_data[header] = self._normalize_cell_value(ws.cell(row_idx, col_idx).value)
+                rows.append(row_data)
 
             return self._parse_rows(rows)
         except ValueError:
@@ -158,7 +134,7 @@ class WechatBillParser(BillParser):
 
             try:
                 occurred_at = self._parse_datetime(row_data.get("交易时间", ""))
-                amount = self._parse_amount(row_data.get("金额(元)", row_data.get("金额", "")))
+                amount = self._parse_amount(row_data.get("金额(元)", ""))
                 direction, tx_type = self._resolve_direction(
                     row_data.get("收/支", ""),
                     trade_type,
@@ -185,7 +161,7 @@ class WechatBillParser(BillParser):
                     )
                 )
                 row_num += 1
-            except Exception:
+            except ValueError:
                 continue
 
         if not raw_records:
@@ -194,14 +170,12 @@ class WechatBillParser(BillParser):
         return raw_records
 
     def _find_sheet_header_index(self, ws) -> int:
-        """兼容旧调用：KEY_HEADER_COLS 定位法覆盖更广"""
-        for row_idx in range(1, min(30, ws.max_row + 1)):
+        for row_idx in range(1, min(25, ws.max_row + 1)):
             row_values = [
                 self._normalize_cell_value(ws.cell(row_idx, col).value)
-                for col in range(1, 20)
+                for col in range(1, ws.max_column + 1)
             ]
-            present = {v for v in row_values if v}
-            if self.KEY_HEADER_COLS.issubset(present):
+            if self._is_header_row(row_values):
                 return row_idx
         return -1
 
@@ -214,9 +188,16 @@ class WechatBillParser(BillParser):
         return -1
 
     def _is_header_row(self, row_values: Sequence[str]) -> bool:
-        """兼容旧调用：使用 KEY_HEADER_COLS 快速判断"""
         normalized = {value for value in row_values if value}
         return self.KEY_HEADER_COLS.issubset(normalized)
+
+    def _extract_headers(self, row_values: Sequence[str]) -> List[str]:
+        headers = [value for value in row_values]
+        normalized = {value for value in headers if value}
+        if not self.REQUIRED_HEADERS.issubset(normalized):
+            missing_headers = sorted(self.REQUIRED_HEADERS - normalized)
+            raise ValueError(f"微信账单表头缺少必要列: {', '.join(missing_headers)}")
+        return headers
 
     def _decode_csv_content(self, content: bytes) -> str:
         last_error = None
@@ -248,53 +229,38 @@ class WechatBillParser(BillParser):
         raise ValueError(f"无法解析日期: {value}")
 
     def _parse_amount(self, value) -> Decimal:
-        """从各种格式的金额字段中提取数值：¥100.00、100.00、1,000.00 等"""
         if value is None:
             raise ValueError("金额为空")
 
-        v = str(value).strip()
-        # 剥离货币符号、全角符号、空格
+        value = str(value).strip()
         normalized = (
-            v.replace("¥", "")
+            value.replace("¥", "")
             .replace("￥", "")
             .replace("元", "")
             .replace(",", "")
             .replace(" ", "")
-            .replace("\xa0", "")  # 不间断空格
-            .strip()
+            .replace("\xa0", "")
         )
-        if not normalized or normalized in {"+", "-"}:
-            raise ValueError(f"金额为空或无效: {value!r}")
+        if not normalized:
+            raise ValueError("金额为空")
 
-        # 去除所有非数字字符（保留小数点和正负号）
         normalized = re.sub(r"[^\d.\-+]", "", normalized)
-        # 去掉尾部多余的点
-        normalized = normalized.rstrip(".")
-        if not normalized or normalized in {".", "+.", "-."}:
-            raise ValueError(f"金额格式无效: {value!r}")
+        if normalized in {"", "+", "-", ".", "+.", "-."}:
+            raise ValueError("金额格式无效")
 
-        try:
-            amount = Decimal(normalized)
-        except Exception:
-            raise ValueError(f"金额转换失败: {value!r}")
-
-        return abs(amount)  # 统一存正数，方向由 direction 字段控制
+        amount = Decimal(normalized)
+        return abs(amount)
 
     def _resolve_direction(self, in_out: str, trade_type: str, description: str) -> tuple:
-        """
-        解析收支方向。
-        - "收入" → IN
-        - "支出" → OUT
-        - "不计收支" / "/" / 空值 → 根据关键词兜底判断；都认不出来则抛异常由外层捕获跳过该行
-        """
-        in_out = (in_out or "").strip()
+        in_out = in_out.strip() if in_out else ""
 
         if in_out == "收入":
             return TransactionDirection.IN, TransactionType.INCOME
         if in_out == "支出":
             return TransactionDirection.OUT, TransactionType.EXPENSE
+        if in_out not in {"", "/", "不计收支"}:
+            raise ValueError(f"未知收支标记: {in_out}")
 
-        # "不计收支"、空白、"/" 等无法判断的情况，尝试关键词兜底
         text = f"{trade_type} {description}".lower()
 
         for keyword in self.INCOME_KEYWORDS:
@@ -308,8 +274,9 @@ class WechatBillParser(BillParser):
         if "退款" in trade_type or "退款" in description:
             return TransactionDirection.IN, TransactionType.INCOME
 
-        # 仍然无法判断，抛异常让外层跳过该行（不抛 500）
-        raise ValueError(f"无法识别收支方向：in_out={in_out!r}, trade_type={trade_type!r}")
+        raise ValueError(
+            f"无法判断收支方向: in_out={in_out or '<empty>'}, trade_type={trade_type}, description={description}"
+        )
 
     def _check_ignore(self, trade_type: str, row_data: Dict) -> str:
         text = f"{trade_type} {row_data.get('商品', '')} {row_data.get('交易对方', '')}"
