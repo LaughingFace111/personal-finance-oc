@@ -1,6 +1,7 @@
 import csv
 import io
 import re
+import zipfile
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Sequence
@@ -66,19 +67,34 @@ class WechatBillParser(BillParser):
     ]
 
     def parse(self, content: bytes) -> List[BillRecord]:
-        if self._looks_like_xlsx(content):
-            return self._parse_xlsx(content)
-        return self.parse_csv(content)
+        try:
+            if self._looks_like_xlsx(content):
+                return self._parse_xlsx(content)
+            return self._parse_csv_with_preamble(content)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"微信账单解析失败: {exc}") from exc
 
     def parse_csv(self, content: bytes) -> List[BillRecord]:
+        return self._parse_csv_with_preamble(content)
+
+    def _parse_csv_with_preamble(self, content: bytes) -> List[BillRecord]:
+        """纯内置 csv 模块解析，跳过 preamble 并动态寻头"""
         try:
             text = self._decode_csv_content(content)
             lines = text.splitlines()
-            header_index = self._find_csv_header_index(lines)
-            if header_index < 0:
-                raise ValueError("未找到微信账单表头，请确认导出的 CSV 文件格式")
 
-            csv_payload = "\n".join(lines[header_index:])
+            header_idx = -1
+            for idx, line in enumerate(lines):
+                if self._is_header_line(line):
+                    header_idx = idx
+                    break
+
+            if header_idx < 0:
+                raise ValueError("未识别到标准微信账单表头，请确认文件格式")
+
+            csv_payload = "\n".join(lines[header_idx:])
             reader = csv.DictReader(io.StringIO(csv_payload))
             self._extract_headers(reader.fieldnames or [])
             return self._parse_rows(reader)
@@ -89,10 +105,18 @@ class WechatBillParser(BillParser):
 
     def _parse_xlsx(self, content: bytes) -> List[BillRecord]:
         try:
+            if not zipfile.is_zipfile(io.BytesIO(content)):
+                return self._parse_csv_with_preamble(content)
+
             try:
                 import openpyxl
             except ImportError as exc:
-                raise ValueError("缺少 openpyxl 依赖，无法解析微信 XLSX 账单") from exc
+                try:
+                    return self._parse_csv_with_preamble(content)
+                except ValueError as csv_exc:
+                    raise ValueError(
+                        "当前环境未安装 openpyxl，且该文件未能按 CSV 解析。请优先导出微信 CSV 账单后再导入"
+                    ) from csv_exc
 
             wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
             ws = wb.active
@@ -116,7 +140,12 @@ class WechatBillParser(BillParser):
         except ValueError:
             raise
         except Exception as exc:
-            raise ValueError(f"微信账单 xlsx 解析失败: {exc}") from exc
+            try:
+                return self._parse_csv_with_preamble(content)
+            except ValueError as csv_exc:
+                raise ValueError(
+                    f"微信账单 XLSX 解析失败: {exc}。建议优先使用微信导出的 CSV 格式"
+                ) from csv_exc
 
     def _parse_rows(self, rows: Sequence[Dict[str, str]]) -> List[BillRecord]:
         raw_records: List[BillRecord] = []
@@ -138,8 +167,11 @@ class WechatBillParser(BillParser):
             try:
                 occurred_at = self._parse_datetime(row_data.get("交易时间", ""))
                 amount = self._parse_amount(row_data.get("金额(元)", ""))
+                direction_raw = self._normalize_cell_value(row_data.get("收/支", ""))
+                if direction_raw in {"/", "不计收支", ""}:
+                    continue
                 direction, tx_type = self._resolve_direction(
-                    row_data.get("收/支", ""),
+                    direction_raw,
                     trade_type,
                     row_data.get("商品", ""),
                 )
@@ -183,10 +215,8 @@ class WechatBillParser(BillParser):
         return -1
 
     def _find_csv_header_index(self, lines: Sequence[str]) -> int:
-        for idx, line in enumerate(lines[:25]):
-            row_values = next(csv.reader([line]))
-            normalized_row = [self._normalize_cell_value(value) for value in row_values]
-            if self._is_header_row(normalized_row):
+        for idx, line in enumerate(lines):
+            if self._is_header_line(line):
                 return idx
         return -1
 
@@ -194,8 +224,16 @@ class WechatBillParser(BillParser):
         normalized = {value for value in row_values if value}
         return self.KEY_HEADER_COLS.issubset(normalized)
 
+    def _is_header_line(self, line: str) -> bool:
+        try:
+            values = [self._normalize_cell_value(value) for value in next(csv.reader([line]))]
+        except (csv.Error, StopIteration):
+            return False
+        present = {value for value in values if value}
+        return "交易时间" in present and "金额(元)" in present
+
     def _extract_headers(self, row_values: Sequence[str]) -> List[str]:
-        headers = [value for value in row_values]
+        headers = [self._normalize_cell_value(value) for value in row_values]
         normalized = {value for value in headers if value}
         if not self.REQUIRED_HEADERS.issubset(normalized):
             missing_headers = sorted(self.REQUIRED_HEADERS - normalized)
@@ -235,14 +273,16 @@ class WechatBillParser(BillParser):
         if value is None:
             raise ValueError("金额为空")
 
-        value = str(value).strip()
         normalized = (
-            value.replace("¥", "")
+            str(value)
+            .replace("¥", "")
             .replace("￥", "")
             .replace("元", "")
             .replace(",", "")
             .replace(" ", "")
             .replace("\xa0", "")
+            .replace("\u3000", "")
+            .strip()
         )
         if not normalized:
             raise ValueError("金额为空")
@@ -261,8 +301,6 @@ class WechatBillParser(BillParser):
             return TransactionDirection.IN, TransactionType.INCOME
         if in_out == "支出":
             return TransactionDirection.OUT, TransactionType.EXPENSE
-        if in_out not in {"", "/", "不计收支"}:
-            raise ValueError(f"未知收支标记: {in_out}")
 
         text = f"{trade_type} {description}".lower()
 
