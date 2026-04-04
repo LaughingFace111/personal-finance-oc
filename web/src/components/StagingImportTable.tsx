@@ -447,10 +447,6 @@ export function StagingImportTable() {
             {rows.map(row => {
               const issues = getRowIssues(row);
               const hasIssue = issues.length > 0;
-              const allowedCategories = categories.filter(category => {
-                const categoryType = getCategoryTypeByDirection(row.direction);
-                return category.category_type === categoryType || category.category_type === 'income_expense';
-              });
               const tagSearchValue = tagSearchValues[row.tempId] || '';
               const filteredTagOptions = tags.filter((tag) =>
                 tag.displayLabel.toLowerCase().includes(tagSearchValue.toLowerCase()) ||
@@ -814,7 +810,12 @@ export function StagingImportTable() {
       <HierarchyPickerModal
         open={categoryModalOpen}
         title="选择类别"
-        items={allowedCategories}
+        items={(() => {
+          const editingRow = editingRowId ? rows.find(r => r.tempId === editingRowId) : null;
+          const direction = editingRow?.direction || 'out';
+          const categoryType = getCategoryTypeByDirection(direction);
+          return categories.filter(cat => cat.category_type === categoryType || cat.category_type === 'income_expense');
+        })()}
         value={editingRowId ? rows.find(r => r.tempId === editingRowId)?.categoryId || '' : ''}
         emptyText="暂无可选类别"
         onCancel={() => {
@@ -823,7 +824,6 @@ export function StagingImportTable() {
         }}
         onConfirm={(nextValue) => {
           if (editingRowId) {
-            const row = rows.find(r => r.tempId === editingRowId);
             const nextCategoryId = typeof nextValue === 'string' ? nextValue : '';
             const selected = nextCategoryId ? categoryById.get(nextCategoryId) : null;
             updateRow(editingRowId, {
