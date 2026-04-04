@@ -5,10 +5,11 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.common.enums import ImportStatus, SourceType
-from src.core import IdempotencyException, NotFoundException, generate_uuid
+from src.core import AppException, ErrorCode, IdempotencyException, NotFoundException, generate_uuid
 from src.modules.books.service import get_default_book
 from src.modules.imports.models import ImportBatch, ImportRow
 from src.modules.accounts.service import get_accounts
@@ -125,64 +126,72 @@ def parse_bill_file(
     filename: str,
     content: bytes,
 ) -> ParseBillResponse:
-    book = get_default_book(db, user_id)
-    if not book:
-        raise NotFoundException("未找到默认账本")
-
-    parser = get_bill_parser(bill_type)
     try:
-        parsed_records = parser.parse(content)
-    except BillParseError:
-        raise
-    except ValueError as exc:
-        raise BillParseError(str(exc)) from exc
-    except Exception as exc:
-        raise BillParseError(f"{bill_type} 账单解析失败，请检查文件格式或编码: {exc}") from exc
+        book = get_default_book(db, user_id)
+        if not book:
+            raise NotFoundException("未找到默认账本")
 
-    account_matcher = AccountMatcher(db, book.id)
-    category_matcher = CategoryMatcher(db, book.id)
+        parser = get_bill_parser(bill_type)
+        try:
+            parsed_records = parser.parse(content)
+        except BillParseError:
+            raise
+        except ValueError as exc:
+            raise BillParseError(str(exc)) from exc
+        except Exception as exc:
+            raise BillParseError(f"{bill_type} 账单解析失败，请检查文件格式或编码: {exc}") from exc
 
-    batch = ImportBatch(
-        id=generate_uuid(),
-        book_id=book.id,
-        filename=filename or f"{bill_type}-import.csv",
-        source_name=bill_type,
-        file_type=_detect_file_type(filename),
-        total_rows=len(parsed_records),
-        parsed_rows=len(parsed_records),
-        status=ImportStatus.PARSED.value,
-        parser_version="bills-v2",
-    )
-    db.add(batch)
+        account_matcher = AccountMatcher(db, book.id)
+        category_matcher = CategoryMatcher(db, book.id)
 
-    items: List[ParsedBillItem] = []
-    rows: List[ImportRow] = []
-    for record in parsed_records:
-        item = _build_parsed_item(record, account_matcher, category_matcher)
-        items.append(item)
-
-        raw_data = _serialize_jsonable(asdict(record))
-        normalized_data = item.model_dump(mode="json")
-        rows.append(
-            ImportRow(
-                id=generate_uuid(),
-                batch_id=batch.id,
-                row_no=record.row_no,
-                raw_data=json.dumps(raw_data, ensure_ascii=False),
-                normalized_data=json.dumps(normalized_data, ensure_ascii=False),
-                guessed_account_id=item.matchedAccountId,
-                guessed_category_id=item.categoryId,
-                guessed_confidence=Decimal("90")
-                if item.accountMatchStatus == "MATCHED" and item.categoryMatchStatus == "MATCHED"
-                else Decimal("60"),
-                confirm_status="pending",
-                error_message=item.unresolvedReason,
-            )
+        batch = ImportBatch(
+            id=generate_uuid(),
+            book_id=book.id,
+            filename=filename or f"{bill_type}-import.csv",
+            source_name=bill_type,
+            file_type=_detect_file_type(filename),
+            total_rows=len(parsed_records),
+            parsed_rows=len(parsed_records),
+            status=ImportStatus.PARSED.value,
+            parser_version="bills-v2",
         )
+        db.add(batch)
 
-    db.add_all(rows)
-    db.commit()
-    return ParseBillResponse(parseId=batch.id, items=items)
+        items: List[ParsedBillItem] = []
+        rows: List[ImportRow] = []
+        for record in parsed_records:
+            item = _build_parsed_item(record, account_matcher, category_matcher)
+            items.append(item)
+
+            raw_data = _serialize_jsonable(asdict(record))
+            normalized_data = item.model_dump(mode="json")
+            rows.append(
+                ImportRow(
+                    id=generate_uuid(),
+                    batch_id=batch.id,
+                    row_no=record.row_no,
+                    raw_data=json.dumps(raw_data, ensure_ascii=False),
+                    normalized_data=json.dumps(normalized_data, ensure_ascii=False),
+                    guessed_account_id=item.matchedAccountId,
+                    guessed_category_id=item.categoryId,
+                    guessed_confidence=Decimal("90")
+                    if item.accountMatchStatus == "MATCHED" and item.categoryMatchStatus == "MATCHED"
+                    else Decimal("60"),
+                    confirm_status="pending",
+                    error_message=item.unresolvedReason,
+                )
+            )
+
+        db.add_all(rows)
+        db.commit()
+        return ParseBillResponse(parseId=batch.id, items=items)
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AppException(
+            status_code=503,
+            code=ErrorCode.INTERNAL_ERROR,
+            message="账单解析服务暂时不可用，请稍后重试",
+        ) from exc
 
 
 def get_parse_result(db: Session, user_id: str, parse_id: str) -> ParseBillResponse:

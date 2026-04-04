@@ -89,7 +89,10 @@ class WechatBillParser(BillParser):
 
     def _parse_xlsx(self, content: bytes) -> List[BillRecord]:
         try:
-            import openpyxl
+            try:
+                import openpyxl
+            except ImportError as exc:
+                raise ValueError("缺少 openpyxl 依赖，无法解析微信 XLSX 账单") from exc
 
             wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
             ws = wb.active
