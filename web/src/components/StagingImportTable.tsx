@@ -1,6 +1,6 @@
 import { CSSProperties, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Select, message } from 'antd';
+import { Select, Tag, message } from 'antd';
 import { apiGet, apiPost, apiUpload } from '../services/api';
 import { TagCreateModal } from './TagCreateModal';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
@@ -102,7 +102,7 @@ function getRowIssues(row: ParsedItem) {
   if (!row.matchedAccountId) issues.push('账户待确认');
   if (!row.categoryId) issues.push('分类待确认');
   if (row.unresolvedReason) issues.push(row.unresolvedReason);
-  issues.push(...row.warnings);
+  issues.push(...row.warnings.filter(issue => !issue.includes('疑似退款')));
   return Array.from(new Set(issues.filter(Boolean)));
 }
 
@@ -449,7 +449,10 @@ export function StagingImportTable() {
           <div style={{ display: 'grid', gap: '12px' }}>
             {rows.map(row => {
               const issues = getRowIssues(row);
-              const hasIssue = issues.length > 0;
+              const hasRefundWarning = row.warnings.some(
+                warning => warning.includes('疑似退款') || warning.includes('is_orphan'),
+              );
+              const hasIssue = issues.length > 0 || hasRefundWarning;
               const tagSearchValue = tagSearchValues[row.tempId] || '';
               const filteredTagOptions = tags.filter((tag) =>
                 tag.displayLabel.toLowerCase().includes(tagSearchValue.toLowerCase()) ||
@@ -759,6 +762,12 @@ export function StagingImportTable() {
                           {issue}
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {hasRefundWarning && (
+                    <div>
+                      <Tag color="warning">⚠️ 该订单疑似退款订单/已退款订单，请分辨</Tag>
                     </div>
                   )}
                 </div>

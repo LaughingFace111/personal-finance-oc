@@ -74,6 +74,7 @@ def _build_parsed_item(record, account_matcher: AccountMatcher, category_matcher
     category_match = category_matcher.match(record.category, record.description, direction)
 
     warnings: List[str] = []
+    warnings.extend(record.warnings or [])
     unresolved_reasons: List[str] = []
     if account_match.warning:
         warnings.append(account_match.warning)

@@ -1,9 +1,10 @@
 import csv
 import io
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, List, Set
+from typing import Dict, List, Optional
 
 from src.common.enums import TransactionDirection, TransactionType
 
@@ -11,6 +12,8 @@ from .base import BillParser, BillRecord
 
 
 class AlipayBillParser(BillParser):
+    ORPHAN_REFUND_WARNING = "⚠️ 该订单疑似退款订单/已退款订单，请分辨"
+
     REQUIRED_HEADERS = [
         "交易时间",
         "交易分类",
@@ -26,7 +29,7 @@ class AlipayBillParser(BillParser):
         "备注",
     ]
 
-    ACCEPTED_STATUS = {"交易成功", "退款成功"}
+    ACCEPTED_STATUS = {"交易成功", "退款成功", "交易关闭"}
     FIELD_ALIASES = {
         "occurred_at": ["交易时间"],
         "trade_category": ["交易分类"],
@@ -41,6 +44,12 @@ class AlipayBillParser(BillParser):
         "merchant_order_no": ["商家订单号"],
         "note": ["备注"],
     }
+
+    @dataclass(frozen=True)
+    class TradeFeature:
+        kind: str
+        original_order_no: Optional[str] = None
+        refund_order_no: Optional[str] = None
 
     def parse(self, content: bytes) -> List[BillRecord]:
         text = content.decode("gb18030")
@@ -73,8 +82,18 @@ class AlipayBillParser(BillParser):
             in_out = self._get_value(clean_row, "in_out")
             trade_category = self._get_value(clean_row, "trade_category")
             description = self._get_value(clean_row, "description")
+            feature = self._classify_trade(
+                in_out=in_out,
+                status=status,
+                transaction_order_no=transaction_order_no,
+            )
 
-            tx_type, direction = self._resolve_type_direction(in_out, trade_category, description)
+            tx_type, direction = self._resolve_type_direction(
+                in_out,
+                trade_category,
+                description,
+                feature,
+            )
             occurred_at = self._parse_datetime(self._get_value(clean_row, "occurred_at"))
             amount = self._parse_amount(self._get_value(clean_row, "amount"))
 
@@ -140,15 +159,51 @@ class AlipayBillParser(BillParser):
         amount = Decimal(normalized)
         return abs(amount)
 
-    def _resolve_type_direction(self, in_out: str, category: str, description: str):
+    def _classify_trade(
+        self,
+        in_out: str,
+        status: str,
+        transaction_order_no: str,
+    ) -> "AlipayBillParser.TradeFeature":
+        if in_out == "不计收支" and "_" in transaction_order_no:
+            original_order_no, refund_order_no = transaction_order_no.split("_", 1)
+            if original_order_no and refund_order_no:
+                return self.TradeFeature(
+                    kind="A",
+                    original_order_no=original_order_no,
+                    refund_order_no=refund_order_no,
+                )
+
+        if in_out == "支出" and status == "交易关闭":
+            return self.TradeFeature(kind="B", original_order_no=transaction_order_no)
+
+        if in_out == "不计收支":
+            return self.TradeFeature(kind="C")
+
+        return self.TradeFeature(kind="OTHER")
+
+    def _resolve_type_direction(
+        self,
+        in_out: str,
+        category: str,
+        description: str,
+        feature: "AlipayBillParser.TradeFeature",
+    ):
+        if feature.kind == "A":
+            return TransactionType.INCOME, TransactionDirection.IN
+
         if in_out == "收入":
             return TransactionType.INCOME, TransactionDirection.IN
         if in_out == "支出":
             return TransactionType.EXPENSE, TransactionDirection.OUT
 
         text = f"{category} {description}".lower()
+        refund_keywords = ["退款", "退回", "返还", "退还", "售后"]
         income_keywords = ["退款", "返还", "红包", "收益", "工资", "奖金", "报销", "利息"]
         expense_keywords = ["消费", "付款", "购买", "充值", "缴费", "出行", "外卖", "打车"]
+
+        if feature.kind == "C" and not any(keyword in text for keyword in refund_keywords):
+            return TransactionType.EXPENSE, TransactionDirection.OUT
 
         if any(keyword in text for keyword in income_keywords):
             return TransactionType.INCOME, TransactionDirection.IN
@@ -158,32 +213,65 @@ class AlipayBillParser(BillParser):
         # 支付宝“不计收支”兜底默认按支出处理，避免收入被高估
         return TransactionType.EXPENSE, TransactionDirection.OUT
 
+    def _extract_feature(self, record: BillRecord) -> "AlipayBillParser.TradeFeature":
+        transaction_order_no = record.transaction_order_no or ""
+        if record.in_out == "不计收支" and "_" in transaction_order_no:
+            original_order_no, refund_order_no = transaction_order_no.split("_", 1)
+            if original_order_no and refund_order_no:
+                return self.TradeFeature(
+                    kind="A",
+                    original_order_no=original_order_no,
+                    refund_order_no=refund_order_no,
+                )
+
+        if record.in_out == "支出" and record.status == "交易关闭":
+            return self.TradeFeature(kind="B", original_order_no=transaction_order_no)
+
+        if record.in_out == "不计收支":
+            return self.TradeFeature(kind="C")
+
+        return self.TradeFeature(kind="OTHER")
+
     def _apply_refund_pair_ignore(self, records: List[BillRecord]) -> List[BillRecord]:
-        refund_keys: Set[str] = set()
+        refund_map: Dict[str, str] = {}
+        refund_records_by_original: Dict[str, List[BillRecord]] = {}
+        closed_records_by_original: Dict[str, List[BillRecord]] = {}
+
         for record in records:
-            if record.status == "退款成功":
-                key = record.merchant_order_no or record.transaction_order_no
-                if key:
-                    refund_keys.add(key)
+            feature = self._extract_feature(record)
+            if feature.kind == "A" and feature.original_order_no and feature.refund_order_no:
+                refund_map[feature.refund_order_no] = feature.original_order_no
+                refund_records_by_original.setdefault(feature.original_order_no, []).append(record)
+            elif feature.kind == "B" and feature.original_order_no:
+                closed_records_by_original.setdefault(feature.original_order_no, []).append(record)
+
+        closed_map: Dict[str, str] = {}
+        for original_order_no in closed_records_by_original:
+            refund_records = refund_records_by_original.get(original_order_no, [])
+            if refund_records:
+                feature = self._extract_feature(refund_records[0])
+                if feature.refund_order_no:
+                    closed_map[original_order_no] = feature.refund_order_no
+
+        ignored_ids = {
+            id(record)
+            for original_order_no in closed_map
+            for record in refund_records_by_original.get(original_order_no, []) + closed_records_by_original.get(original_order_no, [])
+        }
 
         filtered: List[BillRecord] = []
-        seen_trade_no: Dict[str, int] = {}
-
         for record in records:
-            if record.transaction_order_no in seen_trade_no:
+            if id(record) in ignored_ids:
                 continue
 
-            pair_key = record.merchant_order_no or record.transaction_order_no
-            refund_related = "退款" in (record.category or "") or "退款" in (record.description or "")
-            if (
-                pair_key
-                and pair_key in refund_keys
-                and record.status == "交易成功"
-                and (record.in_out == "不计收支" or refund_related)
-            ):
-                continue
+            feature = self._extract_feature(record)
+            if feature.kind == "A" and feature.original_order_no:
+                if feature.original_order_no not in closed_map:
+                    record.warnings.append(self.ORPHAN_REFUND_WARNING)
+            elif feature.kind == "B" and feature.original_order_no:
+                if feature.original_order_no not in closed_map:
+                    record.warnings.append(self.ORPHAN_REFUND_WARNING)
 
-            seen_trade_no[record.transaction_order_no] = 1
             filtered.append(record)
 
         return filtered

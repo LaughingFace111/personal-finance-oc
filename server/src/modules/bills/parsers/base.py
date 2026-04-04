@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -24,6 +24,7 @@ class BillRecord:
     merchant_order_no: Optional[str]
     payment_method: Optional[str]
     note: Optional[str]
+    warnings: List[str] = field(default_factory=list)
 
 
 class BillParser(ABC):
