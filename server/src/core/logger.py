@@ -60,9 +60,32 @@ def _json_default(obj: Any) -> Any:
 
 def _get_log_dir() -> str:
     """获取日志目录"""
-    log_dir = os.environ.get("LOG_DIR", "/home/joshua/openclaw/workspace/personal-finance/server/logs")
-    os.makedirs(log_dir, exist_ok=True)
-    return log_dir
+    default_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+    )
+    candidates = [
+        os.environ.get("LOG_DIR"),
+        default_dir,
+        "/tmp/personal-finance-logs",
+    ]
+
+    for log_dir in candidates:
+        if not log_dir:
+            continue
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            test_file = os.path.join(log_dir, ".write_test")
+            with open(test_file, "a", encoding="utf-8"):
+                pass
+            try:
+                os.remove(test_file)
+            except OSError:
+                pass
+            return log_dir
+        except OSError:
+            continue
+
+    return "/tmp"
 
 
 def setup_logger(
@@ -83,23 +106,26 @@ def setup_logger(
 
     # 文件处理器
     if log_file:
-        file_path = os.path.join(_get_log_dir(), log_file)
-        file_handler = RotatingFileHandler(
-            file_path,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(level)
-        if json_format:
-            file_handler.setFormatter(JsonFormatter())
-        else:
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-                )
+        try:
+            file_path = os.path.join(_get_log_dir(), log_file)
+            file_handler = RotatingFileHandler(
+                file_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8",
             )
-        handlers.append(file_handler)
+            file_handler.setLevel(level)
+            if json_format:
+                file_handler.setFormatter(JsonFormatter())
+            else:
+                file_handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+                    )
+                )
+            handlers.append(file_handler)
+        except OSError:
+            pass
 
     # 控制台处理器
     console_handler = logging.StreamHandler()

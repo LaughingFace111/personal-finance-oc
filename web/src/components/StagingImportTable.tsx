@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { CSSProperties, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Select, message } from 'antd';
 import { apiGet, apiPost, apiUpload } from '../services/api';
@@ -171,6 +171,9 @@ const styles = {
     marginTop: '6px',
     lineHeight: 1.4,
   },
+  selectControl: {
+    width: '100%',
+  } satisfies CSSProperties,
 } as const;
 
 export function StagingImportTable() {
@@ -627,29 +630,26 @@ export function StagingImportTable() {
                     <div>
                       <div style={styles.label}>标签</div>
                       <Select
+                        mode="multiple"
                         showSearch
-                        value={undefined}
+                        value={row.tags || []}
                         searchValue={tagSearchValue}
-                        placeholder="搜索并选择标签"
-                        style={{ width: '100%' }}
+                        placeholder="搜索、选择或创建标签"
+                        style={styles.selectControl}
                         optionFilterProp="label"
                         filterOption={false}
                         onSearch={(value) =>
                           setTagSearchValues((current) => ({ ...current, [row.tempId]: value }))
                         }
-                        onSelect={(value) => {
-                          const nextTagName = String(value);
-                          updateRow(row.tempId, (currentRow) => ({
-                            tags: currentRow.tags.includes(nextTagName)
-                              ? currentRow.tags
-                              : [...currentRow.tags, nextTagName],
-                          }));
-                          setTagSearchValues((current) => ({ ...current, [row.tempId]: '' }));
-                        }}
+                        onChange={(value) => updateRow(row.tempId, { tags: value.map(String) })}
+                        onBlur={() =>
+                          setTagSearchValues((current) => ({ ...current, [row.tempId]: '' }))
+                        }
                         options={filteredTagOptions.map((tag) => ({
                           value: tag.name,
                           label: tag.displayLabel,
                         }))}
+                        maxTagCount="responsive"
                         dropdownRender={(menu) => (
                           <div>
                             {menu}
@@ -675,34 +675,31 @@ export function StagingImportTable() {
                             </div>
                           </div>
                         )}
-                      />
-                      {(row.tags || []).length > 0 ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
-                          {row.tags.map((tagName) => {
-                            const tag = tagByName.get(tagName);
-                            return (
-                              <span
-                                key={`${row.tempId}-${tagName}`}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '6px',
-                                  borderRadius: '999px',
-                                  border: '1px solid var(--border-color)',
-                                  background: 'var(--bg-card)',
-                                  padding: '4px 10px',
-                                  color: 'var(--text-primary)',
-                                  fontSize: '12px',
-                                }}
-                              >
-                                {tag?.displayLabel || tagName}
+                        tagRender={({ value, closable, onClose }) => {
+                          const tagName = String(value);
+                          const tag = tagByName.get(tagName);
+                          return (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                borderRadius: '999px',
+                                border: '1px solid var(--border-color)',
+                                background: 'var(--bg-card)',
+                                padding: '4px 10px',
+                                color: 'var(--text-primary)',
+                                fontSize: '12px',
+                                marginInlineEnd: '6px',
+                                marginBlock: '2px',
+                              }}
+                            >
+                              {tag?.displayLabel || tagName}
+                              {closable ? (
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    updateRow(row.tempId, {
-                                      tags: row.tags.filter((item) => item !== tagName),
-                                    })
-                                  }
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={onClose}
                                   style={{
                                     border: 'none',
                                     background: 'transparent',
@@ -714,11 +711,11 @@ export function StagingImportTable() {
                                 >
                                   ×
                                 </button>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+                              ) : null}
+                            </span>
+                          );
+                        }}
+                      />
                     </div>
 
                     <div>

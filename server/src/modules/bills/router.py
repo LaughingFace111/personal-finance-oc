@@ -9,7 +9,7 @@ from src.core.logger import log_audit, log_business
 from src.modules.auth.models import User
 
 from .schemas import BillImportResponse, ConfirmImportRequest, ConfirmImportResponse, MatchBillRequest, ParseBillResponse
-from .service import apply_match_rules_to_parse, confirm_import, get_parse_result, import_bill_file, parse_bill_file
+from .service import BillParseError, apply_match_rules_to_parse, confirm_import, get_parse_result, import_bill_file, parse_bill_file
 
 router = APIRouter(prefix="/bills", tags=["bills"])
 
@@ -39,14 +39,17 @@ async def parse_bills(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    content = await file.read()
-    return parse_bill_file(
-        db=db,
-        user_id=current_user.id,
-        bill_type=bill_type,
-        filename=file.filename or f"{bill_type}.csv",
-        content=content,
-    )
+    try:
+        content = await file.read()
+        return parse_bill_file(
+            db=db,
+            user_id=current_user.id,
+            bill_type=bill_type,
+            filename=file.filename or f"{bill_type}.csv",
+            content=content,
+        )
+    except (BillParseError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/parse/{parse_id}", response_model=ParseBillResponse)

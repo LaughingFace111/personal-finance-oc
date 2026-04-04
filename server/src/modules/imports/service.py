@@ -18,6 +18,7 @@ from .schemas import UpdateImportRowRequest, ConfirmImportRequest
 from src.modules.transactions.service import create_transaction
 from src.modules.transactions.schemas import TransactionCreate
 from src.modules.accounts.service import get_accounts
+from src.modules.bills.parsers.wechat import WechatBillParser
 from src.modules.categories.service import get_categories
 
 
@@ -26,6 +27,11 @@ STANDARD_FIELDS = [
     "occurred_at", "posted_at", "amount", "direction", "account_name",
     "merchant", "description", "counterparty", "category", "external_txn_id"
 ]
+
+
+def parse_wechat_csv(content: bytes):
+    """兼容旧导入链路，复用账单模块中的微信 CSV 解析器。"""
+    return WechatBillParser().parse_csv(content)
 
 
 def _parse_date(date_str: str) -> datetime:

@@ -27,6 +27,10 @@ from .schemas import (
 from src.modules.rules.service import apply_rules
 
 
+class BillParseError(ValueError):
+    pass
+
+
 def get_bill_parser(bill_type: str) -> BillParser:
     normalized = (bill_type or "alipay").strip().lower()
     if normalized == "alipay":
@@ -126,7 +130,15 @@ def parse_bill_file(
         raise NotFoundException("未找到默认账本")
 
     parser = get_bill_parser(bill_type)
-    parsed_records = parser.parse(content)
+    try:
+        parsed_records = parser.parse(content)
+    except BillParseError:
+        raise
+    except ValueError as exc:
+        raise BillParseError(str(exc)) from exc
+    except Exception as exc:
+        raise BillParseError(f"{bill_type} 账单解析失败，请检查文件格式或编码: {exc}") from exc
+
     account_matcher = AccountMatcher(db, book.id)
     category_matcher = CategoryMatcher(db, book.id)
 
