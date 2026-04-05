@@ -183,6 +183,26 @@ const formatLocalDate = (value: Date) => {
   return `${year}-${month}-${day}`
 }
 
+const NEUTRAL_TRANSACTION_TYPES = new Set([
+  'transfer',
+  'repayment_credit_card',
+  'repayment_loan',
+  'installment_repayment',
+])
+
+const isNeutralTransactionType = (transactionType?: string) =>
+  Boolean(transactionType && NEUTRAL_TRANSACTION_TYPES.has(transactionType))
+
+const getTransactionAmountMeta = (transaction: { direction?: string; transaction_type?: string }) => {
+  if (isNeutralTransactionType(transaction.transaction_type)) {
+    return { prefix: '', color: 'var(--text-secondary)' }
+  }
+  if (transaction.direction === 'in' || transaction.transaction_type === 'refund') {
+    return { prefix: '+', color: 'var(--accent-green)' }
+  }
+  return { prefix: '-', color: 'var(--accent-red)' }
+}
+
 function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -749,6 +769,9 @@ const DateDetailPage = () => {
         let income = 0, expense = 0
         items.forEach((tx: any) => {
           const amt = Number(tx.amount)
+          if (isNeutralTransactionType(tx.transaction_type)) {
+            return
+          }
           if (tx.direction === 'in' || tx.transaction_type === 'refund') {
             income += amt
           } else {
@@ -824,55 +847,65 @@ const DateDetailPage = () => {
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>当日无记录</div>
         ) : (
           transactions.map((tx, i) => (
-            <div 
-              key={tx.id || i}
-              style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center',
-                padding: '12px 16px',
-                marginBottom: 8,
-                background: 'var(--bg-card)',
-                borderRadius: 12,
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                {/* 交易类型标签 */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  {tx.transaction_type === 'refund' && (
-                    <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#fff3e0', color: '#ff9800' }}>退款</span>
-                  )}
-                  {tx.category_id && (
-                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                      {getCategoryName(tx.category_id)}
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
-                  {tx.merchant || tx.note || '-'}
-                </div>
-                {/* 标签显示 */}
-                {Array.isArray(tx.tags) && tx.tags.length > 0 && (
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {tx.tags.map((tag: any, idx: number) => (
-                      <span key={idx} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}>
-                        {getTagName(tag)}
-                      </span>
-                    ))}
+            (() => {
+              const amountMeta = getTransactionAmountMeta(tx)
+              return (
+                <div 
+                  key={tx.id || i}
+                  style={{ 
+                    display: 'flex', 
+                    justifyContent: 'space-between', 
+                    alignItems: 'center',
+                    padding: '12px 16px',
+                    marginBottom: 8,
+                    background: 'var(--bg-card)',
+                    borderRadius: 12,
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    {/* 交易类型标签 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      {tx.transaction_type === 'refund' && (
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#fff3e0', color: '#ff9800' }}>退款</span>
+                      )}
+                      {isNeutralTransactionType(tx.transaction_type) && (
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                          {tx.transaction_type === 'transfer' ? '转账' : '还款'}
+                        </span>
+                      )}
+                      {tx.category_id && (
+                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                          {getCategoryName(tx.category_id)}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
+                      {tx.merchant || tx.note || '-'}
+                    </div>
+                    {/* 标签显示 */}
+                    {Array.isArray(tx.tags) && tx.tags.length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {tx.tags.map((tag: any, idx: number) => (
+                          <span key={idx} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}>
+                            {getTagName(tag)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                      {tx.occurred_at?.split('T')[1]?.substring(0, 5) || ''}
+                    </div>
                   </div>
-                )}
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                  {tx.occurred_at?.split('T')[1]?.substring(0, 5) || ''}
+                  <div style={{ 
+                    fontSize: 16, 
+                    fontWeight: 500,
+                    color: amountMeta.color,
+                  }}>
+                    {amountMeta.prefix}¥{Number(tx.amount).toFixed(2)}
+                  </div>
                 </div>
-              </div>
-              <div style={{ 
-                fontSize: 16, 
-                fontWeight: 500,
-                color: tx.direction === 'in' || tx.transaction_type === 'refund' ? 'var(--accent-green)' : 'var(--accent-red)',
-              }}>
-                {tx.direction === 'in' || tx.transaction_type === 'refund' ? '+' : '-'}¥{Number(tx.amount).toFixed(2)}
-              </div>
-            </div>
+              )
+            })()
           ))
         )}
       </div>
@@ -1747,15 +1780,20 @@ const AccountDetailPage = () => {
           size="small" 
           dataSource={transactions} 
           renderItem={item => (
-            <List.Item>
-              <div style={{ flex: 1 }}>
-                <div>{item.note || item.merchant || '-'}</div>
-                <div style={{ fontSize: 12, color: '#999' }}>{new Date(item.occurred_at).toLocaleDateString()}</div>
-              </div>
-              <div style={{ color: item.direction === 'in' ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>
-                {item.direction === 'in' ? '+' : '-'}¥{Number(item.amount).toFixed(2)}
-              </div>
-            </List.Item>
+            (() => {
+              const amountMeta = getTransactionAmountMeta(item)
+              return (
+                <List.Item>
+                  <div style={{ flex: 1 }}>
+                    <div>{item.merchant || item.note || '-'}</div>
+                    <div style={{ fontSize: 12, color: '#999' }}>{new Date(item.occurred_at).toLocaleDateString()}</div>
+                  </div>
+                  <div style={{ color: amountMeta.color, fontWeight: 500 }}>
+                    {amountMeta.prefix}¥{Number(item.amount).toFixed(2)}
+                  </div>
+                </List.Item>
+              )
+            })()
           )}
         />
       }

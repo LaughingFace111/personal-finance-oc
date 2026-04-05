@@ -50,6 +50,16 @@ def _is_loan_account(account_type: str) -> bool:
     return account_type == AccountType.LOAN
 
 
+def _build_transfer_merchant(from_account: Account, to_account: Account) -> str:
+    """Build a stable display name for transfer-like transactions."""
+    return f"转账: {from_account.name} -> {to_account.name}"
+
+
+def _build_credit_repayment_merchant(from_account: Account, credit_account: Account) -> str:
+    """Build a stable display name for credit repayment transactions."""
+    return f"信用卡还款: {from_account.name} -> {credit_account.name}"
+
+
 def _calculate_include_flags(transaction_type: TransactionType, account_type: str) -> Tuple[bool, bool, bool]:
     """Calculate include_in_expense, include_in_income, include_in_cashflow"""
     include_expense = True
@@ -343,6 +353,7 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> Transact
         currency=data.currency,
         account_id=data.from_account_id,
         counterparty_account_id=data.to_account_id,
+        merchant=_build_transfer_merchant(from_account, to_account),
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
@@ -423,6 +434,7 @@ def create_credit_card_repayment(
         currency=data.currency,
         account_id=data.from_account_id,
         counterparty_account_id=data.credit_card_account_id,
+        merchant=_build_credit_repayment_merchant(from_account, credit_account),
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,

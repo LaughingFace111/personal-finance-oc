@@ -15,6 +15,7 @@ interface TransactionItem {
   id: string
   occurred_at: string
   direction: string
+  transaction_type?: string
   amount: string | number
   category_id?: string
   merchant?: string
@@ -31,6 +32,13 @@ interface CategoryItem {
   color?: string
   parent_id?: string
 }
+
+const NEUTRAL_TRANSACTION_TYPES = new Set([
+  'transfer',
+  'repayment_credit_card',
+  'repayment_loan',
+  'installment_repayment',
+])
 
 export default function TransactionList({ onItemClick, selectedMonth }: TransactionListProps) {
   const { user } = useAuth()
@@ -117,6 +125,8 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   }
 
   const getCategoryMeta = (item: TransactionItem) => {
+    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
+    const isIncome = item.direction === 'in'
     const category = item.category_id ? categoryMap.get(item.category_id) : undefined
     const parent = category?.parent_id ? categoryMap.get(category.parent_id) : undefined
     const label = category
@@ -124,17 +134,21 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       : '未分类'
 
     return {
-      icon: category?.icon || (item.direction === 'in' ? '↗' : '↘'),
+      icon: category?.icon || (isNeutral ? '⇄' : (isIncome ? '↗' : '↘')),
       label,
-      color: category?.color || (item.direction === 'in' ? '#16a34a' : '#dc2626')
+      color: category?.color || (isNeutral ? 'var(--text-secondary)' : (isIncome ? '#16a34a' : '#dc2626')),
+      background: category?.color
+        ? `${category.color}18`
+        : (isNeutral ? 'var(--bg-elevated)' : (isIncome ? '#16a34a18' : '#dc262618'))
     }
   }
 
   const getAmountMeta = (item: TransactionItem) => {
+    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
     const isIncome = item.direction === 'in'
     return {
-      prefix: isIncome ? '+' : '-',
-      color: isIncome ? '#16a34a' : '#dc2626'
+      prefix: isNeutral ? '' : (isIncome ? '+' : '-'),
+      color: isNeutral ? 'var(--text-secondary)' : (isIncome ? '#16a34a' : '#dc2626')
     }
   }
 
@@ -222,7 +236,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                         justifyContent: 'center',
                         flexShrink: 0,
                         fontSize: 20,
-                        background: `${categoryMeta.color}18`,
+                        background: categoryMeta.background,
                         color: categoryMeta.color
                       }}
                     >
