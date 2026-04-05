@@ -9,9 +9,7 @@ import { StagingImportTable } from './components/StagingImportTable'
 // 懒加载新页面组件
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
 const OtherHubPage = lazy(() => import('./pages/OtherHubPage'))
-const InstallmentPage = lazy(() => import('./pages/InstallmentPage'))
 const InstallmentTasksPage = lazy(() => import('./pages/InstallmentTasksPage'))
-const DebtPage = lazy(() => import('./pages/DebtPage'))
 const OtherTransactionPage = lazy(() => import('./pages/OtherTransactionPage'))
 const ReportsHomePage = lazy(() => import('./pages/ReportsHomePage'))
 const AccountBalanceTrendPage = lazy(() => import('./pages/AccountBalanceTrendPage'))
@@ -323,12 +321,13 @@ return (
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             {/* 其他交易 - 导航枢纽页 */}
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
-            <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><InstallmentPage /></Suspense>} />
+            <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="installment" /></Suspense>} />
             <Route path="/installments" element={<Suspense fallback={<LoadingFallback />}><InstallmentTasksPage /></Suspense>} />
             <Route path="/wishlist" element={<Suspense fallback={<LoadingFallback />}><WishlistPage /></Suspense>} />
             <Route path="/assets" element={<Suspense fallback={<LoadingFallback />}><DurableAssetsPage /></Suspense>} />
-            <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="lend" /></Suspense>} />
-            <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><DebtPage type="borrow" /></Suspense>} />
+            <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="lend" /></Suspense>} />
+            <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="borrow" /></Suspense>} />
+            <Route path="/other/repay" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="repay" /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<LoadingFallback />}><SettingsPageView /></Suspense>} />
             <Route path="/settings/import-templates" element={<Suspense fallback={<LoadingFallback />}><ImportTemplatesPage /></Suspense>} />
             <Route path="/settings/recurring-rules" element={<Suspense fallback={<LoadingFallback />}><RecurringRulesPage /></Suspense>} />

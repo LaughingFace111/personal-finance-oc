@@ -15,20 +15,27 @@ import {
   CategoryOption,
   TagOption,
   getCategoryLabel,
+  getAccountOptionLabel,
   getDefaultBookId,
   loadTransactionFormData,
   toOccurredAt,
   toTagOptions,
 } from './transactionFormSupport';
 
-type SubType = 'installment' | 'lend' | 'borrow';
+type SubType = 'installment' | 'lend' | 'borrow' | 'repay';
 
 const assetAccountTypes = ['cash', 'debit_card', 'ewallet', 'virtual'];
 const creditAccountTypes = ['credit_card', 'credit_line'];
 
-export default function OtherTransactionPage() {
+interface OtherTransactionPageProps {
+  initialSubType?: SubType;
+}
+
+export default function OtherTransactionPage({
+  initialSubType = 'installment',
+}: OtherTransactionPageProps) {
   const navigate = useNavigate();
-  const [subType, setSubType] = useState<SubType>('installment');
+  const [subType, setSubType] = useState<SubType>(initialSubType);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
@@ -47,10 +54,16 @@ export default function OtherTransactionPage() {
   const [loanAmount, setLoanAmount] = useState('');
   const [repaymentDate, setRepaymentDate] = useState('');
   const [reason, setReason] = useState('');
+  const [creditCardAccountId, setCreditCardAccountId] = useState('');
+  const [repayAmount, setRepayAmount] = useState('');
 
   const [memo, setMemo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [tagIds, setTagIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSubType(initialSubType);
+  }, [initialSubType]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -74,6 +87,7 @@ export default function OtherTransactionPage() {
     setError('');
     setAccountId('');
     setCategoryId('');
+    setCreditCardAccountId('');
   }, [subType]);
 
   const creditAccounts = useMemo(
@@ -121,9 +135,8 @@ export default function OtherTransactionPage() {
       throw new Error('请填写账户、金额、往来方和约定还款日');
     }
 
-    await apiPost('/api/transactions', {
+    await apiPost(`/api/transactions?book_id=${bookId}`, {
       occurred_at: toOccurredAt(date),
-      book_id: bookId,
       account_id: accountId,
       transaction_type: transactionType,
       direction: transactionType === 'debt_borrow' ? 'in' : 'out',
@@ -135,6 +148,22 @@ export default function OtherTransactionPage() {
         repayment_date: repaymentDate,
         reason: reason || null,
       }),
+    });
+  };
+
+  const submitRepayment = async (bookId: string) => {
+    if (!accountId || !creditCardAccountId || !repayAmount) {
+      throw new Error('请填写还款账户、信用卡和还款金额');
+    }
+
+    await apiPost(`/api/transactions?book_id=${bookId}`, {
+      occurred_at: toOccurredAt(date),
+      transaction_type: 'repayment_credit_card',
+      direction: 'out',
+      account_id: accountId,
+      counterparty_account_id: creditCardAccountId,
+      amount: parseFloat(repayAmount),
+      note: memo || null,
     });
   };
 
@@ -151,8 +180,10 @@ export default function OtherTransactionPage() {
         await submitInstallment(bookId);
       } else if (subType === 'lend') {
         await submitDebtTransaction(bookId, 'debt_lend');
-      } else {
+      } else if (subType === 'borrow') {
         await submitDebtTransaction(bookId, 'debt_borrow');
+      } else {
+        await submitRepayment(bookId);
       }
 
       navigate('/dashboard');
@@ -340,13 +371,65 @@ export default function OtherTransactionPage() {
     </>
   );
 
+  const renderRepayFields = () => (
+    <>
+      <div>
+        <label className={transactionFormLabelClass}>还款账户 *</label>
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+          className={transactionFormFieldClass}
+          required
+        >
+          <option value="">选择资产账户</option>
+          {assetAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {getAccountOptionLabel(account)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>还款信用卡 *</label>
+        <select
+          value={creditCardAccountId}
+          onChange={(e) => setCreditCardAccountId(e.target.value)}
+          className={transactionFormFieldClass}
+          required
+        >
+          <option value="">选择信用卡/信用账户</option>
+          {creditAccounts.map((account) => (
+            <option key={account.id} value={account.id}>
+              {getAccountOptionLabel(account)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <label className={transactionFormLabelClass}>还款金额 *</label>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={repayAmount}
+          onChange={(e) => setRepayAmount(e.target.value)}
+          placeholder="0.00"
+          className={transactionFormFieldClass}
+          required
+        />
+      </div>
+    </>
+  );
+
   return (
     <TransactionFormLayout
       pageTitle="其他交易"
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="rounded-2xl bg-slate-100 p-1">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             <button
               type="button"
               onClick={() => setSubType('installment')}
@@ -368,11 +451,22 @@ export default function OtherTransactionPage() {
             >
               借入
             </button>
+            <button
+              type="button"
+              onClick={() => setSubType('repay')}
+              className={transactionFormToggleClass(subType === 'repay')}
+            >
+              还款
+            </button>
           </div>
         </div>
 
         <div className={transactionFormSectionClass}>
-          {subType === 'installment' ? renderInstallmentFields() : renderDebtFields()}
+          {subType === 'installment'
+            ? renderInstallmentFields()
+            : subType === 'repay'
+              ? renderRepayFields()
+              : renderDebtFields()}
 
           <div>
             <label className={transactionFormLabelClass}>日期</label>
@@ -396,10 +490,12 @@ export default function OtherTransactionPage() {
             />
           </div>
 
-          <div>
-            <label className={transactionFormLabelClass}>标签</label>
-            <TagMultiSelect allTags={toTagOptions(tags)} value={tagIds} onChange={setTagIds} />
-          </div>
+          {subType !== 'repay' && (
+            <div>
+              <label className={transactionFormLabelClass}>标签</label>
+              <TagMultiSelect allTags={toTagOptions(tags)} value={tagIds} onChange={setTagIds} />
+            </div>
+          )}
         </div>
 
         {error && (

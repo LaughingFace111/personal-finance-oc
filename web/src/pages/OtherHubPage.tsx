@@ -30,6 +30,13 @@ const menuItems = [
     icon: '📥',
     path: '/other/borrow',
   },
+  {
+    key: 'repay',
+    title: '信用卡还款',
+    description: '归还信用卡欠款',
+    icon: '💰',
+    path: '/other/repay',
+  },
 ];
 
 export default function OtherHubPage() {
