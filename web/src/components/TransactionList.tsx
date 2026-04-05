@@ -38,6 +38,17 @@ interface AccountItem {
   name: string
 }
 
+interface TagItem {
+  id: string
+  name: string
+  color?: string
+}
+
+interface TagDisplayItem {
+  name: string
+  color?: string
+}
+
 const NEUTRAL_TRANSACTION_TYPES = new Set([
   'transfer',
   'repayment_credit_card',
@@ -52,6 +63,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   const [data, setData] = useState<TransactionItem[]>([])
   const [categories, setCategories] = useState<CategoryItem[]>([])
   const [accounts, setAccounts] = useState<AccountItem[]>([])
+  const [tags, setTags] = useState<TagItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -95,6 +107,14 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       .catch(() => setAccounts([]))
   }, [bookId])
 
+  useEffect(() => {
+    if (!bookId) return
+
+    apiGet(`/api/tags?book_id=${bookId}`)
+      .then((res) => setTags(Array.isArray(res) ? res : []))
+      .catch(() => setTags([]))
+  }, [bookId])
+
   // 首次加载或月份变化时重置
   useEffect(() => {
     setPage(1)
@@ -109,6 +129,10 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   const accountMap = useMemo(() => {
     return new Map(accounts.map((account) => [account.id, account]))
   }, [accounts])
+
+  const tagMap = useMemo(() => {
+    return new Map(tags.map((tag) => [tag.name, tag]))
+  }, [tags])
 
   const groupedData = useMemo(() => {
     const groups: Record<string, TransactionItem[]> = {}
@@ -139,10 +163,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
     const isIncome = item.direction === 'in'
     const category = item.category_id ? categoryMap.get(item.category_id) : undefined
-    const parent = category?.parent_id ? categoryMap.get(category.parent_id) : undefined
-    const label = category
-      ? parent ? `${parent.name} / ${category.name}` : category.name
-      : '未分类'
+    const label = category?.name || '未分类'
 
     return {
       icon: isNeutral ? '⇄' : (category?.icon || (isIncome ? '↗' : '↘')),
@@ -181,10 +202,61 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   const getTagList = (item: TransactionItem) => {
     if (!item.tags) return []
 
-    return item.tags
-      .split(/[,\s]+/)
-      .map((tag) => tag.trim())
+    let parsedTags: unknown = item.tags
+
+    if (typeof item.tags === 'string') {
+      try {
+        parsedTags = JSON.parse(item.tags)
+      } catch {
+        parsedTags = item.tags.split(/[,\s]+/).map((tag) => tag.trim()).filter(Boolean)
+      }
+    }
+
+    if (!Array.isArray(parsedTags)) return []
+
+    return parsedTags
+      .map((tag): TagDisplayItem | null => {
+        if (typeof tag === 'string') {
+          const trimmedName = tag.trim()
+          if (!trimmedName) return null
+          return {
+            name: trimmedName,
+            color: tagMap.get(trimmedName)?.color
+          }
+        }
+
+        if (tag && typeof tag === 'object' && 'name' in tag) {
+          const name = typeof tag.name === 'string' ? tag.name.trim() : ''
+          if (!name) return null
+          return {
+            name,
+            color: typeof tag.color === 'string' ? tag.color : tagMap.get(name)?.color
+          }
+        }
+
+        return null
+      })
       .filter(Boolean)
+  }
+
+  const isLightColor = (color?: string) => {
+    if (!color || !color.startsWith('#')) return false
+
+    let normalized = color.slice(1)
+    if (normalized.length === 3) {
+      normalized = normalized.split('').map((char) => `${char}${char}`).join('')
+    }
+
+    if (normalized.length !== 6) return false
+
+    const r = Number.parseInt(normalized.slice(0, 2), 16)
+    const g = Number.parseInt(normalized.slice(2, 4), 16)
+    const b = Number.parseInt(normalized.slice(4, 6), 16)
+
+    if ([r, g, b].some((value) => Number.isNaN(value))) return false
+
+    const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
+    return luminance >= 186
   }
 
   const getFlowAccountLabel = (item: TransactionItem) => {
@@ -275,7 +347,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                 const primaryTitle = isNeutral
                   ? getDefaultNeutralTitle(item)
                   : categoryMeta.label
-                const noteText = item.note?.trim() || '暂无备注'
+                const noteText = item.note?.trim() || ''
                 const accountText = isNeutral
                   ? getFlowAccountLabel(item)
                   : (accountMap.get(item.account_id)?.name || '未知账户')
@@ -323,6 +395,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                         <div style={{
                           display: 'flex',
                           alignItems: 'center',
+                          minHeight: 24,
                           minWidth: 0,
                           gap: 8
                         }}>
@@ -338,54 +411,61 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                             {primaryTitle}
                           </div>
 
-                          <div
-                            className="scrollbar-hide"
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              overflowX: 'auto',
-                              overflowY: 'hidden',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            {tags.length > 0 ? (
+                          {tags.length > 0 && (
+                            <div
+                              className="scrollbar-hide"
+                              style={{
+                                flex: 1,
+                                minWidth: 0,
+                                overflowX: 'auto',
+                                overflowY: 'hidden',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
                               <div style={{ display: 'inline-flex', gap: 6 }}>
                                 {tags.map((tag, tagIndex) => (
-                                  <span
-                                    key={`${item.id}-tag-${tagIndex}`}
-                                    style={{
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      padding: '2px 8px',
-                                      borderRadius: 999,
-                                      fontSize: 11,
-                                      lineHeight: '16px',
-                                      color: 'var(--text-secondary)',
-                                      background: 'var(--bg-elevated)'
-                                    }}
-                                  >
-                                    {tag}
-                                  </span>
+                                  (() => {
+                                    const background = tag.color || 'var(--bg-elevated)'
+                                    const color = tag.color
+                                      ? (isLightColor(tag.color) ? 'var(--text-primary)' : '#ffffff')
+                                      : 'var(--text-secondary)'
+
+                                    return (
+                                      <span
+                                        key={`${item.id}-tag-${tagIndex}`}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          padding: '2px 8px',
+                                          borderRadius: 8,
+                                          fontSize: 11,
+                                          lineHeight: '16px',
+                                          color,
+                                          background
+                                        }}
+                                      >
+                                        {tag.name}
+                                      </span>
+                                    )
+                                  })()
                                 ))}
                               </div>
-                            ) : (
-                              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-                                无标签
-                              </span>
-                            )}
-                          </div>
+                            </div>
+                          )}
                         </div>
 
-                        <div style={{
-                          marginTop: 6,
-                          fontSize: 12,
-                          color: 'var(--text-secondary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }}>
-                          {noteText}
-                        </div>
+                        {noteText && (
+                          <div style={{
+                            marginTop: 6,
+                            fontSize: 12,
+                            color: 'var(--text-secondary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {noteText}
+                          </div>
+                        )}
                       </div>
 
                       <div style={{
