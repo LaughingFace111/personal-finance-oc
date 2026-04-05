@@ -26,6 +26,16 @@ const ThemedApp = () => {
           Input: {
             colorBgContainer: resolvedTheme === 'dark' ? '#2a2a2a' : '#ffffff',
           },
+          Message: {
+            contentBg: resolvedTheme === 'dark' ? '#262626' : '#ffffff',
+            colorText: resolvedTheme === 'dark' ? '#ffffff' : 'rgba(0, 0, 0, 0.88)',
+          },
+          Notification: {
+            colorBgElevated: resolvedTheme === 'dark' ? '#262626' : '#ffffff',
+            colorText: resolvedTheme === 'dark' ? '#ffffff' : 'rgba(0, 0, 0, 0.88)',
+            colorTextHeading: resolvedTheme === 'dark' ? '#ffffff' : 'rgba(0, 0, 0, 0.88)',
+            colorTextDescription: resolvedTheme === 'dark' ? 'rgba(255, 255, 255, 0.85)' : 'rgba(0, 0, 0, 0.65)',
+          },
           Select: {
             colorBgContainer: resolvedTheme === 'dark' ? '#2a2a2a' : '#ffffff',
             colorBgElevated: resolvedTheme === 'dark' ? '#262626' : '#ffffff',
