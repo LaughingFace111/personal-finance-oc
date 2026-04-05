@@ -34,6 +34,26 @@ def _get_billing_cycle_dates(today: date, billing_day: int, billing_day_rule: st
     return current_month_bill_date, cycle_start_date
 
 
+def _get_adjacent_bill_dates(today: date, billing_day: int) -> Tuple[date, date]:
+    """Return the most recent past/current bill date and the next upcoming bill date."""
+    current_month_bill_date = _safe_date(today.year, today.month, billing_day)
+
+    if today >= current_month_bill_date:
+        last_bill_date = current_month_bill_date
+        if current_month_bill_date.month == 12:
+            next_bill_date = _safe_date(current_month_bill_date.year + 1, 1, billing_day)
+        else:
+            next_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month + 1, billing_day)
+    else:
+        next_bill_date = current_month_bill_date
+        if current_month_bill_date.month == 1:
+            last_bill_date = _safe_date(current_month_bill_date.year - 1, 12, billing_day)
+        else:
+            last_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month - 1, billing_day)
+
+    return last_bill_date, next_bill_date
+
+
 def _get_statement_due_date(last_bill_date: date, repayment_day: int) -> date:
     """Return the due date for the statement generated on last_bill_date."""
     if repayment_day > last_bill_date.day:
@@ -199,10 +219,10 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     🛡️ L: 计算信用账户的本期待还和下一个还款日
     
     算法：
-    1. 根据 billing_day 推算本月账单日和最近已出账账单日
-    2. 根据最近已出账账单日推算该账单对应的还款日
-    3. 若本月尚未出账，则待还 = 当前总欠款
-    4. 若本月已经出账，则待还 = max(0, Current_Debt - 出账后的未出账净消费)
+    1. 推算最近已出账日和即将出账日
+    2. 基于最近已出账日统一计算未出账区间净消费
+    3. 旧账单欠款 = 当前总欠款 - 未出账净消费
+    4. 若旧账未清，继续锚定最近已出账账单；否则轮转到即将出账的新账单
     """
     # 如果不是信用账户，返回 None
     if account.account_type not in ['credit_card', 'credit_line']:
@@ -238,70 +258,61 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     
     today = date.today()
     billing_day_rule = account.billing_day_rule or "current_cycle"
-    current_month_bill_date, _statement_cycle_start_date = _get_billing_cycle_dates(today, billing_day, billing_day_rule)
-    if today >= current_month_bill_date:
-        last_bill_date = current_month_bill_date
-    else:
-        if current_month_bill_date.month == 1:
-            last_bill_date = _safe_date(current_month_bill_date.year - 1, 12, billing_day)
-        else:
-            last_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month - 1, billing_day)
-
-    # 还款日必须基于最近已出账账单，而不是按 today 自动跳到后续周期。
-    next_repay_date = _get_statement_due_date(last_bill_date, repayment_day)
-    is_overdue = today > next_repay_date
-    days_until = (next_repay_date - today).days
+    last_bill_date, next_bill_date = _get_adjacent_bill_dates(today, billing_day)
     current_debt = account.debt_amount or Decimal("0")
 
-    # 本月账单尚未生成时，直接展示当前总欠款，避免被未出账净消费完全抵消。
-    if today < current_month_bill_date:
-        statement_balance = max(Decimal("0"), current_debt)
+    if billing_day_rule == "next_cycle":
+        unbilled_cycle_start_date = last_bill_date
     else:
-        if billing_day_rule == "next_cycle":
-            unbilled_cycle_start_date = last_bill_date
-        else:
-            unbilled_cycle_start_date = last_bill_date + timedelta(days=1)
+        unbilled_cycle_start_date = last_bill_date + timedelta(days=1)
 
-        unbilled_cycle_start_datetime = datetime.combine(unbilled_cycle_start_date, datetime.min.time())
+    unbilled_cycle_start_datetime = datetime.combine(unbilled_cycle_start_date, datetime.min.time())
 
-        # 延迟导入避免循环依赖
-        from src.modules.transactions.models import Transaction as TxnModel
+    # 延迟导入避免循环依赖
+    from src.modules.transactions.models import Transaction as TxnModel
 
-        # 净消费 = 支出总额 - 退款总额（出账日之后）
-        expense_query = db.query(func.sum(TxnModel.amount)).filter(
-            TxnModel.account_id == account.id,
-            TxnModel.occurred_at >= unbilled_cycle_start_datetime,
-            TxnModel.status == "confirmed",
-            TxnModel.direction == TransactionDirection.OUT.value,
-            ~(
-                (TxnModel.source_type == SourceType.SYSTEM.value) &
-                (TxnModel.business_key.like("installment:%"))
-            ),
-            TxnModel.transaction_type.in_([
-                TransactionType.EXPENSE.value,
-                TransactionType.FEE.value,
-                TransactionType.INSTALLMENT_PURCHASE.value
-            ])
-        )
-        expense_total = expense_query.scalar() or Decimal("0")
+    # 净消费 = 支出总额 - 退款总额（出账日之后）
+    expense_query = db.query(func.sum(TxnModel.amount)).filter(
+        TxnModel.account_id == account.id,
+        TxnModel.occurred_at >= unbilled_cycle_start_datetime,
+        TxnModel.status == "confirmed",
+        TxnModel.direction == TransactionDirection.OUT.value,
+        ~(
+            (TxnModel.source_type == SourceType.SYSTEM.value) &
+            (TxnModel.business_key.like("installment:%"))
+        ),
+        TxnModel.transaction_type.in_([
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value
+        ])
+    )
+    expense_total = expense_query.scalar() or Decimal("0")
 
-        # 退款（减少负债）
-        # 当前为简化实现：所有出账日后的退款均视为冲抵未出账消费。
-        # 完整实现需要区分退款对应的原消费是否已经出账。
-        refund_query = db.query(func.sum(TxnModel.amount)).filter(
-            TxnModel.account_id == account.id,
-            TxnModel.occurred_at >= unbilled_cycle_start_datetime,
-            TxnModel.status == "confirmed",
-            TxnModel.transaction_type == TransactionType.REFUND.value
-        )
-        refund_total = refund_query.scalar() or Decimal("0")
+    # 退款（减少负债）
+    # 当前为简化实现：所有出账日后的退款均视为冲抵未出账消费。
+    # 完整实现需要区分退款对应的原消费是否已经出账。
+    refund_query = db.query(func.sum(TxnModel.amount)).filter(
+        TxnModel.account_id == account.id,
+        TxnModel.occurred_at >= unbilled_cycle_start_datetime,
+        TxnModel.status == "confirmed",
+        TxnModel.transaction_type == TransactionType.REFUND.value
+    )
+    refund_total = refund_query.scalar() or Decimal("0")
 
-        # 未出账净消费
-        unbilled_net = expense_total - refund_total
+    unbilled_net = expense_total - refund_total
+    old_billed_debt = current_debt - unbilled_net
 
-        # 本期待还 = max(0, 当前总欠款 - 未出账净消费)
-        # 原理：当前总欠款中，减去出账后的新消费，剩下的是当前账单应还金额
-        statement_balance = max(Decimal("0"), current_debt - unbilled_net)
+    if old_billed_debt > Decimal("0"):
+        statement_balance = old_billed_debt
+        target_bill_date = last_bill_date
+    else:
+        statement_balance = max(Decimal("0"), unbilled_net)
+        target_bill_date = next_bill_date
+
+    next_repay_date = _get_statement_due_date(target_bill_date, repayment_day)
+    is_overdue = today > next_repay_date
+    days_until = (next_repay_date - today).days
     
     return {
         'current_statement_balance': statement_balance,
