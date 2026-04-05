@@ -34,27 +34,19 @@ def _get_billing_cycle_dates(today: date, billing_day: int, billing_day_rule: st
     return current_month_bill_date, cycle_start_date
 
 
-def _get_statement_due_date(last_bill_date: date, repayment_day: int, today: date) -> date:
-    """Return the due date for the statement generated on last_bill_date.
-    If the computed due date is in the past relative to today, advance to the next cycle."""
+def _get_statement_due_date(last_bill_date: date, repayment_day: int) -> date:
+    """Return the due date for the statement generated on last_bill_date."""
+    if repayment_day > last_bill_date.day:
+        return _safe_date(last_bill_date.year, last_bill_date.month, repayment_day)
+
     due_year = last_bill_date.year
     due_month = last_bill_date.month
-    # Always advance one month from the billing date
     if due_month == 12:
         due_year += 1
         due_month = 1
     else:
         due_month += 1
-    due_date = _safe_date(due_year, due_month, repayment_day)
-    # If this due date is already past, advance one more month
-    if due_date <= today:
-        if due_month == 12:
-            due_year += 1
-            due_month = 1
-        else:
-            due_month += 1
-        due_date = _safe_date(due_year, due_month, repayment_day)
-    return due_date
+    return _safe_date(due_year, due_month, repayment_day)
 
 
 def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
@@ -207,9 +199,9 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     🛡️ L: 计算信用账户的本期待还和下一个还款日
     
     算法：
-    1. 根据 billing_day 推算当前应展示账期的出账日 D_bill
-    2. 根据 repayment_day 推算下一个还款日 D_next_repay
-    3. 若本月尚未出账，则待还 = 当前总欠款（当前账期累计待还）
+    1. 根据 billing_day 推算本月账单日和最近已出账账单日
+    2. 根据最近已出账账单日推算该账单对应的还款日
+    3. 若本月尚未出账，则待还 = 当前总欠款
     4. 若本月已经出账，则待还 = max(0, Current_Debt - 出账后的未出账净消费)
     """
     # 如果不是信用账户，返回 None
@@ -246,22 +238,29 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     
     today = date.today()
     billing_day_rule = account.billing_day_rule or "current_cycle"
-    bill_date, _statement_cycle_start_date = _get_billing_cycle_dates(today, billing_day, billing_day_rule)
+    current_month_bill_date, _statement_cycle_start_date = _get_billing_cycle_dates(today, billing_day, billing_day_rule)
+    if today >= current_month_bill_date:
+        last_bill_date = current_month_bill_date
+    else:
+        if current_month_bill_date.month == 1:
+            last_bill_date = _safe_date(current_month_bill_date.year - 1, 12, billing_day)
+        else:
+            last_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month - 1, billing_day)
 
-    # 还款日基于当前应展示账期对应的账单计算。
-    next_repay_date = _get_statement_due_date(bill_date, repayment_day, today)
+    # 还款日必须基于最近已出账账单，而不是按 today 自动跳到后续周期。
+    next_repay_date = _get_statement_due_date(last_bill_date, repayment_day)
     is_overdue = today > next_repay_date
     days_until = (next_repay_date - today).days
     current_debt = account.debt_amount or Decimal("0")
 
-    # 本月账单尚未生成时，直接展示当前账期累计待还，避免将当期消费抵消为 0。
-    if today < bill_date:
+    # 本月账单尚未生成时，直接展示当前总欠款，避免被未出账净消费完全抵消。
+    if today < current_month_bill_date:
         statement_balance = max(Decimal("0"), current_debt)
     else:
         if billing_day_rule == "next_cycle":
-            unbilled_cycle_start_date = bill_date
+            unbilled_cycle_start_date = last_bill_date
         else:
-            unbilled_cycle_start_date = bill_date + timedelta(days=1)
+            unbilled_cycle_start_date = last_bill_date + timedelta(days=1)
 
         unbilled_cycle_start_datetime = datetime.combine(unbilled_cycle_start_date, datetime.min.time())
 
