@@ -321,51 +321,59 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{
-                          fontWeight: 700,
-                          fontSize: 15,
-                          color: 'var(--text-primary)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
+                          display: 'flex',
+                          alignItems: 'center',
+                          minWidth: 0,
+                          gap: 8
                         }}>
-                          {primaryTitle}
-                        </div>
-
-                        <div
-                          className="scrollbar-hide max-w-[120px] overflow-x-auto overflow-y-hidden whitespace-nowrap"
-                          style={{
-                            marginTop: 6,
-                            maxWidth: 120,
-                            overflowX: 'auto',
-                            overflowY: 'hidden',
+                          <div style={{
+                            flexShrink: 0,
+                            fontWeight: 700,
+                            fontSize: 15,
+                            color: 'var(--text-primary)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap'
-                          }}
-                        >
-                          {tags.length > 0 ? (
-                            <div style={{ display: 'inline-flex', gap: 6 }}>
-                              {tags.map((tag, tagIndex) => (
-                                <span
-                                  key={`${item.id}-tag-${tagIndex}`}
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    padding: '2px 8px',
-                                    borderRadius: 999,
-                                    fontSize: 11,
-                                    lineHeight: '16px',
-                                    color: 'var(--text-secondary)',
-                                    background: 'var(--bg-elevated)'
-                                  }}
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
-                              无标签
-                            </span>
-                          )}
+                          }}>
+                            {primaryTitle}
+                          </div>
+
+                          <div
+                            className="scrollbar-hide"
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflowX: 'auto',
+                              overflowY: 'hidden',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {tags.length > 0 ? (
+                              <div style={{ display: 'inline-flex', gap: 6 }}>
+                                {tags.map((tag, tagIndex) => (
+                                  <span
+                                    key={`${item.id}-tag-${tagIndex}`}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      padding: '2px 8px',
+                                      borderRadius: 999,
+                                      fontSize: 11,
+                                      lineHeight: '16px',
+                                      color: 'var(--text-secondary)',
+                                      background: 'var(--bg-elevated)'
+                                    }}
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                                无标签
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         <div style={{
@@ -381,8 +389,8 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                       </div>
 
                       <div style={{
-                        flexShrink: 0,
-                        minWidth: 132,
+                        flex: '0 0 132px',
+                        width: 132,
                         textAlign: 'right'
                       }}>
                         <div style={{
