@@ -248,11 +248,6 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
     account = db.query(Account).filter(
         Account.id == plan.account_id
     ).with_for_update().first()
-    today = date.today()
-
-    if schedule.due_date and schedule.due_date > today:
-        raise ValueError(f"分期未到执行日: {schedule.due_date.isoformat()}")
-
     try:
         # 1. 为本期分期生成一笔支出账单，发生日期以计划日为准
         note = f"[{next_period}/{plan.total_periods}] 期 - {plan.plan_name}"
