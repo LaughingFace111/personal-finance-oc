@@ -33,6 +33,11 @@ interface CategoryItem {
   parent_id?: string
 }
 
+interface AccountItem {
+  id: string
+  name: string
+}
+
 const NEUTRAL_TRANSACTION_TYPES = new Set([
   'transfer',
   'repayment_credit_card',
@@ -46,6 +51,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   const [data, setData] = useState<TransactionItem[]>([])
   const [categories, setCategories] = useState<CategoryItem[]>([])
+  const [accounts, setAccounts] = useState<AccountItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [page, setPage] = useState(1)
@@ -81,6 +87,14 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       .catch(() => setCategories([]))
   }, [bookId])
 
+  useEffect(() => {
+    if (!bookId) return
+
+    apiGet(`/api/accounts?book_id=${bookId}`)
+      .then((res) => setAccounts(Array.isArray(res) ? res : []))
+      .catch(() => setAccounts([]))
+  }, [bookId])
+
   // 首次加载或月份变化时重置
   useEffect(() => {
     setPage(1)
@@ -91,6 +105,10 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   const categoryMap = useMemo(() => {
     return new Map(categories.map((category) => [category.id, category]))
   }, [categories])
+
+  const accountMap = useMemo(() => {
+    return new Map(accounts.map((account) => [account.id, account]))
+  }, [accounts])
 
   const groupedData = useMemo(() => {
     const groups: Record<string, TransactionItem[]> = {}
@@ -117,12 +135,6 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
   }
 
-  const formatTimeDisplay = (dateStr: string) => {
-    const date = new Date(dateStr)
-    if (Number.isNaN(date.getTime())) return ''
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
-
   const getCategoryMeta = (item: TransactionItem) => {
     const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
     const isIncome = item.direction === 'in'
@@ -133,7 +145,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       : '未分类'
 
     return {
-      icon: category?.icon || (isNeutral ? '⇄' : (isIncome ? '↗' : '↘')),
+      icon: isNeutral ? '⇄' : (category?.icon || (isIncome ? '↗' : '↘')),
       label,
       color: category?.color || (isNeutral ? 'var(--text-secondary)' : (isIncome ? '#16a34a' : '#dc2626')),
       background: category?.color
@@ -149,6 +161,40 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       prefix: isNeutral ? '' : (isIncome ? '+' : '-'),
       color: isNeutral ? 'var(--text-secondary)' : (isIncome ? '#16a34a' : '#dc2626')
     }
+  }
+
+  const getDefaultNeutralTitle = (item: TransactionItem) => {
+    if (item.merchant?.trim()) return item.merchant.trim()
+
+    switch (item.transaction_type) {
+      case 'repayment_credit_card':
+        return '信用卡还款'
+      case 'repayment_loan':
+        return '贷款还款'
+      case 'transfer':
+        return '账户转账'
+      default:
+        return '内部流转'
+    }
+  }
+
+  const getTagList = (item: TransactionItem) => {
+    if (!item.tags) return []
+
+    return item.tags
+      .split(/[,\s]+/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+  }
+
+  const getFlowAccountLabel = (item: TransactionItem) => {
+    const fromName = item.account_id ? accountMap.get(item.account_id)?.name : undefined
+    const toName = item.counterparty_account_id ? accountMap.get(item.counterparty_account_id)?.name : undefined
+
+    if (fromName && toName) return `${fromName} -> ${toName}`
+    if (fromName) return `${fromName} -> 未知账户`
+    if (toName) return `未知账户 -> ${toName}`
+    return '账户未匹配'
   }
 
   // 骨架屏占位
@@ -174,6 +220,19 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   return (
     <>
+      <style>
+        {`
+          .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          }
+
+          .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+          }
+        `}
+      </style>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {groupedData.map(([date, items]) => (
           <div
@@ -209,8 +268,18 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
             <div>
               {items.map((item: TransactionItem, index) => {
+                const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
                 const categoryMeta = getCategoryMeta(item)
                 const amountMeta = getAmountMeta(item)
+                const tags = getTagList(item)
+                const primaryTitle = isNeutral
+                  ? getDefaultNeutralTitle(item)
+                  : categoryMeta.label
+                const noteText = item.note?.trim() || '暂无备注'
+                const accountText = isNeutral
+                  ? getFlowAccountLabel(item)
+                  : (accountMap.get(item.account_id)?.name || '未知账户')
+                const formattedAmount = Number(isNeutral ? Math.abs(Number(item.amount)) : item.amount).toFixed(2)
 
                 return (
                   <div
@@ -220,7 +289,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                       borderTop: index === 0 ? '1px solid var(--border-light)' : '1px solid var(--border-light)',
                       cursor: 'pointer',
                       display: 'flex',
-                      alignItems: 'center',
+                      alignItems: 'flex-start',
                       gap: 14
                     }}
                     onClick={() => onItemClick?.(item)}
@@ -242,82 +311,98 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                       {categoryMeta.icon}
                     </div>
 
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12
-                      }}>
+                    <div style={{
+                      flex: 1,
+                      minWidth: 0,
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      justifyContent: 'space-between',
+                      gap: 12
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{
-                          fontWeight: 600,
+                          fontWeight: 700,
                           fontSize: 15,
                           color: 'var(--text-primary)',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap'
                         }}>
-                          {item.merchant || item.note || '未命名交易'}
+                          {primaryTitle}
                         </div>
+
+                        <div
+                          className="scrollbar-hide max-w-[120px] overflow-x-auto overflow-y-hidden whitespace-nowrap"
+                          style={{
+                            marginTop: 6,
+                            maxWidth: 120,
+                            overflowX: 'auto',
+                            overflowY: 'hidden',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {tags.length > 0 ? (
+                            <div style={{ display: 'inline-flex', gap: 6 }}>
+                              {tags.map((tag, tagIndex) => (
+                                <span
+                                  key={`${item.id}-tag-${tagIndex}`}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    padding: '2px 8px',
+                                    borderRadius: 999,
+                                    fontSize: 11,
+                                    lineHeight: '16px',
+                                    color: 'var(--text-secondary)',
+                                    background: 'var(--bg-elevated)'
+                                  }}
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                              无标签
+                            </span>
+                          )}
+                        </div>
+
                         <div style={{
-                          marginLeft: 12,
-                          flexShrink: 0,
-                          textAlign: 'right',
-                          minWidth: 112
+                          marginTop: 6,
+                          fontSize: 12,
+                          color: 'var(--text-secondary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
                         }}>
-                          <div style={{
-                            color: amountMeta.color,
-                            fontWeight: 700,
-                            fontSize: 17,
-                            fontVariantNumeric: 'tabular-nums'
-                          }}>
-                            {amountMeta.prefix}¥{Number(item.amount).toFixed(2)}
-                          </div>
+                          {noteText}
                         </div>
                       </div>
 
                       <div style={{
-                        marginTop: 6,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12
+                        flexShrink: 0,
+                        minWidth: 132,
+                        textAlign: 'right'
                       }}>
                         <div style={{
-                          minWidth: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                          overflow: 'hidden'
-                        }}>
-                          <span style={{
-                            fontSize: 12,
-                            color: 'var(--text-secondary)',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {categoryMeta.label}
-                          </span>
-                          {item.note && item.note !== item.merchant && (
-                            <span style={{
-                              fontSize: 12,
-                              color: 'var(--text-tertiary)',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
-                            }}>
-                              {item.note}
-                            </span>
-                          )}
-                        </div>
-                        <div style={{
-                          flexShrink: 0,
-                          fontSize: 12,
-                          color: 'var(--text-secondary)',
+                          color: amountMeta.color,
+                          fontWeight: 700,
+                          fontSize: 17,
                           fontVariantNumeric: 'tabular-nums'
                         }}>
-                          {formatTimeDisplay(item.occurred_at)}
+                          {amountMeta.prefix}¥{formattedAmount}
+                        </div>
+
+                        <div style={{
+                          marginTop: 6,
+                          fontSize: 12,
+                          color: 'var(--text-secondary)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {accountText}
                         </div>
                       </div>
                     </div>
