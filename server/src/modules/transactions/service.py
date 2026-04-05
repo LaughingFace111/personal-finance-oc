@@ -410,6 +410,13 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     created_transaction_ids.append(txn.id)
 
     if fee_amount > 0 and fee_account is not None:
+        # 查找"手续费/利息"分类
+        fee_category = db.query(Category).filter(
+            Category.book_id == book_id,
+            Category.name == "手续费/利息",
+            Category.is_active == True
+        ).first()
+
         fee_txn = Transaction(
             id=generate_uuid(),
             book_id=book_id,
@@ -419,8 +426,9 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
             amount=fee_amount,
             currency=data.currency,
             account_id=fee_account.id,
-            merchant=f"转账手续费: {from_account.name} -> {to_account.name}",
-            note=data.note,
+            category_id=fee_category.id if fee_category else None,
+            merchant=f"{from_account.name}到{to_account.name}的转账手续费",
+            note=fee_category.name if fee_category else "转账手续费",
             tags=data.tags,
             source_type=SourceType.MANUAL.value,
             include_in_expense=True,
