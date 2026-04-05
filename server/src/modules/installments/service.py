@@ -12,7 +12,6 @@ from src.core import generate_uuid, NotFoundException
 
 from .models import InstallmentPlan, InstallmentSchedule
 from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
-from src.modules.accounts.service import update_account_debt, update_account_frozen
 from src.modules.transactions.service import create_transaction
 from src.modules.transactions.schemas import TransactionCreate
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
@@ -249,6 +248,10 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
     account = db.query(Account).filter(
         Account.id == plan.account_id
     ).with_for_update().first()
+    today = date.today()
+
+    if schedule.due_date and schedule.due_date > today:
+        raise ValueError(f"分期未到执行日: {schedule.due_date.isoformat()}")
 
     try:
         # 1. 为本期分期生成一笔支出账单，发生日期以计划日为准
@@ -272,11 +275,7 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         )
         transaction = create_transaction(db, book_id, txn_data)
 
-        # 2. 迁移额度：本期应还转为欠款，同时释放对应冻结额度
-        frozen_amount = Decimal(str(schedule.total_due))
-        debt_amount = Decimal(str(schedule.total_due))
-        update_account_debt(db, plan.account_id, debt_amount, is_increase=True)
-        update_account_frozen(db, plan.account_id, frozen_amount, is_increase=False)
+        # 2. 交易创建时已完成 debt/frozen 迁移，这里只刷新账户对象
         db.refresh(account)
 
         # 4. 更新计划进度

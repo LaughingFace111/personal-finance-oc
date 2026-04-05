@@ -131,9 +131,9 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
                 and txn.business_key.startswith("installment:")
                 and ":p" in txn.business_key
             )
-            # 系统分期执行会在调用方显式迁移 frozen/debt，这里跳过自动负债变更，避免重复记账。
-            if not is_system_installment_execution:
-                update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+            update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+            if is_system_installment_execution:
+                update_account_frozen(db, txn.account_id, txn.amount, is_increase=False)
             txn.include_in_cashflow = False
         elif _is_loan_account(account_type):
             # Loan account: not typical for expense
@@ -625,8 +625,17 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             # Reverse: balance increase
             update_account_balance(db, txn.account_id, amount, is_increase=True)
         elif _is_credit_account(account_type):
+            is_system_installment_execution = (
+                txn.source_type == SourceType.SYSTEM.value
+                and not txn.counterparty_account_id
+                and bool(txn.business_key)
+                and txn.business_key.startswith("installment:")
+                and ":p" in txn.business_key
+            )
             # Reverse: debt decrease
             update_account_debt(db, txn.account_id, amount, is_increase=False)
+            if is_system_installment_execution:
+                update_account_frozen(db, txn.account_id, amount, is_increase=True)
 
     elif tx_type == TransactionType.INCOME.value:
         if _is_asset_account(account_type):
