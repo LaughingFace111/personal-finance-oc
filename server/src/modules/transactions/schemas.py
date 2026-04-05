@@ -76,13 +76,17 @@ class TransactionResponse(TransactionBase):
 
 # Transfer transaction
 class TransferCreate(BaseModel):
-    occurred_at: datetime
+    model_config = ConfigDict(extra="forbid")
+
+    occurred_at: Optional[datetime] = None
     from_account_id: str
     to_account_id: str
     amount: Decimal = Field(..., gt=0)
     currency: str = "CNY"
     note: Optional[str] = None
     tags: Optional[str] = None
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0)
+    fee_account_id: Optional[str] = None
 
 
 class CreditCardRepaymentCreate(BaseModel):

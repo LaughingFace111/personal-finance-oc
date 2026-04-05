@@ -61,6 +61,14 @@ export function toTagOptions(tags: TagOption[]) {
 }
 
 export function toOccurredAt(date: string) {
+  if (!date) {
+    return new Date().toISOString();
+  }
+
+  if (date.includes('T')) {
+    return new Date(date).toISOString();
+  }
+
   return new Date(`${date}T12:00:00`).toISOString();
 }
 

@@ -60,6 +60,22 @@ def _build_credit_repayment_merchant(from_account: Account, credit_account: Acco
     return f"信用卡还款: {from_account.name} -> {credit_account.name}"
 
 
+def _load_transactions_for_response(db: Session, transaction_ids: List[str]) -> List[Transaction]:
+    """Reload transactions with common relations populated for response serialization."""
+    if not transaction_ids:
+        return []
+
+    items = db.query(Transaction).options(
+        selectinload(Transaction.account),
+        selectinload(Transaction.counterparty_account),
+        selectinload(Transaction.category),
+    ).filter(Transaction.id.in_(transaction_ids)).all()
+
+    order = {transaction_id: index for index, transaction_id in enumerate(transaction_ids)}
+    items.sort(key=lambda item: order.get(item.id, len(order)))
+    return items
+
+
 def _calculate_include_flags(transaction_type: TransactionType, account_type: str) -> Tuple[bool, bool, bool]:
     """Calculate include_in_expense, include_in_income, include_in_cashflow"""
     include_expense = True
@@ -321,8 +337,8 @@ def create_transaction(
 
 
 
-def create_transfer(db: Session, book_id: str, data: TransferCreate) -> Transaction:
-    """Create transfer transaction (single record with dual balance/debt update)"""
+def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Transaction]:
+    """Create transfer transaction and optional fee transaction."""
 
     # Validate accounts
     from_account = get_account(db, data.from_account_id, book_id)
@@ -334,11 +350,26 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> Transact
     if data.from_account_id == data.to_account_id:
         raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Cannot transfer to same account")
 
+    occurred_at = data.occurred_at or datetime.now()
+    created_transaction_ids: List[str] = []
+
+    fee_amount = data.fee_amount or Decimal("0")
+    fee_account = None
+    if fee_amount > 0:
+        if not data.fee_account_id:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Fee account is required when fee amount is greater than 0")
+
+        fee_account = get_account(db, data.fee_account_id, book_id)
+        if not fee_account:
+            raise NotFoundException("Fee account not found")
+        if not _is_asset_account(fee_account.account_type):
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Fee account must be an asset account")
+
     # Create single transfer transaction (record the outflow)
     txn = Transaction(
         id=generate_uuid(),
         book_id=book_id,
-        occurred_at=data.occurred_at,
+        occurred_at=occurred_at,
         transaction_type=TransactionType.TRANSFER.value,
         direction=TransactionDirection.OUT.value,
         amount=data.amount,
@@ -376,11 +407,34 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> Transact
         update_account_debt(db, data.to_account_id, data.amount, is_increase=True)
 
     db.add(txn)
-    db.commit()
-    db.refresh(txn)
+    created_transaction_ids.append(txn.id)
 
-    return txn
+    if fee_amount > 0 and fee_account is not None:
+        fee_txn = Transaction(
+            id=generate_uuid(),
+            book_id=book_id,
+            occurred_at=occurred_at,
+            transaction_type=TransactionType.FEE.value,
+            direction=TransactionDirection.OUT.value,
+            amount=fee_amount,
+            currency=data.currency,
+            account_id=fee_account.id,
+            merchant=f"转账手续费: {from_account.name} -> {to_account.name}",
+            note=data.note,
+            tags=data.tags,
+            source_type=SourceType.MANUAL.value,
+            include_in_expense=True,
+            include_in_income=False,
+            include_in_cashflow=True,
+            status=TransactionStatus.CONFIRMED.value,
+        )
+        db.add(fee_txn)
+        update_account_balance(db, fee_account.id, fee_amount, is_increase=False)
+        created_transaction_ids.append(fee_txn.id)
+
+    db.commit()
     clear_overview_cache()  # 🛡️ L: create_transfer
+    return _load_transactions_for_response(db, created_transaction_ids)
 
 
 def create_credit_card_repayment(
