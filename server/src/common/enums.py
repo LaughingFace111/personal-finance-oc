@@ -37,6 +37,8 @@ class TransactionType(str, Enum):
     DEBT_LEND = "debt_lend"
     DEBT_RECEIVE_BACK = "debt_receive_back"
     DEBT_PAY_BACK = "debt_pay_back"
+    # Kept for DB backward compatibility only; no service logic creates new records with this type
+    INSTALLMENT_REPAYMENT = "installment_repayment"
 
 
 # Transaction direction
