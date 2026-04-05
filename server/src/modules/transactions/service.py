@@ -75,8 +75,7 @@ def _calculate_include_flags(transaction_type: TransactionType, account_type: st
         include_cashflow = False
 
     # Repayment types - no expense/income
-    elif tx_type in [TransactionType.REPAYMENT_CREDIT_CARD, TransactionType.REPAYMENT_LOAN,
-                     TransactionType.INSTALLMENT_REPAYMENT]:
+    elif tx_type in [TransactionType.REPAYMENT_CREDIT_CARD, TransactionType.REPAYMENT_LOAN]:
         include_expense = False
         include_income = False
         include_cashflow = False
@@ -190,13 +189,6 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
         # To account (loan): debt decreases
         if counterparty and _is_loan_account(counterparty.account_type):
             update_account_debt(db, txn.counterparty_account_id, txn.amount, is_increase=False)
-
-    # === INSTALLMENT_REPAYMENT ===
-    elif tx_type == TransactionType.INSTALLMENT_REPAYMENT.value:
-        if _is_credit_account(account_type):
-            update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
-            update_account_frozen(db, txn.account_id, txn.amount, is_increase=False)
-            txn.include_in_cashflow = False
 
     # === DEBT_BORROW ===
     elif tx_type == TransactionType.DEBT_BORROW.value:
@@ -690,11 +682,6 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             update_account_balance(db, txn.account_id, amount, is_increase=True)
         if counterparty and _is_loan_account(counterparty.account_type):
             update_account_debt(db, txn.counterparty_account_id, amount, is_increase=True)
-
-    elif tx_type == TransactionType.INSTALLMENT_REPAYMENT.value:
-        if _is_credit_account(account_type):
-            update_account_debt(db, txn.account_id, amount, is_increase=False)
-            update_account_frozen(db, txn.account_id, amount, is_increase=True)
 
     elif tx_type == TransactionType.INSTALLMENT_PURCHASE.value:
         if _is_credit_account(account_type):

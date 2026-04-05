@@ -1081,7 +1081,6 @@ def _get_balance_effect_for_transaction(txn: Transaction, tracked_account_ids: s
             TransactionType.FEE.value,
             TransactionType.REPAYMENT_CREDIT_CARD.value,
             TransactionType.REPAYMENT_LOAN.value,
-            TransactionType.INSTALLMENT_REPAYMENT.value,
             TransactionType.DEBT_LEND.value,
             TransactionType.DEBT_PAY_BACK.value,
         }:

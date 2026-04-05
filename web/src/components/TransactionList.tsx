@@ -37,7 +37,6 @@ const NEUTRAL_TRANSACTION_TYPES = new Set([
   'transfer',
   'repayment_credit_card',
   'repayment_loan',
-  'installment_repayment',
 ])
 
 export default function TransactionList({ onItemClick, selectedMonth }: TransactionListProps) {

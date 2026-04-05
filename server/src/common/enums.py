@@ -33,7 +33,6 @@ class TransactionType(str, Enum):
     FEE = "fee"
     ADJUSTMENT = "adjustment"
     INSTALLMENT_PURCHASE = "installment_purchase"
-    INSTALLMENT_REPAYMENT = "installment_repayment"
     DEBT_BORROW = "debt_borrow"
     DEBT_LEND = "debt_lend"
     DEBT_RECEIVE_BACK = "debt_receive_back"
