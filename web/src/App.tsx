@@ -1495,6 +1495,10 @@ const AccountDetailPage = () => {
               <span style={{ color: 'var(--text-secondary)' }}>已用额度:</span>
               <span style={{ color: 'var(--accent-red)', fontWeight: 500 }}>¥{Number(account.debt_amount || 0).toFixed(2)}</span>
             </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ color: 'var(--text-secondary)' }}>被冻结额度:</span>
+              <span style={{ fontWeight: 500 }}>¥{Number(account.frozen_amount || 0).toFixed(2)}</span>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
               <span style={{ color: 'var(--text-secondary)' }}>可用额度:</span>
               <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.frozen_amount || 0)).toFixed(2)}</span>
