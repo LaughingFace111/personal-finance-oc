@@ -7,9 +7,8 @@ import {
   transactionFormLabelClass,
   transactionFormSectionClass,
   transactionFormTextareaClass,
-  transactionFormToggleClass,
 } from '../components/TransactionFormLayout';
-import { apiPost } from '../services/api';
+import { apiGet, apiPost } from '../services/api';
 import {
   AccountOption,
   CategoryOption,
@@ -29,6 +28,10 @@ const creditAccountTypes = ['credit_card', 'credit_line'];
 
 interface OtherTransactionPageProps {
   initialSubType?: SubType;
+}
+
+interface AccountDetailResponse {
+  current_statement_balance: number | string | null;
 }
 
 export default function OtherTransactionPage({
@@ -56,6 +59,7 @@ export default function OtherTransactionPage({
   const [reason, setReason] = useState('');
   const [creditCardAccountId, setCreditCardAccountId] = useState('');
   const [repayAmount, setRepayAmount] = useState('');
+  const [repayAmountLoading, setRepayAmountLoading] = useState(false);
 
   const [memo, setMemo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -89,6 +93,45 @@ export default function OtherTransactionPage({
     setCategoryId('');
     setCreditCardAccountId('');
   }, [subType]);
+
+  useEffect(() => {
+    if (subType !== 'repay') {
+      setRepayAmountLoading(false);
+      return;
+    }
+
+    if (!creditCardAccountId) {
+      setRepayAmount('');
+      setRepayAmountLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadRepaymentAmount = async () => {
+      setRepayAmountLoading(true);
+      try {
+        const account = await apiGet<AccountDetailResponse>(`/api/accounts/${creditCardAccountId}`);
+        if (!isCancelled) {
+          setRepayAmount(account.current_statement_balance == null ? '' : String(account.current_statement_balance));
+        }
+      } catch {
+        if (!isCancelled) {
+          setRepayAmount('');
+        }
+      } finally {
+        if (!isCancelled) {
+          setRepayAmountLoading(false);
+        }
+      }
+    };
+
+    loadRepaymentAmount();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [creditCardAccountId, subType]);
 
   const creditAccounts = useMemo(
     () => accounts.filter((account) => creditAccountTypes.includes(account.account_type)),
@@ -415,7 +458,7 @@ export default function OtherTransactionPage({
           min="0"
           value={repayAmount}
           onChange={(e) => setRepayAmount(e.target.value)}
-          placeholder="0.00"
+          placeholder={repayAmountLoading ? '加载账单金额中...' : '0.00'}
           className={transactionFormFieldClass}
           required
         />
@@ -428,39 +471,6 @@ export default function OtherTransactionPage({
       pageTitle="其他交易"
     >
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="rounded-2xl bg-slate-100 p-1">
-          <div className="grid grid-cols-4 gap-2">
-            <button
-              type="button"
-              onClick={() => setSubType('installment')}
-              className={transactionFormToggleClass(subType === 'installment')}
-            >
-              分期
-            </button>
-            <button
-              type="button"
-              onClick={() => setSubType('lend')}
-              className={transactionFormToggleClass(subType === 'lend')}
-            >
-              借出
-            </button>
-            <button
-              type="button"
-              onClick={() => setSubType('borrow')}
-              className={transactionFormToggleClass(subType === 'borrow')}
-            >
-              借入
-            </button>
-            <button
-              type="button"
-              onClick={() => setSubType('repay')}
-              className={transactionFormToggleClass(subType === 'repay')}
-            >
-              还款
-            </button>
-          </div>
-        </div>
-
         <div className={transactionFormSectionClass}>
           {subType === 'installment'
             ? renderInstallmentFields()
