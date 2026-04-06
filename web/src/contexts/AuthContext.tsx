@@ -1,9 +1,16 @@
 import { createContext, useContext } from 'react'
 
+interface AppUser {
+  id: string
+  email: string
+  default_book_id: string
+  nickname?: string
+}
+
 interface AuthContextType {
   token: string | null
-  user: any
-  login: (token: string, user: any) => void
+  user: AppUser | null
+  login: (token: string, user: AppUser) => void
   logout: () => void
   loading: boolean
 }

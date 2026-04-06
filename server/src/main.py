@@ -1,7 +1,9 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.core import settings, init_db
+from src.core import init_db
 from src.core.config import settings as app_settings
 
 from src.modules.auth import router as auth_router
@@ -28,11 +30,19 @@ from src.modules.import_templates import ImportTemplate  # noqa: F401
 from src.modules.recurring_rules import RecurringRule  # noqa: F401
 from src.modules.recurring_pending import PendingItem  # noqa: F401
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Initialize application resources on startup."""
+    init_db()
+    yield
+
+
 # Create FastAPI app
 app = FastAPI(
     title=app_settings.APP_NAME,
     version=app_settings.APP_VERSION,
     debug=app_settings.DEBUG,
+    lifespan=lifespan,
 )
 
 # CORS
@@ -43,13 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup_event():
-    """Initialize database on startup"""
-    init_db()
-
 
 # Include routers
 app.include_router(auth_router, prefix="/api")

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, time
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import alias, func, or_
+from sqlalchemy import Integer, alias, case, func, or_
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from src.common.enums import AccountType, TransactionType, TransactionStatus
@@ -791,40 +791,73 @@ def get_income_by_category(db: Session, book_id: str, date_from: date, date_to: 
 
 def get_monthly_comparison(db: Session, book_id: str, year: int) -> dict:
     """Get monthly income/expense comparison for a year"""
-    from calendar import monthrange
-
     result = []
     total_income = 0
     total_expense = 0
     total_net = 0
 
+    today = date.today()
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    query_end = min(today, year_end)
+    monthly_metrics: dict[int, dict[str, Decimal]] = {}
+
+    if year_start <= query_end:
+        month_expr = func.cast(func.strftime("%m", Transaction.occurred_at), Integer)
+        rows = db.query(
+            month_expr.label("month"),
+            func.coalesce(func.sum(case(
+                (
+                    (Transaction.transaction_type == TransactionType.INCOME.value)
+                    & (Transaction.include_in_income == True),
+                    Transaction.amount,
+                ),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("income"),
+            func.coalesce(func.sum(case(
+                (
+                    Transaction.transaction_type.in_([
+                        TransactionType.EXPENSE.value,
+                        TransactionType.FEE.value,
+                        TransactionType.INSTALLMENT_PURCHASE.value,
+                    ]) & (Transaction.include_in_expense == True),
+                    Transaction.amount,
+                ),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("gross_expense"),
+            func.coalesce(func.sum(case(
+                (
+                    (Transaction.transaction_type == TransactionType.REFUND.value)
+                    & (Transaction.related_transaction_id.isnot(None)),
+                    Transaction.amount,
+                ),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("refund_deduction"),
+        ).filter(
+            Transaction.book_id == book_id,
+            Transaction.status == "confirmed",
+            Transaction.occurred_at >= datetime.combine(year_start, time.min),
+            Transaction.occurred_at <= datetime.combine(query_end, time.max),
+        ).group_by(month_expr).all()
+
+        monthly_metrics = {
+            row.month: {
+                "income": row.income or Decimal("0"),
+                "expense": (row.gross_expense or Decimal("0")) - (row.refund_deduction or Decimal("0")),
+            }
+            for row in rows
+        }
+
     for month in range(1, 13):
-        # 确定该月的起止日期
-        month_start = date(year, month, 1)
-        _, last_day = monthrange(year, month)
-        month_end = date(year, month, last_day)
-
-        # 只统计到今天之前的月份
-        today = date.today()
-        if month_end > today:
-            if month_start > today:
-                # 整个月都在未来，跳过
-                result.append({
-                    "month": month,
-                    "month_str": f"{month}月",
-                    "income": 0,
-                    "expense": 0,
-                    "net": 0
-                })
-                continue
-            else:
-                # 部分在未来，使用今天作为结束日期
-                month_end = today
-
-        metrics = _get_period_metrics(db, book_id, month_start, month_end)
-        income_val = float(metrics["income"])
-        expense_val = float(metrics["expense"])
-        net_val = float(metrics["balance"])
+        if year > today.year or (year == today.year and date(year, month, 1) > today):
+            income_val = 0.0
+            expense_val = 0.0
+            net_val = 0.0
+        else:
+            metrics = monthly_metrics.get(month, {"income": Decimal("0"), "expense": Decimal("0")})
+            income_val = float(metrics["income"])
+            expense_val = float(metrics["expense"])
+            net_val = float(metrics["income"] - metrics["expense"])
 
         total_income += income_val
         total_expense += expense_val

@@ -1,6 +1,7 @@
+from decimal import Decimal
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -18,7 +19,7 @@ from .service import (
     get_transactions, get_transaction, update_transaction, delete_transaction,
     adjust_account_balance
 )
-from src.modules.books.service import get_default_book, create_book
+from src.modules.books.service import get_default_book
 from src.common.enums import TransactionType, TransactionDirection
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 class BalanceAdjustCreate(BaseModel):
     book_id: str
     account_id: str
-    target_value: float  # 目标值（余额或可用额度）
+    target_value: Decimal  # 目标值（余额或可用额度）
     adjust_mode: str = "balance"  # "balance" | "available_credit"
     note: str = ""  # 调整原因（必填）
     is_counted_in_reports: bool = False  # 是否计入收支报表
@@ -44,7 +45,7 @@ def get_current_book_id(
         return book_id
     default_book = get_default_book(db, current_user.id)
     if not default_book:
-        default_book = create_book(db, current_user.id, {"name": "默认账本"})
+        raise HTTPException(status_code=400, detail="未找到默认账本，请先初始化")
     return default_book.id
 
 
@@ -118,18 +119,19 @@ def adjust_balance(
     db: Session = Depends(get_db)
 ):
     """Adjust account balance or available credit (create adjustment transaction)"""
-    from decimal import Decimal
-    
     # 验证 adjust_mode
     if data.adjust_mode not in ["balance", "available_credit"]:
-        from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="adjust_mode must be 'balance' or 'available_credit'")
-    
+
+    current_book_id = get_current_book_id(current_user, db)
+    if current_book_id != data.book_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     return adjust_account_balance(
         db=db,
         book_id=data.book_id,
         account_id=data.account_id,
-        target_value=Decimal(str(data.target_value)),
+        target_value=data.target_value,
         adjust_mode=data.adjust_mode,
         note=data.note,
         is_counted_in_reports=data.is_counted_in_reports

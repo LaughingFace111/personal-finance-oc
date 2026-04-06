@@ -350,8 +350,8 @@ def create_transaction(
 
     db.commit()
     db.refresh(txn)
-    return txn
     clear_overview_cache()  # 🛡️ L
+    return txn
 
 
 
@@ -630,8 +630,8 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
 
     db.commit()
     db.refresh(refund_txn)
-    return refund_txn
     clear_overview_cache()  # 🛡️ L
+    return refund_txn
 
 
 
@@ -876,8 +876,8 @@ def update_transaction(db: Session, transaction_id: str, book_id: str, data: Tra
 
     db.commit()
     db.refresh(txn)
-    return txn
     clear_overview_cache()  # 🛡️ L
+    return txn
 
 
 
