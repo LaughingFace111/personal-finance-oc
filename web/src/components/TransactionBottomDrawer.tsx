@@ -90,7 +90,9 @@ export function TransactionBottomDrawer({
           const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
           setSelectedTagIds(matchedIds)
         }
-      } catch {}
+      } catch (error) {
+        console.error("Request failed:", error)
+      }
     }
   }, [transaction?.id, visible, tags])  // 依赖 transaction.id 而不是整个 transaction 对象
 
@@ -135,7 +137,9 @@ export function TransactionBottomDrawer({
           const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
           setSelectedTagIds(matchedIds)
         }
-      } catch {}
+      } catch (error) {
+        console.error("Request failed:", error)
+      }
     }
   }, [transaction, visible, tags])
 

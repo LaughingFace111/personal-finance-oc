@@ -1,10 +1,13 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
 import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton } from 'antd'
 import ReactECharts from 'echarts-for-react'
-const { Content } = Layout
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
 import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
+import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
+import { useTheme, getThemeVariables } from './hooks/useTheme'
+import { AuthContext, useAuth } from './contexts/AuthContext'
+import { useAppStore } from './stores/appStore'
 
 // 懒加载新页面组件
 const AddTransactionPage = lazy(() => import('./pages/AddTransactionPage'))
@@ -26,18 +29,15 @@ const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
 const SettingsPageView = lazy(() => import('./pages/SettingsPage'))
 const ImportsPageView = lazy(() => import('./pages/ImportsPage'))
 
+export { useAuth }
+
+const { Content } = Layout
+
 const LoadingFallback = () => (
   <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
     加载中...
   </div>
 )
-import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
-import { useTheme, getThemeVariables } from './hooks/useTheme'
-
-import { AuthContext, useAuth } from './contexts/AuthContext'
-import { useAppStore } from './stores/appStore'
-
-export { useAuth }
 
 const LoginPage = () => {
   const [username, setUsername] = useState('')
@@ -467,7 +467,9 @@ const DashboardPage = () => {
           daily: dailyData || {}
         })
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
       .finally(() => setLoading(false))
   }, [bookId, year, month])
 
@@ -726,7 +728,9 @@ const DateDetailPage = () => {
     if (!bookId) return
     apiGet(`/api/categories?book_id=${bookId}`)
       .then((data: any) => setCategories(data || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
   }, [bookId])
 
   // 加载标签数据
@@ -734,7 +738,9 @@ const DateDetailPage = () => {
     if (!bookId) return
     apiGet(`/api/tags?book_id=${bookId}`)
       .then((data: any) => setTags(data || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
   }, [bookId])
 
   // 获取标签名称
@@ -779,7 +785,9 @@ const DateDetailPage = () => {
         })
         setSummary({ income, expense })
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
       .finally(() => setLoading(false))
   }, [bookId, date])
 
@@ -937,7 +945,9 @@ const TransactionsPage = () => {
           setSelectedMonth(new Date().getMonth() + 1)
         }
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
   }, [bookId])
 
   // 加载分类、账户和标签（供 Drawer 使用）
@@ -955,7 +965,9 @@ const TransactionsPage = () => {
       setCategories(c || [])
       setAccounts(a || [])
       setTags(t || [])
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error("Request failed:", error)
+    })
   }, [bookId])
 
   // 抽屉状态
@@ -1034,6 +1046,7 @@ const TransactionsPage = () => {
 
 const TransactionFormPage = () => {
   const { user } = useAuth()
+  const { id: transactionId } = useParams()
   const [accounts, setAccounts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [tags, setTags] = useState<any[]>([])
@@ -1045,11 +1058,7 @@ const TransactionFormPage = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const bookId = user?.default_book_id
-  
-  const transactionId = location.pathname.includes('/transactions/') && !location.pathname.endsWith('/new') 
-    ? location.pathname.split('/transactions/')[1] 
-    : null
-  const isEditMode = !!transactionId
+  const isEditMode = Boolean(transactionId)
 
   const [loadedTx, setLoadedTx] = useState<any>(null)
   
@@ -1063,7 +1072,9 @@ const TransactionFormPage = () => {
       setAccounts(acc || []); 
       setCategories(cat || []); 
       setTags(t || [])
-    }).catch(() => {})
+    }).catch((error) => {
+      console.error("Request failed:", error)
+    })
   }, [bookId])
 
   useEffect(() => {
@@ -1096,7 +1107,9 @@ const TransactionFormPage = () => {
           const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
           setSelectedTagIds(matchedIds)
         }
-      } catch {}
+      } catch (error) {
+        console.error("Request failed:", error)
+      }
     }
   }, [loadedTx, tags])
 
@@ -1147,7 +1160,9 @@ const TransactionFormPage = () => {
         message.success('记录成功')
       }
       navigate('/transactions')
-    } catch {} 
+    } catch (error) {
+      console.error("Request failed:", error)
+    }
     finally { setLoading(false) }
   }
 
@@ -1306,7 +1321,7 @@ const TransactionFormPage = () => {
 }
 
 const AccountsPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -1329,7 +1344,7 @@ const AccountsPage = () => {
     return null
   }
 
-  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(res => setData(res || [])).catch((error) => { console.error("Request failed:", error) }).finally(() => setLoading(false)) }, [bookId])
 
   return (
     <div>
@@ -1373,11 +1388,10 @@ const AccountsPage = () => {
 
 // 账户详情页
 const AccountDetailPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
+  const { id: accountId } = useParams()
   const navigate = useNavigate()
-  const location = useLocation()
   const bookId = user?.default_book_id
-  const accountId = location.pathname.split('/accounts/')[1]
   
   const [account, setAccount] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
@@ -1408,12 +1422,20 @@ const AccountDetailPage = () => {
   // 🛡️ L: 加载余额趋势数据
   useEffect(() => {
     if (!accountId) return
-    
-    apiGet(`/api/accounts/${accountId}/balance-trend?start_date=2026-01-01&end_date=2026-03-31`)
+
+    const endDate = formatLocalDate(new Date())
+    const startDateValue = new Date()
+    startDateValue.setDate(startDateValue.getDate() - 90)
+    const startDate = formatLocalDate(startDateValue)
+
+    apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${startDate}&end_date=${endDate}`)
       .then((data: any) => {
         setBalanceTrendData(data || [])
       })
-      .catch(() => setBalanceTrendData([]))
+      .catch((error) => {
+        console.error("Request failed:", error)
+        setBalanceTrendData([])
+      })
   }, [accountId])
 
   useEffect(() => {
@@ -1427,7 +1449,9 @@ const AccountDetailPage = () => {
     
     apiGet(`/api/transactions?book_id=${bookId}&account_id=${accountId}&date_from=${dateFrom}&date_to=${dateTo}&page=1&page_size=50`)
       .then(res => setTransactions(res.items || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
       .finally(() => setLoading(false))
   }, [bookId, accountId, month])
 
@@ -1456,6 +1480,7 @@ const AccountDetailPage = () => {
       targetValue = currentValue + (values.adjustDirection === 'increase' ? values.amount : -values.amount)
     }
     
+    setAdjustSubmitting(true)
     try {
       await apiPost('/api/transactions/adjust', {
         book_id: bookId,
@@ -1471,7 +1496,11 @@ const AccountDetailPage = () => {
       // 重新加载账户信息
       const updated = await apiGet(`/api/accounts/${accountId}`)
       setAccount(updated)
-    } catch { message.error('调整失败') }
+    } catch {
+      message.error('调整失败')
+    } finally {
+      setAdjustSubmitting(false)
+    }
   }
 
   if (!account) return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
@@ -1504,7 +1533,10 @@ const AccountDetailPage = () => {
                   await apiDelete(`/api/accounts/${accountId}`)
                   message.success('账户已删除')
                   navigate('/accounts')
-                } catch { message.error('删除失败') }
+                } catch (error) {
+                  console.error("Request failed:", error)
+                  message.error('删除失败')
+                }
               }}
               okText="确认删除"
               cancelText="取消"
@@ -1803,10 +1835,9 @@ const AccountDetailPage = () => {
 // 账户编辑页
 const AccountEditPage = () => {
   const { user, token } = useAuth()
+  const { id: accountId } = useParams()
   const navigate = useNavigate()
-  const location = useLocation()
   const bookId = user?.default_book_id
-  const accountId = location.pathname.split('/accounts/')[1]?.replace('/edit', '')
   
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
@@ -1886,7 +1917,10 @@ const AccountEditPage = () => {
       })
       message.success('更新成功')
       navigate(`/accounts/${accountId}`)
-    } catch { message.error('更新失败') }
+    } catch (error) {
+      console.error("Request failed:", error)
+      message.error('更新失败')
+    }
     finally { setLoading(false) }
   }
 
@@ -1938,7 +1972,7 @@ const AccountEditPage = () => {
 }
 
 const CategoriesPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
@@ -1953,7 +1987,7 @@ const CategoriesPage = () => {
     }))
   }
 
-  useEffect(() => { if (!bookId) return; apiGet(`/api/categories?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/categories?book_id=${bookId}`).then(res => setData(res || [])).catch((error) => { console.error("Request failed:", error) }).finally(() => setLoading(false)) }, [bookId])
 
   const categoryTree = buildTree(data)
 
@@ -2010,11 +2044,10 @@ const CategoriesPage = () => {
 
 // 类别编辑页
 const CategoryEditPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
+  const { id: categoryId } = useParams()
   const navigate = useNavigate()
-  const location = useLocation()
   const bookId = user?.default_book_id
-  const categoryId = location.pathname.split('/categories/')[1]
   
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
@@ -2027,7 +2060,9 @@ const CategoryEditPage = () => {
     // 加载所有分类（用于选择父类）
     apiGet(`/api/categories?book_id=${bookId}`)
       .then(res => setCategories(res || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
     
     // 加载当前分类
     apiGet(`/api/categories/${categoryId}`)
@@ -2052,7 +2087,10 @@ const CategoryEditPage = () => {
       await apiPatch(`/api/categories/${categoryId}`, values)
       message.success('更新成功')
       navigate('/categories')
-    } catch { message.error('更新失败') }
+    } catch (error) {
+      console.error("Request failed:", error)
+      message.error('更新失败')
+    }
     finally { setLoading(false) }
   }
 
@@ -2092,14 +2130,14 @@ const CategoryEditPage = () => {
 }
 
 const LoansPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
   const navigate = useNavigate()
 
   
-  useEffect(() => { if (!bookId) return; apiGet(`/api/loans?book_id=${bookId}`).then(res => setData(res || [])).catch(() => {}).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/loans?book_id=${bookId}`).then(res => setData(res || [])).catch((error) => { console.error("Request failed:", error) }).finally(() => setLoading(false)) }, [bookId])
 
   return (
     <div>
@@ -2158,7 +2196,7 @@ const ReportsPage = () => {
 }
 
 const TransferPage = () => {
-  const { user, token } = useAuth()
+  const { user } = useAuth()
   const [accounts, setAccounts] = useState<any[]>([])
   const [form, setForm] = useState({ from_account_id: '', to_account_id: '', amount: '', note: '' })
   const [loading, setLoading] = useState(false)
@@ -2166,7 +2204,7 @@ const TransferPage = () => {
   const bookId = user?.default_book_id
 
   
-  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(setAccounts).catch(() => {}) }, [bookId])
+  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(setAccounts).catch((error) => { console.error("Request failed:", error) }) }, [bookId])
 
   const handleSubmit = async () => {
     if (!form.amount || !form.from_account_id || !form.to_account_id) { message.error('请填写必要信息'); return }
@@ -2177,7 +2215,9 @@ const TransferPage = () => {
       await apiPost('/api/transactions/transfer', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId })
       message.success('转账成功')
       navigate('/transactions')
-    } catch { /* error already handled by apiPost */ }
+    } catch (error) {
+      console.error("Request failed:", error)
+    }
     finally { setLoading(false) }
   }
 
@@ -2360,7 +2400,9 @@ const CategoryFormPage = () => {
     if (!bookId) return
     apiGet(`/api/categories?book_id=${bookId}`)
       .then(res => setCategories(res || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
   }, [bookId])
 
   // 只显示一级分类作为父类选项
@@ -2429,7 +2471,9 @@ const TagsPage = () => {
         // 默认全部展开
         setExpandedGroups(new Set(tree.map((g: any) => g.id)))
       })
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
       .finally(() => setLoading(false))
   }
 
@@ -2618,7 +2662,9 @@ const TagFormPage = () => {
     if (!bookId) return
     apiGet(`/api/tags/first-level?book_id=${bookId}`)
       .then(res => setParentTags(res || []))
-      .catch(() => {})
+      .catch((error) => {
+        console.error("Request failed:", error)
+      })
   }, [bookId])
 
   // 当选择父标签时，显示其颜色

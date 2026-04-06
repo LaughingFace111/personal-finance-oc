@@ -183,10 +183,28 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
 
     # === TRANSFER ===
     elif tx_type == TransactionType.TRANSFER.value:
-        if _is_asset_account(account_type):
-            update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
-        if counterparty and _is_asset_account(counterparty.account_type):
-            update_account_balance(db, txn.counterparty_account_id, txn.amount, is_increase=True)
+        is_split_transfer = bool(txn.related_transaction_id)
+
+        if is_split_transfer:
+            if direction == TransactionDirection.OUT.value:
+                if _is_asset_account(account_type):
+                    update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
+                elif _is_credit_account(account_type):
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
+                elif _is_loan_account(account_type):
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
+            elif direction == TransactionDirection.IN.value:
+                if _is_asset_account(account_type):
+                    update_account_balance(db, txn.account_id, txn.amount, is_increase=True)
+                elif _is_credit_account(account_type):
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+                elif _is_loan_account(account_type):
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+        else:
+            if _is_asset_account(account_type):
+                update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
+            if counterparty and _is_asset_account(counterparty.account_type):
+                update_account_balance(db, txn.counterparty_account_id, txn.amount, is_increase=True)
 
     # === REPAYMENT_CREDIT_CARD ===
     elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
@@ -365,9 +383,12 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         if not _is_asset_account(fee_account.account_type):
             raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Fee account must be an asset account")
 
-    # Create single transfer transaction (record the outflow)
-    txn = Transaction(
-        id=generate_uuid(),
+    transfer_merchant = _build_transfer_merchant(from_account, to_account)
+    transfer_out_id = generate_uuid()
+    transfer_in_id = generate_uuid()
+
+    transfer_out_txn = Transaction(
+        id=transfer_out_id,
         book_id=book_id,
         occurred_at=occurred_at,
         transaction_type=TransactionType.TRANSFER.value,
@@ -376,7 +397,29 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         currency=data.currency,
         account_id=data.from_account_id,
         counterparty_account_id=data.to_account_id,
-        merchant=_build_transfer_merchant(from_account, to_account),
+        related_transaction_id=transfer_in_id,
+        merchant=transfer_merchant,
+        note=data.note,
+        tags=data.tags,
+        source_type=SourceType.MANUAL.value,
+        include_in_expense=False,
+        include_in_income=False,
+        include_in_cashflow=False,
+        status=TransactionStatus.CONFIRMED.value,
+    )
+
+    transfer_in_txn = Transaction(
+        id=transfer_in_id,
+        book_id=book_id,
+        occurred_at=occurred_at,
+        transaction_type=TransactionType.TRANSFER.value,
+        direction=TransactionDirection.IN.value,
+        amount=data.amount,
+        currency=data.currency,
+        account_id=data.to_account_id,
+        counterparty_account_id=data.from_account_id,
+        related_transaction_id=transfer_out_id,
+        merchant=transfer_merchant,
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
@@ -406,8 +449,9 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     elif _is_loan_account(to_type):
         update_account_debt(db, data.to_account_id, data.amount, is_increase=True)
 
-    db.add(txn)
-    created_transaction_ids.append(txn.id)
+    db.add(transfer_out_txn)
+    db.add(transfer_in_txn)
+    created_transaction_ids.extend([transfer_out_txn.id, transfer_in_txn.id])
 
     if fee_amount > 0 and fee_account is not None:
         # 查找"手续费/利息"分类
@@ -714,24 +758,40 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             update_account_balance(db, txn.account_id, amount, is_increase=True)
 
     elif tx_type == TransactionType.TRANSFER.value:
-        # Transfer reversal: reverse both accounts (opposite of apply)
-        # From account: was decreased, now increase
-        if _is_asset_account(account_type):
-            update_account_balance(db, txn.account_id, amount, is_increase=True)
-        elif _is_credit_account(account_type):
-            update_account_debt(db, txn.account_id, amount, is_increase=True)
-        elif _is_loan_account(account_type):
-            update_account_debt(db, txn.account_id, amount, is_increase=True)
+        is_split_transfer = bool(txn.related_transaction_id)
 
-        # To account: was increased, now decrease
-        if txn.counterparty_account_id and counterparty:
-            to_type = counterparty.account_type
-            if _is_asset_account(to_type):
-                update_account_balance(db, txn.counterparty_account_id, amount, is_increase=False)
-            elif _is_credit_account(to_type):
-                update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
-            elif _is_loan_account(to_type):
-                update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
+        if is_split_transfer:
+            if direction == TransactionDirection.OUT.value:
+                if _is_asset_account(account_type):
+                    update_account_balance(db, txn.account_id, amount, is_increase=True)
+                elif _is_credit_account(account_type):
+                    update_account_debt(db, txn.account_id, amount, is_increase=True)
+                elif _is_loan_account(account_type):
+                    update_account_debt(db, txn.account_id, amount, is_increase=True)
+            elif direction == TransactionDirection.IN.value:
+                if _is_asset_account(account_type):
+                    update_account_balance(db, txn.account_id, amount, is_increase=False)
+                elif _is_credit_account(account_type):
+                    update_account_debt(db, txn.account_id, amount, is_increase=False)
+                elif _is_loan_account(account_type):
+                    update_account_debt(db, txn.account_id, amount, is_increase=False)
+        else:
+            # Legacy single-entry transfer reversal: reverse both accounts
+            if _is_asset_account(account_type):
+                update_account_balance(db, txn.account_id, amount, is_increase=True)
+            elif _is_credit_account(account_type):
+                update_account_debt(db, txn.account_id, amount, is_increase=True)
+            elif _is_loan_account(account_type):
+                update_account_debt(db, txn.account_id, amount, is_increase=True)
+
+            if txn.counterparty_account_id and counterparty:
+                to_type = counterparty.account_type
+                if _is_asset_account(to_type):
+                    update_account_balance(db, txn.counterparty_account_id, amount, is_increase=False)
+                elif _is_credit_account(to_type):
+                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
+                elif _is_loan_account(to_type):
+                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
 
     elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
         if _is_asset_account(account_type):

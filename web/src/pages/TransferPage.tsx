@@ -1,44 +1,39 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
   TransactionFormLayout,
   transactionFormFieldClass,
   transactionFormLabelClass,
   transactionFormSectionClass,
+  transactionFormPrimaryButtonClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';
 import { apiPost } from '../services/api';
 import {
   AccountOption,
-  TagOption,
   getDefaultBookId,
   getAccountOptionLabel,
   loadTransferFormData,
   toOccurredAt,
-  toTagOptions,
 } from './transactionFormSupport';
 
-function getCurrentDateTimeLocal() {
+function getCurrentDateValue() {
   const now = new Date();
   const offset = now.getTimezoneOffset();
   const local = new Date(now.getTime() - offset * 60 * 1000);
-  return local.toISOString().slice(0, 16);
+  return local.toISOString().slice(0, 10);
 }
 
 export default function TransferPage() {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [tags, setTags] = useState<TagOption[]>([]);
-  
   const [fromAccountId, setFromAccountId] = useState<string>('');
   const [toAccountId, setToAccountId] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [feeAmount, setFeeAmount] = useState('0');
   const [feeAccountId, setFeeAccountId] = useState<string>('');
   const [memo, setMemo] = useState('');
-  const [date, setDate] = useState(getCurrentDateTimeLocal);
-  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [occurredAt, setOccurredAt] = useState(getCurrentDateValue);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -57,7 +52,6 @@ export default function TransferPage() {
 
         const formData = await loadTransferFormData(bookId);
         setAccounts(formData.accounts);
-        setTags(formData.tags);
       } catch (err) {
         setError((err as Error).message || '加载数据失败');
       }
@@ -65,11 +59,23 @@ export default function TransferPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    if (fromAccountId && (!feeAccountId || feeAccountId === '')) {
+      setFeeAccountId(fromAccountId);
+    }
+  }, [fromAccountId, feeAccountId]);
+
+  useEffect(() => {
+    if (shouldShowFeeAccount && fromAccountId && !feeAccountId) {
+      setFeeAccountId(fromAccountId);
+    }
+  }, [shouldShowFeeAccount, fromAccountId, feeAccountId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
-    if (!fromAccountId || !toAccountId || !amount) {
+    if (!fromAccountId || !toAccountId || !amount || !occurredAt) {
       setError('请填写必填字段');
       return;
     }
@@ -99,9 +105,9 @@ export default function TransferPage() {
         fee_amount: normalizedFeeValue,
         fee_account_id: shouldShowFeeAccount ? feeAccountId : null,
         note: memo,
-        occurred_at: toOccurredAt(date),
+        occurred_at: toOccurredAt(occurredAt),
         book_id: bookId,
-        tags: tagIds.length > 0 ? JSON.stringify(tagIds) : null
+        tags: null,
       };
 
       const response = await apiPost('/api/transactions/transfer', payload);
@@ -125,38 +131,40 @@ export default function TransferPage() {
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className={transactionFormSectionClass}>
-          <div>
-            <label className={transactionFormLabelClass}>转出账户 *</label>
-            <select
-              value={fromAccountId}
-              onChange={e => setFromAccountId(e.target.value)}
-              className={transactionFormFieldClass}
-              required
-            >
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={transactionFormLabelClass}>转出账户 *</label>
+              <select
+                value={fromAccountId}
+                onChange={e => setFromAccountId(e.target.value)}
+                className={transactionFormFieldClass}
+                required
+              >
                 <option value="">选择转出账户</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id}>
-                  {getAccountOptionLabel(account)}
-                </option>
-              ))}
-            </select>
-          </div>
+                {accounts.map(account => (
+                  <option key={account.id} value={account.id}>
+                    {getAccountOptionLabel(account)}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <label className={transactionFormLabelClass}>转入账户 *</label>
-            <select
-              value={toAccountId}
-              onChange={e => setToAccountId(e.target.value)}
-              className={transactionFormFieldClass}
-              required
-            >
+            <div>
+              <label className={transactionFormLabelClass}>转入账户 *</label>
+              <select
+                value={toAccountId}
+                onChange={e => setToAccountId(e.target.value)}
+                className={transactionFormFieldClass}
+                required
+              >
                 <option value="">选择转入账户</option>
-              {accounts.map(account => (
-                <option key={account.id} value={account.id}>
-                  {getAccountOptionLabel(account)}
-                </option>
-              ))}
-            </select>
+                {accounts.map(account => (
+                  <option key={account.id} value={account.id}>
+                    {getAccountOptionLabel(account)}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div>
@@ -174,17 +182,18 @@ export default function TransferPage() {
           </div>
 
           <div>
-            <label className={transactionFormLabelClass}>日期</label>
+            <label className={transactionFormLabelClass}>日期 *</label>
             <input
-              type="datetime-local"
-              value={date}
-              onChange={e => setDate(e.target.value)}
+              type="date"
+              value={occurredAt}
+              onChange={e => setOccurredAt(e.target.value)}
               className={transactionFormFieldClass}
+              required
             />
           </div>
 
           <div>
-            <label className={transactionFormLabelClass}>手续费</label>
+            <label className={transactionFormLabelClass}>手续费（选填）</label>
             <input
               type="number"
               step="0.01"
@@ -225,15 +234,6 @@ export default function TransferPage() {
               className={transactionFormTextareaClass}
             />
           </div>
-
-          <div>
-            <label className={transactionFormLabelClass}>标签</label>
-            <TagMultiSelect
-              allTags={toTagOptions(tags)}
-              value={tagIds}
-              onChange={setTagIds}
-            />
-          </div>
         </div>
 
         {error && (
@@ -242,18 +242,11 @@ export default function TransferPage() {
           </div>
         )}
 
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            取消
-          </button>
+        <div>
           <button
             type="submit"
             disabled={loading}
-            className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+            className={transactionFormPrimaryButtonClass}
           >
             {loading ? '保存中...' : '确认转账'}
           </button>

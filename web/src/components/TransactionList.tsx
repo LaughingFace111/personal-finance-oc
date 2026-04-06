@@ -199,7 +199,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     }
   }
 
-  const getTagList = (item: TransactionItem) => {
+  const getTagList = (item: TransactionItem): TagDisplayItem[] => {
     if (!item.tags) return []
 
     let parsedTags: unknown = item.tags
@@ -236,7 +236,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
         return null
       })
-      .filter(Boolean)
+      .filter((tag): tag is TagDisplayItem => Boolean(tag))
   }
 
   const isLightColor = (color?: string) => {
@@ -258,6 +258,13 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
     const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b)
     return luminance >= 186
   }
+
+  const getTagStyle = (color?: string) => ({
+    background: color || 'var(--bg-elevated)',
+    color: color
+      ? (isLightColor(color) ? 'var(--text-primary)' : '#ffffff')
+      : 'var(--text-secondary)'
+  })
 
   const getFlowAccountLabel = (item: TransactionItem) => {
     const fromName = item.account_id ? accountMap.get(item.account_id)?.name : undefined
@@ -423,32 +430,27 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
                               }}
                             >
                               <div style={{ display: 'inline-flex', gap: 6 }}>
-                                {tags.map((tag, tagIndex) => (
-                                  (() => {
-                                    const background = tag.color || 'var(--bg-elevated)'
-                                    const color = tag.color
-                                      ? (isLightColor(tag.color) ? 'var(--text-primary)' : '#ffffff')
-                                      : 'var(--text-secondary)'
+                                {tags.map((tag, tagIndex) => {
+                                  const tagStyle = getTagStyle(tag.color)
 
-                                    return (
-                                      <span
-                                        key={`${item.id}-tag-${tagIndex}`}
-                                        style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          padding: '2px 8px',
-                                          borderRadius: 8,
-                                          fontSize: 11,
-                                          lineHeight: '16px',
-                                          color,
-                                          background
-                                        }}
-                                      >
-                                        {tag.name}
-                                      </span>
-                                    )
-                                  })()
-                                ))}
+                                  return (
+                                    <span
+                                      key={`${item.id}-tag-${tagIndex}`}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        padding: '2px 8px',
+                                        borderRadius: 8,
+                                        fontSize: 11,
+                                        lineHeight: '16px',
+                                        color: tagStyle.color,
+                                        background: tagStyle.background
+                                      }}
+                                    >
+                                      {tag.name}
+                                    </span>
+                                  )
+                                })}
                               </div>
                             </div>
                           )}
