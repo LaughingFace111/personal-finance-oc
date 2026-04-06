@@ -21,3 +21,8 @@ server/data/*.db
 
 # Logs
 *.log
+
+# Docs (exclude README.md)
+docs/
+*.md
+!README.md
