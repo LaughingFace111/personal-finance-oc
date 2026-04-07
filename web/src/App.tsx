@@ -192,7 +192,13 @@ const NEUTRAL_TRANSACTION_TYPES = new Set([
 const isNeutralTransactionType = (transactionType?: string) =>
   Boolean(transactionType && NEUTRAL_TRANSACTION_TYPES.has(transactionType))
 
-const getTransactionAmountMeta = (transaction: { direction?: string; transaction_type?: string }) => {
+const getTransactionAmountMeta = (transaction: { direction?: string; transaction_type?: string; source_type?: string }) => {
+  if (transaction.source_type === 'system') {
+    return {
+      prefix: transaction.direction === 'in' ? '+' : '-',
+      color: '#999',
+    }
+  }
   if (isNeutralTransactionType(transaction.transaction_type)) {
     return { prefix: '', color: 'var(--text-secondary)' }
   }

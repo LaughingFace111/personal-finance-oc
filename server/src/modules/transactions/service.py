@@ -672,12 +672,6 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
     if not filters.get("include_hidden"):
         query = query.filter(Transaction.is_hidden == False)
 
-    # 🛡️ L: SYSTEM 交易过滤 — 余额调整等系统交易默认不显示在普通流水列表中
-    # 余额调整的收支开关由 include_in_income/include_in_expense 控制
-    # source_type=system 本身不影响报表计算，但会影响流水列表纯净性
-    if not filters.get("include_system"):
-        query = query.filter(Transaction.source_type != SourceType.SYSTEM.value)
-
     # Get total count - 使用窗口函数优化
     total = query.count()
 
