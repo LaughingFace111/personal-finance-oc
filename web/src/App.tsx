@@ -1722,15 +1722,15 @@ const AccountDetailPage = () => {
             <Input.TextArea rows={2} placeholder="请输入调整原因（如：修正历史遗留误差、补录遗漏交易）" />
           </Form.Item>
           
-          <Form.Item name="countInReports" valuePropName="checked">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Form.Item name="countInReports" valuePropName="checked" noStyle>
               <Switch size="small" />
-              <span>此笔调整计入收支报表</span>
-              <Tooltip title="默认关闭。大多数平账是为了修正历史遗留误差，不代表当月真实消费。">
-                <span style={{ color: '#999', cursor: 'help' }}>❓</span>
-              </Tooltip>
-            </div>
-          </Form.Item>
+            </Form.Item>
+            <span>此笔调整计入收支报表</span>
+            <Tooltip title="默认关闭。大多数平账是为了修正历史遗留误差，不代表当月真实消费。">
+              <span style={{ color: '#999', cursor: 'help' }}>❓</span>
+            </Tooltip>
+          </div>
           
           <Button type="primary" htmlType="submit" block loading={adjustSubmitting}>确认调整</Button>
         </Form>
@@ -1929,7 +1929,7 @@ const AccountEditPage = () => {
   return (
     <Card title="编辑账户">
       <Form form={form} layout="vertical" onFinish={onFinish}>
-        <Form.Item name="name" label="账户名称" rules={[{ required: true }]}><Input /></Form.Item>
+        <Form.Item name="name" label="账户名称" rules={[{ required: true, message: '请输入账户名称' }, { whitespace: true, message: '账户名称不能为纯空格' }, { validator: (_, value) => value && value.trim().length > 0 ? Promise.resolve() : Promise.reject('账户名称不能为空') }]}><Input /></Form.Item>
         <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
           <Select disabled>
             <Select.Option value="cash">现金</Select.Option>
@@ -1940,21 +1940,25 @@ const AccountEditPage = () => {
             <Select.Option value="loan">贷款</Select.Option>
           </Select>
         </Form.Item>
-        <Form.Item name="billing_day" label="账单日（每月）">
-          <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
-        </Form.Item>
-        <Form.Item name="billing_day_rule" label="账单日当天交易记入">
-          <Radio.Group defaultValue="current_cycle">
-            <Radio value="current_cycle">本期账单</Radio>
-            <Radio value="next_cycle">下期账单</Radio>
-          </Radio.Group>
-        </Form.Item>
-        <Form.Item name="repayment_day" label="还款日（每月）">
-          <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
-        </Form.Item>
-        <Form.Item name="credit_limit" label="信用额度">
-          <InputNumber style={{ width: '100%' }} precision={2} min={0} placeholder="如: 10000" />
-        </Form.Item>
+        {isCreditAccount && (
+          <>
+            <Form.Item name="billing_day" label="账单日（每月）">
+              <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="billing_day_rule" label="账单日当天交易记入">
+              <Radio.Group defaultValue="current_cycle">
+                <Radio value="current_cycle">本期账单</Radio>
+                <Radio value="next_cycle">下期账单</Radio>
+              </Radio.Group>
+            </Form.Item>
+            <Form.Item name="repayment_day" label="还款日（每月）">
+              <InputNumber style={{ width: '100%' }} min={1} max={31} placeholder="1-31" />
+            </Form.Item>
+            <Form.Item name="credit_limit" label="信用额度">
+              <InputNumber style={{ width: '100%' }} precision={2} min={0} placeholder="如: 10000" />
+            </Form.Item>
+          </>
+        )}
         <Form.Item name="card_last_four" label="卡号后四位">
           <Input maxLength={4} placeholder="如: 1234" />
         </Form.Item>
@@ -2303,7 +2307,7 @@ const AccountFormPage = () => {
   return (
     <Card title="新建账户">
       <Form form={form} layout="vertical" onFinish={onFinish} initialValues={{ account_type: 'cash', opening_balance: 0 }}>
-        <Form.Item name="name" label="账户名称" rules={[{ required: true, message: '请输入账户名称' }]}><Input /></Form.Item>
+        <Form.Item name="name" label="账户名称" rules={[{ required: true, message: '请输入账户名称' }, { whitespace: true, message: '账户名称不能为纯空格' }, { validator: (_, value) => value && value.trim().length > 0 ? Promise.resolve() : Promise.reject('账户名称不能为空') }]}><Input /></Form.Item>
         <Form.Item name="account_type" label="账户类型" rules={[{ required: true }]}>
           <Select 
             value={accountType}

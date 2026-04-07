@@ -56,7 +56,19 @@ export async function apiJson<T = any>(url: string, options: FetchOptions = {}):
     let errorMsg = '请求失败';
     try {
       const errorData = await response.json();
-      errorMsg = errorData.detail || errorData.message || errorMsg;
+      // 🛡️ L: 正确解析 FastAPI 错误响应，支持字符串、数组、对象
+      const detail = errorData.detail;
+      if (typeof detail === 'string') {
+        errorMsg = detail;
+      } else if (Array.isArray(detail)) {
+        // 处理 Pydantic 验证错误数组: [{"loc": [...], "msg": "...", "type": "..."}]
+        errorMsg = detail.map((d: any) => d.msg || JSON.stringify(d)).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        // 处理对象形式的错误: {"message": "..."} 或 {"error": "..."}
+        errorMsg = detail.message || detail.error || detail.msg || JSON.stringify(detail);
+      } else {
+        errorMsg = errorData.message || errorData.error || errorMsg;
+      }
       // 将详细信息保存在 response 属性中便于调试
       (window as any).__lastError = errorData;
     } catch {
@@ -129,7 +141,16 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
     let errorMsg = '上传失败';
     try {
       const errorData = await response.json();
-      errorMsg = errorData.detail || errorData.message || errorMsg;
+      const detail = errorData.detail;
+      if (typeof detail === 'string') {
+        errorMsg = detail;
+      } else if (Array.isArray(detail)) {
+        errorMsg = detail.map((d: any) => d.msg || JSON.stringify(d)).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        errorMsg = detail.message || detail.error || detail.msg || JSON.stringify(detail);
+      } else {
+        errorMsg = errorData.message || errorData.error || errorMsg;
+      }
     } catch {
       errorMsg = `上传失败 (${response.status})`;
     }

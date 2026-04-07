@@ -85,39 +85,39 @@ def _calculate_include_flags(transaction_type: TransactionType, account_type: st
     tx_type = transaction_type.value if hasattr(transaction_type, 'value') else transaction_type
 
     # Transfer - no expense/income, no cashflow (internal)
-    if tx_type == TransactionType.TRANSFER:
+    if tx_type == TransactionType.TRANSFER.value:
         include_expense = False
         include_income = False
         include_cashflow = False
 
     # Repayment types - no expense/income
-    elif tx_type in [TransactionType.REPAYMENT_CREDIT_CARD, TransactionType.REPAYMENT_LOAN]:
+    elif tx_type in [TransactionType.REPAYMENT_CREDIT_CARD.value, TransactionType.REPAYMENT_LOAN.value]:
         include_expense = False
         include_income = False
         include_cashflow = False
 
     # Refund - handled separately based on refund account
-    elif tx_type == TransactionType.REFUND:
+    elif tx_type == TransactionType.REFUND.value:
         include_expense = False
         include_income = False
         # cashflow determined by refund account
 
     # Debt types - no expense/income
-    elif tx_type in [TransactionType.DEBT_BORROW, TransactionType.DEBT_LEND,
-                     TransactionType.DEBT_RECEIVE_BACK, TransactionType.DEBT_PAY_BACK]:
+    elif tx_type in [TransactionType.DEBT_BORROW.value, TransactionType.DEBT_LEND.value,
+                     TransactionType.DEBT_RECEIVE_BACK.value, TransactionType.DEBT_PAY_BACK.value]:
         include_expense = False
         include_income = False
 
     # Income - not expense
-    elif tx_type == TransactionType.INCOME:
+    elif tx_type == TransactionType.INCOME.value:
         include_expense = False
 
     # Expense - not income
-    elif tx_type == TransactionType.EXPENSE:
+    elif tx_type == TransactionType.EXPENSE.value:
         include_income = False
 
     # fee - not income
-    elif tx_type == TransactionType.FEE:
+    elif tx_type == TransactionType.FEE.value:
         include_income = False
 
     return include_expense, include_income, include_cashflow
@@ -196,10 +196,10 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
             elif direction == TransactionDirection.IN.value:
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, txn.amount, is_increase=True)
-                elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
-                elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+                elif _is_credit_account(account_type) or _is_loan_account(account_type):
+                    # Credit/loan account receiving funds (for example repayment)
+                    # reduces outstanding debt instead of increasing it.
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
         else:
             if _is_asset_account(account_type):
                 update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
@@ -771,10 +771,8 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             elif direction == TransactionDirection.IN.value:
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, amount, is_increase=False)
-                elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=False)
-                elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=False)
+                elif _is_credit_account(account_type) or _is_loan_account(account_type):
+                    update_account_debt(db, txn.account_id, amount, is_increase=True)
         else:
             # Legacy single-entry transfer reversal: reverse both accounts
             if _is_asset_account(account_type):
@@ -1074,10 +1072,10 @@ def adjust_account_balance(
         business_key=f"adjust:{account_id}:{datetime.utcnow().isoformat()}",
     )
 
-    # 🛡️ L: 收支统计开关 — 平账交易的收入/支出属性由 transaction_type 决定，不受 is_counted_in_reports 覆盖
-    # is_counted_in_reports=False 时：收入/支出标志依然正确设置（因为平账是真实业务），仅现金流标志关闭
-    count_in_expense = transaction_type == TransactionType.EXPENSE
-    count_in_income = transaction_type == TransactionType.INCOME
+    # 🛡️ L: 收支统计开关 — is_counted_in_reports=False 时强制关闭收入/支出标志
+    # 用户没勾选"计入收支报表"时，这两个字段必须强制设为 False
+    count_in_expense = is_counted_in_reports and transaction_type == TransactionType.EXPENSE
+    count_in_income = is_counted_in_reports and transaction_type == TransactionType.INCOME
     count_in_cashflow = is_counted_in_reports
 
     # 🛡️ L: 在同一事务中更新账户欠款 + 写快照，确保原子性
