@@ -188,8 +188,17 @@ export default function TransactionList({
   }
 
   const getAmountMeta = (item: TransactionItem) => {
-    if (item.source_type === "system") {
-      return { prefix: item.direction === "in" ? "+" : "-", color: "#999" }
+    // 🛡️ L: SYSTEM 类型余额调整
+    if (item.source_type === 'system') {
+      // 如果勾选了"计入收支"，按普通收入/支出颜色显示
+      if (item.include_in_income === true) {
+        return { prefix: '+', color: '#16a34a' }
+      }
+      if (item.include_in_expense === true) {
+        return { prefix: '-', color: '#dc2626' }
+      }
+      // 未勾选计入收支 → 灰色中性
+      return { prefix: item.direction === 'in' ? '+' : '-', color: '#999' }
     }
     const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
     const isIncome = item.direction === 'in'

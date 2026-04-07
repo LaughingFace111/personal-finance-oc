@@ -192,12 +192,18 @@ const NEUTRAL_TRANSACTION_TYPES = new Set([
 const isNeutralTransactionType = (transactionType?: string) =>
   Boolean(transactionType && NEUTRAL_TRANSACTION_TYPES.has(transactionType))
 
-const getTransactionAmountMeta = (transaction: { direction?: string; transaction_type?: string; source_type?: string }) => {
+const getTransactionAmountMeta = (transaction: { direction?: string; transaction_type?: string; source_type?: string; include_in_income?: boolean; include_in_expense?: boolean }) => {
+  // 🛡️ L: SYSTEM 类型余额调整
   if (transaction.source_type === 'system') {
-    return {
-      prefix: transaction.direction === 'in' ? '+' : '-',
-      color: '#999',
+    // 如果勾选了"计入收支"，按普通收入/支出颜色显示
+    if (transaction.include_in_income === true) {
+      return { prefix: '+', color: 'var(--accent-green)' }
     }
+    if (transaction.include_in_expense === true) {
+      return { prefix: '-', color: 'var(--accent-red)' }
+    }
+    // 未勾选计入收支 → 灰色中性
+    return { prefix: transaction.direction === 'in' ? '+' : '-', color: '#999' }
   }
   if (isNeutralTransactionType(transaction.transaction_type)) {
     return { prefix: '', color: 'var(--text-secondary)' }
