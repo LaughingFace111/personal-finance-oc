@@ -725,48 +725,7 @@ const DateDetailPage = () => {
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState({ income: 0, expense: 0 })
-  const [categories, setCategories] = useState<any[]>([])
-  const [tags, setTags] = useState<any[]>([])
   const bookId = user?.default_book_id
-
-  // 加载分类数据
-  useEffect(() => {
-    if (!bookId) return
-    apiGet(`/api/categories?book_id=${bookId}`)
-      .then((data: any) => setCategories(data || []))
-      .catch((error) => {
-        console.error("Request failed:", error)
-      })
-  }, [bookId])
-
-  // 加载标签数据
-  useEffect(() => {
-    if (!bookId) return
-    apiGet(`/api/tags?book_id=${bookId}`)
-      .then((data: any) => setTags(data || []))
-      .catch((error) => {
-        console.error("Request failed:", error)
-      })
-  }, [bookId])
-
-  // 获取标签名称
-  const getTagName = (tagId: string) => {
-    if (!tagId) return ''
-    const tag = tags.find((t: any) => t.id === tagId)
-    return tag?.name || ''
-  }
-
-  // 获取分类名称
-  const getCategoryName = (categoryId: string) => {
-    if (!categoryId) return ''
-    const cat = categories.find((c: any) => c.id === categoryId)
-    if (!cat) return ''
-    if (cat.parent_id) {
-      const parent = categories.find((c: any) => c.id === cat.parent_id)
-      return parent ? `${parent.name}-${cat.name}` : cat.name
-    }
-    return cat.name
-  }
 
   useEffect(() => {
     if (!bookId || !date) return
@@ -854,73 +813,11 @@ const DateDetailPage = () => {
 
       {/* 流水列表 */}
       <div>
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}>加载中...</div>
-        ) : transactions.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-tertiary)' }}>当日无记录</div>
-        ) : (
-          transactions.map((tx, i) => (
-            (() => {
-              const amountMeta = getTransactionAmountMeta(tx)
-              return (
-                <div 
-                  key={tx.id || i}
-                  style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center',
-                    padding: '12px 16px',
-                    marginBottom: 8,
-                    background: 'var(--bg-card)',
-                    borderRadius: 12,
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    {/* 交易类型标签 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      {tx.transaction_type === 'refund' && (
-                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#fff3e0', color: '#ff9800' }}>退款</span>
-                      )}
-                      {isNeutralTransactionType(tx.transaction_type) && (
-                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
-                          {tx.transaction_type === 'transfer' ? '转账' : '还款'}
-                        </span>
-                      )}
-                      {tx.category_id && (
-                        <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                          {getCategoryName(tx.category_id)}
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
-                      {tx.merchant || tx.note || '-'}
-                    </div>
-                    {/* 标签显示 */}
-                    {Array.isArray(tx.tags) && tx.tags.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {tx.tags.map((tag: any, idx: number) => (
-                          <span key={idx} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}>
-                            {getTagName(tag)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                      {tx.occurred_at?.split('T')[1]?.substring(0, 5) || ''}
-                    </div>
-                  </div>
-                  <div style={{ 
-                    fontSize: 16, 
-                    fontWeight: 500,
-                    color: amountMeta.color,
-                  }}>
-                    {amountMeta.prefix}¥{Number(tx.amount).toFixed(2)}
-                  </div>
-                </div>
-              )
-            })()
-          ))
-        )}
+        <TransactionListComponent
+          items={transactions}
+          loading={loading}
+          emptyDescription="当日无记录"
+        />
       </div>
     </div>
   )

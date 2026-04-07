@@ -9,6 +9,9 @@ import { useAppStore } from '../stores/appStore'
 interface TransactionListProps {
   onItemClick?: (item: any) => void
   selectedMonth?: number | null
+  items?: TransactionItem[]
+  loading?: boolean
+  emptyDescription?: string
 }
 
 interface TransactionItem {
@@ -55,10 +58,17 @@ const NEUTRAL_TRANSACTION_TYPES = new Set([
   'repayment_loan',
 ])
 
-export default function TransactionList({ onItemClick, selectedMonth }: TransactionListProps) {
+export default function TransactionList({
+  onItemClick,
+  selectedMonth,
+  items,
+  loading: externalLoading,
+  emptyDescription = '暂无交易记录'
+}: TransactionListProps) {
   const { user } = useAuth()
   const bookId = user?.default_book_id
   const { showHiddenTransactions } = useAppStore()
+  const isControlled = Array.isArray(items)
 
   const [data, setData] = useState<TransactionItem[]>([])
   const [categories, setCategories] = useState<CategoryItem[]>([])
@@ -71,7 +81,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   // 加载单页数据
   const loadPage = useCallback(async (pageNum: number) => {
-    if (!bookId) return
+    if (!bookId || isControlled) return
     if (pageNum === 1) setLoading(true)
     else setLoadingMore(true)
 
@@ -89,7 +99,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [bookId, selectedMonth, showHiddenTransactions])
+  }, [bookId, isControlled, selectedMonth, showHiddenTransactions])
 
   useEffect(() => {
     if (!bookId) return
@@ -117,10 +127,11 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   // 首次加载或月份变化时重置
   useEffect(() => {
+    if (isControlled) return
     setPage(1)
     setHasMore(true)
     loadPage(1)
-  }, [loadPage])
+  }, [isControlled, loadPage])
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((category) => [category.id, category]))
@@ -136,13 +147,14 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   const groupedData = useMemo(() => {
     const groups: Record<string, TransactionItem[]> = {}
-    data.forEach((item: TransactionItem) => {
+    const sourceData = isControlled ? items : data
+    ;(sourceData || []).forEach((item: TransactionItem) => {
       const date = item.occurred_at?.split('T')[0] || 'unknown'
       if (!groups[date]) groups[date] = []
       groups[date].push(item)
     })
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a))
-  }, [data])
+  }, [data, isControlled, items])
 
   const formatDateDisplay = (dateStr: string) => {
     const date = new Date(dateStr)
@@ -176,6 +188,9 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   }
 
   const getAmountMeta = (item: TransactionItem) => {
+    if (item.source_type === "system") {
+      return { prefix: item.direction === "in" ? "+" : "-", color: "#999" }
+    }
     const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
     const isIncome = item.direction === 'in'
     return {
@@ -277,7 +292,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
   }
 
   // 骨架屏占位
-  if (loading) {
+  if (externalLoading ?? loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {[1, 2, 3, 4, 5].map(i => (
@@ -291,8 +306,8 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
 
   if (groupedData.length === 0) {
     return (
-      <Empty
-        description="暂无交易记录"
+        <Empty
+        description={emptyDescription}
       />
     )
   }
@@ -505,7 +520,7 @@ export default function TransactionList({ onItemClick, selectedMonth }: Transact
       </div>
 
       {/* 无限滚动加载更多 */}
-      {hasMore && (
+      {!isControlled && hasMore && (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
           <Button
             onClick={() => loadPage(page + 1)}
