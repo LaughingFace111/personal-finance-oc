@@ -725,6 +725,7 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
         Transaction.book_id == book_id,
         Transaction.transaction_type == TransactionType.REFUND.value,
         Transaction.status == "confirmed",
+        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤（退款计入支出）
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max)
     ).group_by(func.date(Transaction.occurred_at)).all()
