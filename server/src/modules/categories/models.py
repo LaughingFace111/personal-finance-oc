@@ -20,6 +20,7 @@ class Category(Base):
     sort_order = Column(Integer, default=0)
     is_system = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    is_deleted = Column(Boolean, default=False)
     keywords = Column(Text)  # JSON string
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

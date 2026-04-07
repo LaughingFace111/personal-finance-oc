@@ -1893,29 +1893,76 @@ const CategoriesPage = () => {
 
   // 构建二级结构
   const buildTree = (categories: any[]) => {
-    const roots = categories.filter(c => !c.parent_id && c.is_active)
+    const roots = categories.filter(c => !c.parent_id)
     return roots.map(root => ({
       ...root,
-      children: categories.filter(c => c.parent_id === root.id && c.is_active)
+      children: categories.filter(c => c.parent_id === root.id)
     }))
   }
 
-  useEffect(() => { if (!bookId) return; apiGet(`/api/categories?book_id=${bookId}`).then(res => setData(res || [])).catch((error) => { console.error("Request failed:", error) }).finally(() => setLoading(false)) }, [bookId])
+  useEffect(() => {
+    if (!bookId) return
+    apiGet(`/api/categories?book_id=${bookId}&include_inactive=true`)
+      .then(res => setData(res || []))
+      .catch((error) => { console.error("Request failed:", error) })
+      .finally(() => setLoading(false))
+  }, [bookId])
 
   const categoryTree = buildTree(data)
 
+  const handleDelete = async (categoryId: string) => {
+    if (!bookId) return
+    try {
+      await apiDelete(`/api/categories/${categoryId}?book_id=${bookId}`)
+      setData(prev => prev.filter(item => item.id !== categoryId))
+      message.success('删除成功')
+    } catch (error) {
+      console.error("Request failed:", error)
+    }
+  }
+
+  const renderStatusTags = (item: any) => (
+    <Space size={8}>
+      <Tag color={item.category_type === 'expense' ? 'red' : 'green'}>
+        {item.category_type === 'expense' ? '支出' : '收入'}
+      </Tag>
+      {!item.is_active && <Tag color="default">已停用</Tag>}
+    </Space>
+  )
+
+  const renderDeleteButton = (item: any) => (
+    <Popconfirm
+      title="确认删除该分类？"
+      description="如果存在子分类或交易记录引用，将拒绝删除。"
+      okText="删除"
+      cancelText="取消"
+      okButtonProps={{ danger: true }}
+      onConfirm={(event) => {
+        event?.stopPropagation?.()
+        return handleDelete(item.id)
+      }}
+    >
+      <Button
+        danger
+        type="text"
+        icon={<DeleteOutlined />}
+        onClick={(event) => event.stopPropagation()}
+      >
+        删除
+      </Button>
+    </Popconfirm>
+  )
+
   // 渲染单个分类项（可点击编辑）
   const renderCategory = (item: any, isChild: boolean = false) => (
-    <List.Item 
+    <List.Item
       style={{ padding: isChild ? '8px 12px' : '12px 0', cursor: 'pointer', background: isChild ? 'var(--bg-page)' : undefined }}
       onClick={() => navigate(`/categories/${item.id}`)}
+      actions={[renderStatusTags(item), renderDeleteButton(item)]}
     >
       <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
         <span style={{ fontSize: isChild ? 14 : 16, marginLeft: isChild ? 24 : 0 }}>{item.icon} {item.name}</span>
       </div>
-      <Tag color={item.category_type === 'expense' ? 'red' : 'green'}>
-        {item.category_type === 'expense' ? '支出' : '收入'}
-      </Tag>
     </List.Item>
   )
 
@@ -1938,7 +1985,13 @@ const CategoriesPage = () => {
                 }}
                 onClick={() => navigate(`/categories/${root.id}`)}
               >
-                {root.icon} {root.name}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <span>{root.icon} {root.name}</span>
+                  <Space size={8}>
+                    {renderStatusTags(root)}
+                    {renderDeleteButton(root)}
+                  </Space>
+                </div>
               </div>
               {/* 二级分类 */}
               {root.children && root.children.length > 0 && (
@@ -1966,12 +2019,13 @@ const CategoryEditPage = () => {
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(true)
   const [categories, setCategories] = useState<any[]>([])
+  const watchedType = Form.useWatch('category_type', form)
 
   useEffect(() => {
     if (!bookId || !categoryId) return
     
     // 加载所有分类（用于选择父类）
-    apiGet(`/api/categories?book_id=${bookId}`)
+    apiGet(`/api/categories?book_id=${bookId}&include_inactive=true`)
       .then(res => setCategories(res || []))
       .catch((error) => {
         console.error("Request failed:", error)
@@ -1992,6 +2046,15 @@ const CategoryEditPage = () => {
       .finally(() => setFetching(false))
   }, [bookId, categoryId])
 
+  useEffect(() => {
+    const currentParentId = form.getFieldValue('parent_id')
+    if (!currentParentId || !watchedType) return
+    const selectedParent = categories.find(c => c.id === currentParentId)
+    if (selectedParent && selectedParent.category_type !== watchedType) {
+      form.setFieldValue('parent_id', undefined)
+    }
+  }, [categories, watchedType, form])
+
   const onFinish = async (values: any) => {
     if (!bookId) return
     setLoading(true)
@@ -2002,13 +2065,14 @@ const CategoryEditPage = () => {
       navigate('/categories')
     } catch (error) {
       console.error("Request failed:", error)
-      message.error('更新失败')
     }
     finally { setLoading(false) }
   }
 
   // 可选的父分类（不能是自己和自己的孩子）
-  const availableParents = categories.filter(c => c.id !== categoryId && !categories.some(child => child.parent_id === categoryId && child.id === c.id))
+  const availableParents = categories.filter(
+    c => c.id !== categoryId && !c.parent_id && c.category_type === watchedType
+  )
 
   if (fetching) return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
 
@@ -2024,7 +2088,7 @@ const CategoryEditPage = () => {
         </Form.Item>
         <Form.Item name="parent_id" label="所属大类（留空则为一级分类）">
           <Select allowClear placeholder="选择父分类">
-            {availableParents.filter(c => !c.parent_id).map(c => (
+            {availableParents.map(c => (
               <Select.Option key={c.id} value={c.id}>{c.icon} {c.name}</Select.Option>
             ))}
           </Select>
@@ -2034,7 +2098,7 @@ const CategoryEditPage = () => {
           <Checkbox>启用</Checkbox>
         </Form.Item>
         <div style={{ display: 'flex', gap: 12 }}>
-          <Button size="large" style={{ flex: 1 }} onClick={() => navigate('/categories')}>取消</Button>
+          <Button size="large" style={{ flex: 1 }} onClick={() => navigate(-1)}>取消</Button>
           <Button type="primary" size="large" style={{ flex: 1 }} htmlType="submit" loading={loading}>保存</Button>
         </div>
       </Form>
@@ -2307,19 +2371,29 @@ const CategoryFormPage = () => {
   const bookId = user?.default_book_id
   const [loading, setLoading] = useState(false)
   const [categories, setCategories] = useState<any[]>([])
+  const watchedType = Form.useWatch('category_type', form)
 
   // 加载现有分类（用于选择父类）
   useEffect(() => {
     if (!bookId) return
-    apiGet(`/api/categories?book_id=${bookId}`)
+    apiGet(`/api/categories?book_id=${bookId}&include_inactive=true`)
       .then(res => setCategories(res || []))
       .catch((error) => {
         console.error("Request failed:", error)
       })
   }, [bookId])
 
-  // 只显示一级分类作为父类选项
-  const parentOptions = categories.filter(c => !c.parent_id)
+  useEffect(() => {
+    const currentParentId = form.getFieldValue('parent_id')
+    if (!currentParentId || !watchedType) return
+    const selectedParent = categories.find(c => c.id === currentParentId)
+    if (selectedParent && selectedParent.category_type !== watchedType) {
+      form.setFieldValue('parent_id', undefined)
+    }
+  }, [categories, watchedType, form])
+
+  // 只显示同类型的一级分类作为父类选项
+  const parentOptions = categories.filter(c => !c.parent_id && c.category_type === watchedType)
 
   const onFinish = async (values: any) => {
     if (!bookId) return
@@ -2334,7 +2408,9 @@ const CategoryFormPage = () => {
       await apiPost('/api/categories', payload)
       message.success('创建成功')
       navigate('/categories')
-    } catch { message.error('创建失败') }
+    } catch (error) {
+      console.error("Request failed:", error)
+    }
     finally { setLoading(false) }
   }
 
@@ -2356,7 +2432,10 @@ const CategoryFormPage = () => {
           </Select>
         </Form.Item>
         <Form.Item name="icon" label="图标（emoji）"><Input placeholder="如: 🍔" /></Form.Item>
-        <Button type="primary" htmlType="submit" block loading={loading}>创建</Button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <Button size="large" style={{ flex: 1 }} onClick={() => navigate(-1)}>取消</Button>
+          <Button type="primary" size="large" htmlType="submit" style={{ flex: 1 }} loading={loading}>创建</Button>
+        </div>
       </Form>
     </Card>
   )

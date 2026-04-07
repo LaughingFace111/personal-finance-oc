@@ -9,7 +9,6 @@ from src.modules.auth.models import User
 
 from .schemas import CategoryCreate, CategoryResponse, CategoryUpdate
 from .service import create_category, delete_category, get_category, get_categories, get_category_tree, update_category
-from src.modules.books.service import get_default_book
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -102,7 +101,7 @@ def delete(
     db: Session = Depends(get_db),
     book_id: str = None
 ):
-    """Delete (deactivate) category"""
+    """Soft delete category"""
     bid = get_current_book_id(current_user, db, book_id)
     delete_category(db, category_id, bid)
     return {"message": "Category deleted"}

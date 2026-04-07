@@ -21,6 +21,7 @@ class CategoryCreate(CategoryBase):
 
 class CategoryUpdate(BaseModel):
     name: Optional[str] = None
+    category_type: Optional[CategoryType] = None
     parent_id: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
@@ -34,6 +35,7 @@ class CategoryResponse(CategoryBase):
     book_id: str
     is_system: bool = False
     is_active: bool = True
+    is_deleted: bool = False
     created_at: datetime
     updated_at: datetime
 

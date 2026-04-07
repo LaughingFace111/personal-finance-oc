@@ -10,31 +10,32 @@ from .models import Category
 from .schemas import CategoryCreate, CategoryUpdate
 
 
+def _normalize_category_type(category_type) -> str:
+    return category_type.value if hasattr(category_type, "value") else category_type
+
+
 def create_category(db: Session, book_id: str, data: CategoryCreate) -> Category:
     """Create new category"""
     # Check parent exists
     if data.parent_id:
         parent = db.query(Category).filter(
             Category.id == data.parent_id,
-            Category.book_id == book_id
+            Category.book_id == book_id,
+            Category.is_deleted == False
         ).first()
         if not parent:
-            raise AppException(status_code=400, code=40001, message="Parent category not found")
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="父级分类不存在")
+        if parent.category_type != _normalize_category_type(data.category_type):
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="父级分类与当前分类类型不一致，拒绝创建/修改")
 
-    # Check name uniqueness within parent
-    query = db.query(Category).filter(
+    existing = db.query(Category).filter(
         Category.book_id == book_id,
         Category.name == data.name,
-        Category.category_type == data.category_type.value
-    )
-    if data.parent_id:
-        query = query.filter(Category.parent_id == data.parent_id)
-    else:
-        query = query.filter(Category.parent_id.is_(None))
-
-    existing = query.first()
+        Category.category_type == _normalize_category_type(data.category_type),
+        Category.is_deleted == False
+    ).first()
     if existing:
-        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="Category name already exists")
+        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="该分类名称已存在（包含已停用分类）")
 
     category = Category(
         id=generate_uuid(),
@@ -55,7 +56,10 @@ def create_category(db: Session, book_id: str, data: CategoryCreate) -> Category
 
 def get_categories(db: Session, book_id: str, category_type: Optional[str] = None, include_inactive: bool = False) -> List[Category]:
     """Get all categories for book"""
-    query = db.query(Category).filter(Category.book_id == book_id)
+    query = db.query(Category).filter(
+        Category.book_id == book_id,
+        Category.is_deleted == False
+    )
     if category_type:
         query = query.filter(Category.category_type == category_type)
     if not include_inactive:
@@ -67,7 +71,8 @@ def get_category(db: Session, category_id: str, book_id: str) -> Optional[Catego
     """Get category by ID"""
     return db.query(Category).filter(
         Category.id == category_id,
-        Category.book_id == book_id
+        Category.book_id == book_id,
+        Category.is_deleted == False
     ).first()
 
 
@@ -98,7 +103,46 @@ def update_category(db: Session, category_id: str, book_id: str, data: CategoryU
     if category.is_system:
         raise AppException(status_code=400, code=40001, message="Cannot modify system category")
 
-    for key, value in data.model_dump(exclude_unset=True).items():
+    updates = data.model_dump(exclude_unset=True)
+    next_type = _normalize_category_type(updates.get("category_type", category.category_type))
+    next_parent_id = updates.get("parent_id", category.parent_id)
+
+    if next_parent_id:
+        parent = db.query(Category).filter(
+            Category.id == next_parent_id,
+            Category.book_id == book_id,
+            Category.is_deleted == False
+        ).first()
+        if not parent:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="父级分类不存在")
+        if parent.id == category.id:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="父级分类不能是自己")
+        if parent.category_type != next_type:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="父级分类与当前分类类型不一致，拒绝创建/修改")
+
+    if next_type != category.category_type:
+        child_exists = db.query(Category).filter(
+            Category.parent_id == category.id,
+            Category.book_id == book_id,
+            Category.is_deleted == False
+        ).first()
+        if child_exists:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="当前分类存在子分类，不能直接修改分类类型")
+
+    next_name = updates.get("name", category.name)
+    duplicate = db.query(Category).filter(
+        Category.book_id == book_id,
+        Category.name == next_name,
+        Category.category_type == next_type,
+        Category.is_deleted == False,
+        Category.id != category.id
+    ).first()
+    if duplicate:
+        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="该分类名称已存在（包含已停用分类）")
+
+    for key, value in updates.items():
+        if key == "category_type":
+            value = next_type
         setattr(category, key, value)
 
     db.commit()
@@ -107,9 +151,9 @@ def update_category(db: Session, category_id: str, book_id: str, data: CategoryU
 
 
 def delete_category(db: Session, category_id: str, book_id: str) -> None:
-    """Delete (deactivate) category"""
+    """Soft delete category after integrity checks"""
     from src.modules.transactions.models import Transaction
-    
+
     category = get_category(db, category_id, book_id)
     if not category:
         raise NotFoundException("Category not found")
@@ -117,19 +161,22 @@ def delete_category(db: Session, category_id: str, book_id: str) -> None:
     if category.is_system:
         raise AppException(status_code=400, code=40001, message="Cannot delete system category")
 
-    # Check if category is in use (显式查询)
-    used_count = db.query(Transaction).filter(
-        Transaction.category_id == category_id,
-        Transaction.book_id == book_id,
-        Transaction.status == "confirmed"
-    ).count()
+    child_exists = db.query(Category).filter(
+        Category.parent_id == category_id,
+        Category.book_id == book_id,
+        Category.is_deleted == False
+    ).first()
+    if child_exists:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="该分类下仍有子分类，无法删除")
 
-    if used_count > 0:
-        # 有交易使用，软删除（只标记不显示）
-        category.is_active = False
-    else:
-        # 无交易使用，可以完全删除
-        db.delete(category)
+    transaction_exists = db.query(Transaction).filter(
+        Transaction.category_id == category_id,
+        Transaction.book_id == book_id
+    ).first()
+    if transaction_exists:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="该分类已被交易记录使用，无法删除")
+
+    category.is_deleted = True
 
     db.commit()
 
