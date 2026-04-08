@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
   TransactionFormLayout,
   transactionFormFieldClass,
@@ -15,6 +16,8 @@ import {
   getAccountOptionLabel,
   loadTransferFormData,
   toOccurredAt,
+  toTagOptions,
+  TagOption,
 } from './transactionFormSupport';
 
 function getCurrentDateValue() {
@@ -27,21 +30,28 @@ function getCurrentDateValue() {
 export default function TransferPage() {
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [tags, setTags] = useState<TagOption[]>([]);
   const [fromAccountId, setFromAccountId] = useState<string>('');
   const [toAccountId, setToAccountId] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [feeAmount, setFeeAmount] = useState('0');
   const [feeAccountId, setFeeAccountId] = useState<string>('');
   const [memo, setMemo] = useState('');
+  const [tagIds, setTagIds] = useState<string[]>([]);
   const [occurredAt, setOccurredAt] = useState(getCurrentDateValue);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const feeValue = Number.parseFloat(feeAmount || '0');
   const normalizedFeeValue = Number.isFinite(feeValue) ? feeValue : 0;
   const shouldShowFeeAccount = normalizedFeeValue > 0;
-  const feeEligibleAccounts = accounts.filter((account) =>
-    ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account.account_type)
+  const feeEligibleAccounts = useMemo(
+    () =>
+      accounts.filter((account) =>
+        ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account.account_type),
+      ),
+    [accounts],
   );
 
   useEffect(() => {
@@ -52,6 +62,7 @@ export default function TransferPage() {
 
         const formData = await loadTransferFormData(bookId);
         setAccounts(formData.accounts);
+        setTags(formData.tags);
       } catch (err) {
         setError((err as Error).message || '加载数据失败');
       }
@@ -60,16 +71,37 @@ export default function TransferPage() {
   }, []);
 
   useEffect(() => {
-    if (fromAccountId && (!feeAccountId || feeAccountId === '')) {
+    if (
+      fromAccountId &&
+      feeEligibleAccounts.some((account) => account.id === fromAccountId) &&
+      (!feeAccountId || feeAccountId === '')
+    ) {
       setFeeAccountId(fromAccountId);
     }
-  }, [fromAccountId, feeAccountId]);
+  }, [feeEligibleAccounts, fromAccountId, feeAccountId]);
 
   useEffect(() => {
-    if (shouldShowFeeAccount && fromAccountId && !feeAccountId) {
+    if (
+      shouldShowFeeAccount &&
+      fromAccountId &&
+      feeEligibleAccounts.some((account) => account.id === fromAccountId) &&
+      !feeAccountId
+    ) {
       setFeeAccountId(fromAccountId);
     }
-  }, [shouldShowFeeAccount, fromAccountId, feeAccountId]);
+  }, [shouldShowFeeAccount, feeEligibleAccounts, fromAccountId, feeAccountId]);
+
+  useEffect(() => {
+    if (feeAccountId && !feeEligibleAccounts.some((account) => account.id === feeAccountId)) {
+      setFeeAccountId('');
+    }
+  }, [feeAccountId, feeEligibleAccounts]);
+
+  useEffect(() => {
+    if (shouldShowFeeAccount || memo.trim() || tagIds.length > 0) {
+      setAdvancedOpen(true);
+    }
+  }, [shouldShowFeeAccount, memo, tagIds.length]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,19 +130,27 @@ export default function TransferPage() {
       }
 
       const payload = {
-        transaction_type: 'transfer',
         from_account_id: fromAccountId,
         to_account_id: toAccountId,
         amount: parseFloat(amount),
         fee_amount: normalizedFeeValue,
         fee_account_id: shouldShowFeeAccount ? feeAccountId : null,
-        note: memo,
+        note: memo || null,
         occurred_at: toOccurredAt(occurredAt),
-        book_id: bookId,
-        tags: null,
+        tags:
+          tagIds.length > 0
+            ? JSON.stringify(
+                tagIds
+                  .map((id) => {
+                    const tag = tags.find((item) => item.id === id);
+                    return tag?.name || '';
+                  })
+                  .filter(Boolean),
+              )
+            : null,
       };
 
-      const response = await apiPost('/api/transactions/transfer', payload);
+      const response = await apiPost(`/api/transactions/transfer?book_id=${bookId}`, payload);
 
       if (response) {
         navigate('/dashboard');
@@ -191,50 +231,67 @@ export default function TransferPage() {
               required
             />
           </div>
-
-          <div>
-            <label className={transactionFormLabelClass}>手续费（选填）</label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={feeAmount}
-              onChange={e => setFeeAmount(e.target.value)}
-              placeholder="0.00"
-              className={transactionFormFieldClass}
-            />
-          </div>
-
-          {shouldShowFeeAccount && (
-            <div>
-              <label className={transactionFormLabelClass}>手续费扣款账户 *</label>
-              <select
-                value={feeAccountId}
-                onChange={e => setFeeAccountId(e.target.value)}
-                className={transactionFormFieldClass}
-                required={shouldShowFeeAccount}
-              >
-                <option value="">选择手续费扣款账户</option>
-                {feeEligibleAccounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {getAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label className={transactionFormLabelClass}>备注</label>
-            <textarea
-              value={memo}
-              onChange={e => setMemo(e.target.value)}
-              placeholder="添加备注..."
-              rows={3}
-              className={transactionFormTextareaClass}
-            />
-          </div>
         </div>
+
+        <details
+          className={transactionFormSectionClass}
+          open={advancedOpen}
+          onToggle={(event) => setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer list-none text-sm font-medium text-[var(--text-primary)]">
+            高级选项
+          </summary>
+
+          <div className="mt-4 space-y-4">
+            <div>
+              <label className={transactionFormLabelClass}>手续费（选填）</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={feeAmount}
+                onChange={e => setFeeAmount(e.target.value)}
+                placeholder="0.00"
+                className={transactionFormFieldClass}
+              />
+            </div>
+
+            {shouldShowFeeAccount && (
+              <div>
+                <label className={transactionFormLabelClass}>手续费扣款账户 *</label>
+                <select
+                  value={feeAccountId}
+                  onChange={e => setFeeAccountId(e.target.value)}
+                  className={transactionFormFieldClass}
+                  required={shouldShowFeeAccount}
+                >
+                  <option value="">选择手续费扣款账户</option>
+                  {feeEligibleAccounts.map(account => (
+                    <option key={account.id} value={account.id}>
+                      {getAccountOptionLabel(account)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className={transactionFormLabelClass}>备注</label>
+              <textarea
+                value={memo}
+                onChange={e => setMemo(e.target.value)}
+                placeholder="添加备注..."
+                rows={3}
+                className={transactionFormTextareaClass}
+              />
+            </div>
+
+            <div>
+              <label className={transactionFormLabelClass}>标签</label>
+              <TagMultiSelect allTags={toTagOptions(tags)} value={tagIds} onChange={setTagIds} />
+            </div>
+          </div>
+        </details>
 
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
