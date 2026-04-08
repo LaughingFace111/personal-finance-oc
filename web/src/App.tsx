@@ -28,6 +28,7 @@ const WishlistPage = lazy(() => import('./pages/WishlistPage'))
 const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
 const SettingsPageView = lazy(() => import('./pages/SettingsPage'))
 const ImportsPageView = lazy(() => import('./pages/ImportsPage'))
+const TransferPage = lazy(() => import('./pages/TransferPage'))
 
 export { useAuth }
 
@@ -348,7 +349,7 @@ return (
             <Route path="/reports/tag-distribution" element={<Suspense fallback={<LoadingFallback />}><TagDistributionPage /></Suspense>} />
             <Route path="/reports/tag-detail/:tagId" element={<Suspense fallback={<LoadingFallback />}><TagDetailPage /></Suspense>} />
             <Route path="/reports/account-balance-trend" element={<Suspense fallback={<LoadingFallback />}><AccountBalanceTrendPage /></Suspense>} />
-            <Route path="/transfer" element={<TransferPage />} />
+            <Route path="/transfer" element={<Suspense fallback={<LoadingFallback />}><TransferPage /></Suspense>} />
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
             {/* 其他交易 - 导航枢纽页 */}
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
@@ -2172,49 +2173,6 @@ const ReportsPage = () => {
   return <div style={{ textAlign: 'center', padding: 40 }}>加载中...</div>
 }
 
-const TransferPage = () => {
-  const { user } = useAuth()
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [form, setForm] = useState({ from_account_id: '', to_account_id: '', amount: '', note: '' })
-  const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
-  const bookId = user?.default_book_id
-
-  
-  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(setAccounts).catch((error) => { console.error("Request failed:", error) }) }, [bookId])
-
-  const handleSubmit = async () => {
-    if (!form.amount || !form.from_account_id || !form.to_account_id) { message.error('请填写必要信息'); return }
-    if (form.from_account_id === form.to_account_id) { message.error('不能转给自己'); return }
-    setLoading(true)
-    try {
-      // apiPost returns the data directly on success, throws on failure
-      await apiPost('/api/transactions/transfer', { ...form, amount: Number(form.amount), occurred_at: new Date().toISOString(), book_id: bookId })
-      message.success('转账成功')
-      navigate('/transactions')
-    } catch (error) {
-      console.error("Request failed:", error)
-    }
-    finally { setLoading(false) }
-  }
-
-  return (
-    <Card 
-      title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Button type="text" size="small" icon={<span>←</span>} onClick={() => navigate(-1)} style={{ border: 'none' }} />
-          <span>转账</span>
-        </div>
-      }
-    >
-      <div style={{ marginBottom: 16 }}><Select placeholder="转出账户" value={form.from_account_id || undefined} onChange={v => setForm(f => ({ ...f, from_account_id: v || '' }))} style={{ width: '100%' }}>{accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}</Select></div>
-      <div style={{ marginBottom: 16 }}><Select placeholder="转入账户" value={form.to_account_id || undefined} onChange={v => setForm(f => ({ ...f, to_account_id: v || '' }))} style={{ width: '100%' }}>{accounts.map(a => <Select.Option key={a.id} value={a.id}>{a.name}</Select.Option>)}</Select></div>
-      <div style={{ marginBottom: 16 }}><InputNumber placeholder="金额" value={form.amount} onChange={v => setForm(f => ({ ...f, amount: String(v || '') }))} style={{ width: '100%' }} min={0} precision={2} /></div>
-      <div style={{ marginBottom: 16 }}><input placeholder="备注" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} style={{ width: '100%', padding: '10px', borderRadius: 8, border: '1px solid #d9d9d9' }} /></div>
-      <Button type="primary" block size="large" loading={loading} onClick={handleSubmit}>确认转账</Button>
-    </Card>
-  )
-}
 
 
 
