@@ -1,6 +1,6 @@
 from decimal import Decimal
 from typing import List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 
 from sqlalchemy import and_
@@ -120,6 +120,12 @@ def _calculate_include_flags(transaction_type: TransactionType, account_type: st
     elif tx_type == TransactionType.FEE.value:
         include_income = False
 
+    elif tx_type == TransactionType.INSTALLMENT_PURCHASE.value:
+        # Installment purchase increases debt, but does not create cash movement.
+        include_expense = True
+        include_income = False
+        include_cashflow = False
+
     return include_expense, include_income, include_cashflow
 
 
@@ -190,21 +196,27 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
                 elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
                 elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
+                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
             elif direction == TransactionDirection.IN.value:
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, txn.amount, is_increase=True)
                 elif _is_credit_account(account_type) or _is_loan_account(account_type):
-                    # Credit/loan account receiving funds (for example repayment)
-                    # reduces outstanding debt instead of increasing it.
                     update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
         else:
             if _is_asset_account(account_type):
                 update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
+            elif _is_credit_account(account_type):
+                update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
+            elif _is_loan_account(account_type):
+                update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
             if counterparty and _is_asset_account(counterparty.account_type):
                 update_account_balance(db, txn.counterparty_account_id, txn.amount, is_increase=True)
+            elif counterparty and _is_credit_account(counterparty.account_type):
+                update_account_debt(db, txn.counterparty_account_id, txn.amount, is_increase=False)
+            elif counterparty and _is_loan_account(counterparty.account_type):
+                update_account_debt(db, txn.counterparty_account_id, txn.amount, is_increase=False)
 
     # === REPAYMENT_CREDIT_CARD ===
     elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
@@ -368,7 +380,7 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     if data.from_account_id == data.to_account_id:
         raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Cannot transfer to same account")
 
-    occurred_at = data.occurred_at or datetime.now()
+    occurred_at = data.occurred_at or datetime.now(timezone.utc)
     created_transaction_ids: List[str] = []
 
     fee_amount = data.fee_amount or Decimal("0")
@@ -386,6 +398,10 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     transfer_merchant = _build_transfer_merchant(from_account, to_account)
     transfer_out_id = generate_uuid()
     transfer_in_id = generate_uuid()
+    business_key = (
+        f"transfer:{data.from_account_id}:{data.to_account_id}:{data.amount}:"
+        f"{occurred_at.isoformat()}:{generate_uuid()}"
+    )
 
     transfer_out_txn = Transaction(
         id=transfer_out_id,
@@ -402,6 +418,7 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
+        business_key=business_key,
         include_in_expense=False,
         include_in_income=False,
         include_in_cashflow=False,
@@ -423,6 +440,7 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
+        business_key=business_key,
         include_in_expense=False,
         include_in_income=False,
         include_in_cashflow=False,
@@ -437,17 +455,17 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     if _is_asset_account(from_type):
         update_account_balance(db, data.from_account_id, data.amount, is_increase=False)
     elif _is_credit_account(from_type):
-        update_account_debt(db, data.from_account_id, data.amount, is_increase=False)
+        update_account_debt(db, data.from_account_id, data.amount, is_increase=True)
     elif _is_loan_account(from_type):
-        update_account_debt(db, data.from_account_id, data.amount, is_increase=False)
+        update_account_debt(db, data.from_account_id, data.amount, is_increase=True)
 
     # To account: increases balance or debt
     if _is_asset_account(to_type):
         update_account_balance(db, data.to_account_id, data.amount, is_increase=True)
     elif _is_credit_account(to_type):
-        update_account_debt(db, data.to_account_id, data.amount, is_increase=True)
+        update_account_debt(db, data.to_account_id, data.amount, is_increase=False)
     elif _is_loan_account(to_type):
-        update_account_debt(db, data.to_account_id, data.amount, is_increase=True)
+        update_account_debt(db, data.to_account_id, data.amount, is_increase=False)
 
     db.add(transfer_out_txn)
     db.add(transfer_in_txn)
@@ -603,7 +621,7 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         # 退款交易的备注由前端显示前缀,后端只保留用户输入的备注
         note=data.note if data.note else None,
         related_transaction_id=data.original_transaction_id,
-        business_key=f"refund:{data.original_transaction_id}:{datetime.utcnow().timestamp()}",
+        business_key=f"refund:{data.original_transaction_id}:{datetime.now(timezone.utc).timestamp()}",
         source_type=SourceType.MANUAL.value,
         include_in_expense=False,
         include_in_income=False,
@@ -765,9 +783,9 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, amount, is_increase=True)
                 elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=True)
+                    update_account_debt(db, txn.account_id, amount, is_increase=False)
                 elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=True)
+                    update_account_debt(db, txn.account_id, amount, is_increase=False)
             elif direction == TransactionDirection.IN.value:
                 if _is_asset_account(account_type):
                     update_account_balance(db, txn.account_id, amount, is_increase=False)
@@ -778,18 +796,18 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             if _is_asset_account(account_type):
                 update_account_balance(db, txn.account_id, amount, is_increase=True)
             elif _is_credit_account(account_type):
-                update_account_debt(db, txn.account_id, amount, is_increase=True)
+                update_account_debt(db, txn.account_id, amount, is_increase=False)
             elif _is_loan_account(account_type):
-                update_account_debt(db, txn.account_id, amount, is_increase=True)
+                update_account_debt(db, txn.account_id, amount, is_increase=False)
 
             if txn.counterparty_account_id and counterparty:
                 to_type = counterparty.account_type
                 if _is_asset_account(to_type):
                     update_account_balance(db, txn.counterparty_account_id, amount, is_increase=False)
                 elif _is_credit_account(to_type):
-                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
+                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=True)
                 elif _is_loan_account(to_type):
-                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=False)
+                    update_account_debt(db, txn.counterparty_account_id, amount, is_increase=True)
 
     elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
         if _is_asset_account(account_type):
@@ -942,7 +960,7 @@ def _write_balance_snapshot(db: Session, account: Account, adjust_mode: str, boo
 
     if existing:
         existing.end_of_day_balance = balance_value
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(timezone.utc)
     else:
         snap = AccountBalanceSnapshot(
             id=generate_uuid(),
@@ -1065,11 +1083,11 @@ def adjust_account_balance(
         amount=adjustment_amount,
         direction=direction,
         transaction_type=transaction_type,
-        occurred_at=datetime.utcnow(),
+        occurred_at=datetime.now(timezone.utc),
         category_id=category_id,
         note=note,
         source_type=SourceType.SYSTEM,
-        business_key=f"adjust:{account_id}:{datetime.utcnow().isoformat()}",
+        business_key=f"adjust:{account_id}:{datetime.now(timezone.utc).isoformat()}",
     )
 
     # 🛡️ L: 收支统计开关 — is_counted_in_reports=False 时强制关闭收入/支出标志

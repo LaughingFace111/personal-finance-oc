@@ -8,6 +8,19 @@ from src.common.enums import AccountType
 
 class AccountBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
+
+    def validate_name(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("账户名称不能为空或全空格")
+        return stripped
+
+    @classmethod
+    def model_validate(cls, data, **kwargs):
+        if isinstance(data, dict) and "name" in data:
+            data = dict(data)
+            data["name"] = cls.validate_name(data["name"])
+        return super().model_validate(data, **kwargs)
     account_type: AccountType
     institution_name: Optional[str] = None
     card_last4: Optional[str] = None
@@ -22,11 +35,11 @@ class AccountBase(BaseModel):
 
 
 class AccountCreate(AccountBase):
-    pass
+    pass  # name validation inherited from AccountBase
 
 
 class AccountUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     institution_name: Optional[str] = None
     card_last4: Optional[str] = None
     credit_limit: Optional[Decimal] = None

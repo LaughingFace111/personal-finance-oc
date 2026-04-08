@@ -2,8 +2,10 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, usePa
 import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
-import { useState, useEffect, createContext, useContext, lazy, Suspense } from 'react'
+import { useState, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
+import { HierarchyPickerModal } from './components/HierarchyPickerModal'
+import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
@@ -962,6 +964,7 @@ const TransactionFormPage = () => {
   const [tags, setTags] = useState<any[]>([])
   const [form, setForm] = useState({ type: 'expense', amount: '', account_id: '', category_id: '', note: '', occurred_at: '' })
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [tagModalOpen, setTagModalOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -1028,13 +1031,17 @@ const TransactionFormPage = () => {
     if (params.get('type')) setForm(f => ({ ...f, type: params.get('type')! })) 
   }, [location])
 
-  const groupedTags = (() => {
-    const parents = tags.filter((t: any) => !t.parent_id)
-    return parents.map(p => ({
-      ...p,
-      children: tags.filter((t: any) => t.parent_id === p.id)
-    })).filter(g => g.children.length > 0)
-  })()
+  const selectedTagLabels = useMemo(() => {
+    return selectedTagIds
+      .map((id) => {
+        const tag = tags.find((item: any) => item.id === id)
+        if (!tag) return ''
+        if (!tag.parent_id) return tag.name
+        const parent = tags.find((item: any) => item.id === tag.parent_id)
+        return parent ? `${parent.name} / ${tag.name}` : tag.name
+      })
+      .filter(Boolean)
+  }, [selectedTagIds, tags])
 
   const validate = () => {
     const errs: Record<string, string> = {}
@@ -1180,27 +1187,49 @@ const TransactionFormPage = () => {
         </div>
 
         <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
-          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>标签</div>
-          <Select
-            mode="multiple"
-            placeholder="选择标签（可选）"
-            value={selectedTagIds}
-            onChange={setSelectedTagIds}
-            style={{ width: '100%' }}
-            size="large"
-            allowClear
-            maxTagCount={3}
+          <label className={transactionFormLabelClass}>标签</label>
+          <button
+            type="button"
+            onClick={() => setTagModalOpen(true)}
+            className={`${transactionFormFieldClass} h-auto min-h-11 py-3`}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: '12px',
+              textAlign: 'left',
+            }}
           >
-            {groupedTags.map(group => (
-              <Select.OptGroup key={group.id} label={<span><Tag color={group.color} style={{ marginRight: 4, fontSize: 12 }}>{group.name}</Tag></span>}>
-                {group.children.map((child: any) => (
-                  <Select.Option key={child.id} value={child.id}>
-                    <Tag color={group.color} style={{ fontSize: 12 }}>{child.name}</Tag>
-                  </Select.Option>
-                ))}
-              </Select.OptGroup>
-            ))}
-          </Select>
+            <span
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px',
+                color:
+                  selectedTagLabels.length > 0
+                    ? 'var(--text-primary)'
+                    : 'var(--text-tertiary)',
+              }}
+            >
+              {selectedTagLabels.length > 0
+                ? selectedTagLabels.map((label) => (
+                    <span
+                      key={label}
+                      style={{
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '999px',
+                        background: 'var(--bg-elevated)',
+                        padding: '4px 10px',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {label}
+                    </span>
+                  ))
+                : '点击选择标签'}
+            </span>
+            <span style={{ color: 'var(--text-tertiary)', lineHeight: '28px' }}>›</span>
+          </button>
         </div>
 
         <div style={{ padding: '14px 0' }}>
@@ -1226,6 +1255,20 @@ const TransactionFormPage = () => {
           onClick={handleSubmit}
         >{isEditMode ? '保存修改' : '记一笔'}</Button>
       </div>
+
+      <HierarchyPickerModal
+        open={tagModalOpen}
+        title="选择标签"
+        items={tags}
+        value={selectedTagIds}
+        multiple
+        emptyText="暂无可选标签"
+        onCancel={() => setTagModalOpen(false)}
+        onConfirm={(nextValue) => {
+          setSelectedTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : [])
+          setTagModalOpen(false)
+        }}
+      />
     </div>
   )
 }

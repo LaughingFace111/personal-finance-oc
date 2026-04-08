@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TagMultiSelect } from '../components/TagMultiSelect';
+import { HierarchyPickerModal } from '../components/HierarchyPickerModal';
 import {
   TransactionFormLayout,
   transactionFormFieldClass,
@@ -16,7 +16,6 @@ import {
   getAccountOptionLabel,
   loadTransferFormData,
   toOccurredAt,
-  toTagOptions,
   TagOption,
 } from './transactionFormSupport';
 
@@ -38,6 +37,7 @@ export default function TransferPage() {
   const [feeAccountId, setFeeAccountId] = useState<string>('');
   const [memo, setMemo] = useState('');
   const [tagIds, setTagIds] = useState<string[]>([]);
+  const [tagModalOpen, setTagModalOpen] = useState(false);
   const [occurredAt, setOccurredAt] = useState(getCurrentDateValue);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -53,6 +53,17 @@ export default function TransferPage() {
       ),
     [accounts],
   );
+  const selectedTagLabels = useMemo(() => {
+    return tagIds
+      .map((id) => {
+        const tag = tags.find((item) => item.id === id);
+        if (!tag) return '';
+        if (!tag.parent_id) return tag.name;
+        const parent = tags.find((item) => item.id === tag.parent_id);
+        return parent ? `${parent.name} / ${tag.name}` : tag.name;
+      })
+      .filter(Boolean);
+  }, [tagIds, tags]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -288,7 +299,48 @@ export default function TransferPage() {
 
             <div>
               <label className={transactionFormLabelClass}>标签</label>
-              <TagMultiSelect allTags={toTagOptions(tags)} value={tagIds} onChange={setTagIds} />
+              <button
+                type="button"
+                onClick={() => setTagModalOpen(true)}
+                className={`${transactionFormFieldClass} h-auto min-h-11 py-3`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  textAlign: 'left',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: '8px',
+                    color:
+                      selectedTagLabels.length > 0
+                        ? 'var(--text-primary)'
+                        : 'var(--text-tertiary)',
+                  }}
+                >
+                  {selectedTagLabels.length > 0
+                    ? selectedTagLabels.map((label) => (
+                        <span
+                          key={label}
+                          style={{
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '999px',
+                            background: 'var(--bg-elevated)',
+                            padding: '4px 10px',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {label}
+                        </span>
+                      ))
+                    : '点击选择标签'}
+                </span>
+                <span style={{ color: 'var(--text-tertiary)', lineHeight: '28px' }}>›</span>
+              </button>
             </div>
           </div>
         </details>
@@ -309,6 +361,20 @@ export default function TransferPage() {
           </button>
         </div>
       </form>
+
+      <HierarchyPickerModal
+        open={tagModalOpen}
+        title="选择标签"
+        items={tags}
+        value={tagIds}
+        multiple
+        emptyText="暂无可选标签"
+        onCancel={() => setTagModalOpen(false)}
+        onConfirm={(nextValue) => {
+          setTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : []);
+          setTagModalOpen(false);
+        }}
+      />
     </TransactionFormLayout>
   );
 }

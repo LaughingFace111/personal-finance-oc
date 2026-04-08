@@ -1,5 +1,6 @@
 from typing import List
 from decimal import Decimal
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -32,7 +33,8 @@ def get_current_book_id(
     return default_book.id
 
 
-# 🛡️ L: 重要 - 静态路由必须放在动态路由 {account_id} 之前，否则会被劫持！
+# WARNING: Static routes must remain above dynamic routes like /{account_id}.
+# Reordering these routes can change matching behavior and break this endpoint.
 @router.get("/credit-repayment-summary")
 def get_credit_repayment_summary(
     current_user: User = Depends(get_current_user),
@@ -233,7 +235,7 @@ def get_balance_trend(
     if end_date:
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
     else:
-        end_dt = datetime.utcnow()
+        end_dt = datetime.now(timezone.utc)
     
     if start_date:
         start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))

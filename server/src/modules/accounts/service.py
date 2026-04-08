@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import date, datetime, timedelta
@@ -71,21 +72,23 @@ def _get_statement_due_date(last_bill_date: date, repayment_day: int) -> date:
 
 def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
     """Create new account"""
-    # Check name uniqueness
+    # Check name uniqueness (only active accounts)
     existing = db.query(Account).filter(
         Account.book_id == book_id,
-        Account.name == data.name
+        Account.name == data.name,
+        Account.is_deleted == False  # exclude soft-deleted accounts
     ).first()
     if existing:
-        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="Account name already exists")
+        raise AppException(status_code=400, code=ErrorCode.CONFLICT, message="该账户名称已存在")
 
-    # 判断账户类型是否为信用类（信用卡/信用账户）
+    # 判断账户类型是否为信用类（信用卡/信用账户）或贷款类
     is_credit = data.account_type.value in ["credit_card", "credit_line"]
-    
-    # 信用类账户：opening_balance 作为初始欠款存入 debt_amount
+    is_loan = data.account_type.value == "loan"
+
+    # 信用/贷款类账户：opening_balance 作为初始欠款存入 debt_amount
     # 非信用类账户：opening_balance 存入 current_balance
-    if is_credit:
-        opening_balance = Decimal("0")  # 信用账户的 opening_balance 固定为 0
+    if is_credit or is_loan:
+        opening_balance = Decimal("0")
         debt_amount = data.opening_balance or Decimal("0")  # 初始欠款存入 debt_amount
     else:
         opening_balance = data.opening_balance or Decimal("0")
@@ -164,7 +167,7 @@ def delete_account(db: Session, account_id: str, book_id: str) -> Account:
     account.is_deleted = True
     account.is_active = False
     # 🛡️ L: 保留原名称，前面加标记，不使用固定名称避免 UNIQUE 约束冲突
-    account.name = f"[已删除] {account.name}"
+    account.name = f"[已删除-{uuid.uuid4().hex[:8]}] {account.name}"
     db.commit()
     return account
 
@@ -208,10 +211,13 @@ def update_account_frozen(db: Session, account_id: str, amount: Decimal, is_incr
     if is_increase:
         account.frozen_amount += amount
     else:
+        if account.frozen_amount < amount:
+            raise AppException(
+                status_code=400,
+                code=ErrorCode.INVALID_STATE,
+                message=f"Cannot unfreeze {amount}: only {account.frozen_amount} frozen"
+            )
         account.frozen_amount -= amount
-        # 确保不会变成负数
-        if account.frozen_amount < 0:
-            account.frozen_amount = Decimal("0")
 
 
 def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, Any]:
