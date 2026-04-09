@@ -18,3 +18,7 @@ class Tag(Base):
     is_system = Column(Boolean, default=False)  # 🛡️ L: 系统标签，所有账本共享
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    @property
+    def is_deleted(self) -> bool:
+        return not bool(self.is_active)

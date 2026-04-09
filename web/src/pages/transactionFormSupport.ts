@@ -23,6 +23,7 @@ export interface TagOption {
   parent_id?: string;
   color?: string;
   is_active?: boolean;
+  is_deleted?: boolean;
 }
 
 interface SessionUser {

@@ -8,7 +8,7 @@ from .schemas import TagCreate, TagUpdate, TagResponse, TagTreeNode
 from .service import (
     init_system_tags,
     create_tag, get_tags, get_tag, update_tag, delete_tag,
-    get_first_level_tags, get_tags_tree
+    get_first_level_tags, get_tags_tree, restore_tag, permanent_delete_tag
 )
 from src.modules.books.service import get_default_book
 
@@ -126,6 +126,35 @@ def delete(
     if not delete_tag(db, tag_id, bid):
         raise HTTPException(status_code=404, detail="Tag not found")
     return success_response(message="Tag deleted")
+
+
+@router.post("/{tag_id}/restore", response_model=TagResponse)
+def restore(
+    tag_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Restore a soft-deleted tag."""
+    bid = get_current_book_id(current_user, db, book_id)
+    tag = restore_tag(db, tag_id, bid)
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return tag
+
+
+@router.delete("/{tag_id}/permanent")
+def permanent_delete(
+    tag_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Permanently delete a tag and remove tag associations from transactions."""
+    bid = get_current_book_id(current_user, db, book_id)
+    if not permanent_delete_tag(db, tag_id, bid):
+        raise HTTPException(status_code=404, detail="Tag not found")
+    return success_response(message="Tag permanently deleted")
 
 
 @router.post("/init-system", response_model=dict)

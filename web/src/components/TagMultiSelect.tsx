@@ -10,6 +10,7 @@ type TagItem<T extends TagId> = {
   color?: string;
   parent_id?: T | string;
   is_active?: boolean;
+  is_deleted?: boolean;
 };
 
 type TagGroup<T extends TagId> = {
@@ -168,7 +169,9 @@ export function TagMultiSelect<T extends TagId>({
   onTagsUpdated,
 }: TagMultiSelectProps<T>) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const resolvedTags = tags ?? allTags ?? [];
+  const resolvedTags = (tags ?? allTags ?? []).filter(
+    (tag) => tag.is_active !== false && tag.is_deleted !== true
+  );
   const handleTagsChange = onTagsChange ?? onTagsUpdated;
 
   const [localTags, setLocalTags] = useState<TagItem<T>[]>(resolvedTags);
@@ -257,7 +260,6 @@ export function TagMultiSelect<T extends TagId>({
     setIsCreatingInline(false);
   };
 
-  const selectionHint = maxSelect ? `已选 ${(value ?? []).length}/${maxSelect}` : `已选 ${(value ?? []).length}`;
   const draftSelectionHint = maxSelect
     ? `已选 ${(draftValue ?? []).length}/${maxSelect}`
     : `已选 ${(draftValue ?? []).length}`;
@@ -299,7 +301,6 @@ export function TagMultiSelect<T extends TagId>({
                 label={tag.name}
                 color={tag.color || DEFAULT_TAG_COLOR}
                 selected
-                disabled
               />
             ))}
           </div>

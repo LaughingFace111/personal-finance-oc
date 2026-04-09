@@ -24,6 +24,7 @@ const IncomeDistributionPage = lazy(() => import('./pages/IncomeDistributionPage
 const MonthlyComparisonPage = lazy(() => import('./pages/MonthlyComparisonPage'))
 const TagDistributionPage = lazy(() => import('./pages/TagDistributionPage'))
 const TagDetailPage = lazy(() => import('./pages/TagDetailPage'))
+const TagManagementPage = lazy(() => import('./pages/TagManagementPage'))
 const ImportTemplatesPage = lazy(() => import('./pages/ImportTemplatesPage'))
 const RecurringRulesPage = lazy(() => import('./pages/RecurringRulesPage'))
 const WishlistPage = lazy(() => import('./pages/WishlistPage'))
@@ -337,7 +338,7 @@ return (
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/categories/new" element={<CategoryFormPage />} />
             <Route path="/categories/:id" element={<CategoryEditPage />} />
-            <Route path="/tags" element={<TagsPage />} />
+            <Route path="/tags" element={<TagManagementPage />} />
             <Route path="/tags/new" element={<TagFormPage />} />
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/loans/new" element={<LoanFormPage />} />

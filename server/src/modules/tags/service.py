@@ -1,10 +1,12 @@
+import json
 import uuid
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Iterable, Set
 from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .models import Tag
 from .schemas import TagCreate, TagUpdate
+from src.modules.transactions.models import Transaction
 
 # 预设色板：用于一级标签自动分配默认颜色
 DEFAULT_COLOR_PALETTE = [
@@ -50,7 +52,7 @@ def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool =
         func.lower(func.trim(Tag.name)) == normalized_name.lower()
     ).first()
     if existing_tag:
-        raise HTTPException(status_code=400, detail="Tag name already exists (including deleted tags), global uniqueness enforced")
+        raise HTTPException(status_code=400, detail="Tag name already exists")
 
     # 校验：如果传了 parent_id，必须指向一个一级标签
     if tag_data.parent_id:
@@ -130,6 +132,7 @@ def get_tags_tree(db: Session, book_id: str) -> List[Dict[str, Any]]:
             "color": parent.color,
             "parent_id": parent.parent_id,
             "is_active": parent.is_active,
+            "is_deleted": not parent.is_active,
             "created_at": parent.created_at,
             "updated_at": parent.updated_at,
             "children": [
@@ -140,6 +143,7 @@ def get_tags_tree(db: Session, book_id: str) -> List[Dict[str, Any]]:
                     "color": parent.color,  # 颜色继承自父级
                     "parent_id": child.parent_id,
                     "is_active": child.is_active,
+                    "is_deleted": not child.is_active,
                     "created_at": child.created_at,
                     "updated_at": child.updated_at,
                 }
@@ -156,6 +160,39 @@ def get_tag(db: Session, tag_id: str, book_id: str = None) -> Optional[Tag]:
     if book_id:
         query = query.filter(Tag.book_id == book_id)
     return query.first()
+
+
+def _parse_transaction_tag_names(raw_tags: Any) -> List[str]:
+    if not raw_tags:
+        return []
+    if isinstance(raw_tags, list):
+        return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+    if isinstance(raw_tags, str):
+        try:
+            parsed = json.loads(raw_tags)
+        except json.JSONDecodeError:
+            parsed = [tag.strip() for tag in raw_tags.split(",") if tag.strip()]
+        if isinstance(parsed, list):
+            return [str(tag).strip() for tag in parsed if str(tag).strip()]
+    return []
+
+
+def _remove_tag_associations(db: Session, book_id: str, tag_names: Iterable[str]) -> None:
+    removable_names: Set[str] = {name.strip() for name in tag_names if name and name.strip()}
+    if not removable_names:
+        return
+
+    transactions = db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.tags.isnot(None)
+    ).all()
+
+    for transaction in transactions:
+        current_tags = _parse_transaction_tag_names(transaction.tags)
+        next_tags = [name for name in current_tags if name not in removable_names]
+        if next_tags == current_tags:
+            continue
+        transaction.tags = json.dumps(next_tags, ensure_ascii=False) if next_tags else None
 
 
 def update_tag(db: Session, tag_id: str, book_id: str, tag_data: TagUpdate) -> Optional[Tag]:
@@ -206,6 +243,53 @@ def delete_tag(db: Session, tag_id: str, book_id: str = None) -> bool:
             Tag.parent_id == tag.id,
             Tag.book_id == tag.book_id
         ).update({"is_active": False})
+    db.commit()
+    return True
+
+
+def restore_tag(db: Session, tag_id: str, book_id: str) -> Optional[Tag]:
+    tag = get_tag(db, tag_id, book_id)
+    if not tag:
+        return None
+
+    if tag.parent_id:
+        parent = get_tag(db, tag.parent_id, book_id)
+        if not parent:
+            raise HTTPException(status_code=400, detail="Parent tag no longer exists")
+        parent.is_active = True
+
+    tag.is_active = True
+
+    if tag.parent_id is None:
+        db.query(Tag).filter(
+            Tag.parent_id == tag.id,
+            Tag.book_id == book_id
+        ).update({"is_active": True})
+
+    db.commit()
+    db.refresh(tag)
+    return tag
+
+
+def permanent_delete_tag(db: Session, tag_id: str, book_id: str) -> bool:
+    tag = get_tag(db, tag_id, book_id)
+    if not tag:
+        return False
+
+    tags_to_delete = [tag]
+    if tag.parent_id is None:
+        tags_to_delete.extend(
+            db.query(Tag).filter(
+                Tag.parent_id == tag.id,
+                Tag.book_id == book_id
+            ).all()
+        )
+
+    _remove_tag_associations(db, book_id, [item.name for item in tags_to_delete])
+
+    for item in tags_to_delete:
+        db.delete(item)
+
     db.commit()
     return True
 

@@ -25,6 +25,7 @@ class TagResponse(TagBase):
     book_id: Optional[str] = None  # 🛡️ L: 系统标签允许为 None
     is_system: bool = False
     is_active: bool = True
+    is_deleted: bool = False
     created_at: datetime
     updated_at: datetime
 
