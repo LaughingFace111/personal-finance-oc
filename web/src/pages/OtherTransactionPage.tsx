@@ -8,15 +8,17 @@ import {
   transactionFormSectionClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';
-import { apiGet, apiPost } from '../services/api';
+import { apiGet, apiPost, apiPut } from '../services/api';
 import {
   AccountOption,
   CategoryOption,
   TagOption,
-  getCategoryLabel,
   getAccountOptionLabel,
+  getCategoryLabel,
   getDefaultBookId,
   loadTransactionFormData,
+  OtherTransactionFormInitialValues,
+  toDateInputValue,
   toOccurredAt,
 } from './transactionFormSupport';
 
@@ -27,6 +29,11 @@ const creditAccountTypes = ['credit_card', 'credit_line'];
 
 interface OtherTransactionPageProps {
   initialSubType?: SubType;
+  initialValues?: OtherTransactionFormInitialValues;
+  isEditMode?: boolean;
+  embedded?: boolean;
+  onSuccess?: () => void;
+  onCancel?: () => void;
 }
 
 interface AccountDetailResponse {
@@ -35,17 +42,22 @@ interface AccountDetailResponse {
 
 export default function OtherTransactionPage({
   initialSubType = 'installment',
+  initialValues,
+  isEditMode = false,
+  embedded = false,
+  onSuccess,
+  onCancel,
 }: OtherTransactionPageProps) {
   const navigate = useNavigate();
   const [bookId, setBookId] = useState('');
-  const [subType, setSubType] = useState<SubType>(initialSubType);
+  const [subType, setSubType] = useState<SubType>(initialValues?.subType ?? initialSubType);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const [accountId, setAccountId] = useState('');
+  const [accountId, setAccountId] = useState(initialValues?.accountId ?? '');
   const [categoryId, setCategoryId] = useState('');
   const [merchant, setMerchant] = useState('');
   const [amount, setAmount] = useState('');
@@ -57,26 +69,32 @@ export default function OtherTransactionPage({
   const [loanAmount, setLoanAmount] = useState('');
   const [repaymentDate, setRepaymentDate] = useState('');
   const [reason, setReason] = useState('');
-  const [creditCardAccountId, setCreditCardAccountId] = useState('');
-  const [repayAmount, setRepayAmount] = useState('');
+  const [creditCardAccountId, setCreditCardAccountId] = useState(initialValues?.creditCardAccountId ?? '');
+  const [repayAmount, setRepayAmount] = useState(initialValues?.amount ?? '');
   const [repayAmountLoading, setRepayAmountLoading] = useState(false);
 
-  const [memo, setMemo] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [tagIds, setTagIds] = useState<string[]>([]);
+  const [memo, setMemo] = useState(initialValues?.memo ?? '');
+  const [date, setDate] = useState(initialValues?.date ? toDateInputValue(initialValues.date) : new Date().toISOString().split('T')[0]);
+  const [tagIds, setTagIds] = useState<string[]>(initialValues?.tagIds ?? []);
 
   useEffect(() => {
-    setSubType(initialSubType);
-  }, [initialSubType]);
+    setSubType(initialValues?.subType ?? initialSubType);
+    setAccountId(initialValues?.accountId ?? '');
+    setCreditCardAccountId(initialValues?.creditCardAccountId ?? '');
+    setRepayAmount(initialValues?.amount ?? '');
+    setMemo(initialValues?.memo ?? '');
+    setDate(initialValues?.date ? toDateInputValue(initialValues.date) : new Date().toISOString().split('T')[0]);
+    setTagIds(initialValues?.tagIds ?? []);
+  }, [initialSubType, initialValues]);
 
   useEffect(() => {
     const loadData = async () => {
       try {
-        const bookId = await getDefaultBookId();
-        if (!bookId) throw new Error('无法获取账本信息');
-        setBookId(bookId);
+        const resolvedBookId = await getDefaultBookId();
+        if (!resolvedBookId) throw new Error('无法获取账本信息');
+        setBookId(resolvedBookId);
 
-        const formData = await loadTransactionFormData(bookId);
+        const formData = await loadTransactionFormData(resolvedBookId);
         setAccounts(formData.accounts);
         setCategories(formData.categories);
         setTags(formData.tags);
@@ -90,10 +108,13 @@ export default function OtherTransactionPage({
 
   useEffect(() => {
     setError('');
-    setAccountId('');
+    if (subType === 'repay' && isEditMode) {
+      return;
+    }
+    setAccountId((current) => (subType === 'repay' ? current : ''));
     setCategoryId('');
-    setCreditCardAccountId('');
-  }, [subType]);
+    setCreditCardAccountId((current) => (subType === 'repay' ? current : ''));
+  }, [isEditMode, subType]);
 
   useEffect(() => {
     if (subType !== 'repay') {
@@ -102,7 +123,17 @@ export default function OtherTransactionPage({
     }
 
     if (!creditCardAccountId) {
-      setRepayAmount('');
+      setRepayAmount(initialValues?.amount ?? '');
+      setRepayAmountLoading(false);
+      return;
+    }
+
+    if (
+      isEditMode &&
+      initialValues?.creditCardAccountId === creditCardAccountId &&
+      initialValues?.amount
+    ) {
+      setRepayAmount(initialValues.amount);
       setRepayAmountLoading(false);
       return;
     }
@@ -132,7 +163,7 @@ export default function OtherTransactionPage({
     return () => {
       isCancelled = true;
     };
-  }, [creditCardAccountId, subType]);
+  }, [creditCardAccountId, initialValues?.amount, initialValues?.creditCardAccountId, isEditMode, subType]);
 
   const creditAccounts = useMemo(
     () => accounts.filter((account) => creditAccountTypes.includes(account.account_type)),
@@ -164,14 +195,22 @@ export default function OtherTransactionPage({
       .filter(Boolean);
   }, [tagIds, tags]);
 
-  const submitInstallment = async (bookId: string) => {
+  const handleCancel = () => {
+    if (onCancel) {
+      onCancel();
+      return;
+    }
+    navigate(-1);
+  };
+
+  const submitInstallment = async (resolvedBookId: string) => {
     if (!accountId || !amount || !merchant) {
       throw new Error('请填写分期账户、金额和商户');
     }
 
     await apiPost('/api/installments', {
       occurred_at: toOccurredAt(date),
-      book_id: bookId,
+      book_id: resolvedBookId,
       account_id: accountId,
       merchant,
       category_id: categoryId || null,
@@ -185,12 +224,12 @@ export default function OtherTransactionPage({
     });
   };
 
-  const submitDebtTransaction = async (bookId: string, transactionType: 'debt_lend' | 'debt_borrow') => {
+  const submitDebtTransaction = async (resolvedBookId: string, transactionType: 'debt_lend' | 'debt_borrow') => {
     if (!accountId || !loanAmount || !counterparty || !repaymentDate) {
       throw new Error('请填写账户、金额、往来方和约定还款日');
     }
 
-    await apiPost(`/api/transactions?book_id=${bookId}`, {
+    await apiPost(`/api/transactions?book_id=${resolvedBookId}`, {
       occurred_at: toOccurredAt(date),
       account_id: accountId,
       transaction_type: transactionType,
@@ -206,12 +245,41 @@ export default function OtherTransactionPage({
     });
   };
 
-  const submitRepayment = async (bookId: string) => {
+  const submitRepayment = async (resolvedBookId: string) => {
     if (!accountId || !creditCardAccountId || !repayAmount) {
       throw new Error('请填写还款账户、信用卡和还款金额');
     }
 
-    await apiPost(`/api/transactions?book_id=${bookId}`, {
+    const tagPayload =
+      tagIds.length > 0
+        ? JSON.stringify(
+            tagIds
+              .map((id) => {
+                const tag = tags.find((item) => item.id === id);
+                return tag?.name || '';
+              })
+              .filter(Boolean),
+          )
+        : null;
+
+    if (isEditMode) {
+      const payload = {
+        occurred_at: toOccurredAt(date),
+        account_id: accountId,
+        counterparty_account_id: creditCardAccountId,
+        amount: parseFloat(repayAmount),
+        note: memo || null,
+        tags: tagPayload,
+      };
+
+      if (!initialValues?.transactionId) {
+        throw new Error('缺少还款记录ID');
+      }
+      await apiPut(`/api/transactions/${initialValues.transactionId}?book_id=${resolvedBookId}`, payload);
+      return;
+    }
+
+    const payload = {
       occurred_at: toOccurredAt(date),
       transaction_type: 'repayment_credit_card',
       direction: 'out',
@@ -219,7 +287,10 @@ export default function OtherTransactionPage({
       counterparty_account_id: creditCardAccountId,
       amount: parseFloat(repayAmount),
       note: memo || null,
-    });
+      tags: tagPayload,
+    };
+
+    await apiPost(`/api/transactions?book_id=${resolvedBookId}`, payload);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -228,22 +299,26 @@ export default function OtherTransactionPage({
     setLoading(true);
 
     try {
-      const bookId = await getDefaultBookId();
-      if (!bookId) throw new Error('无法获取账本信息');
+      const resolvedBookId = bookId || (await getDefaultBookId());
+      if (!resolvedBookId) throw new Error('无法获取账本信息');
 
       if (subType === 'installment') {
-        await submitInstallment(bookId);
+        await submitInstallment(resolvedBookId);
       } else if (subType === 'lend') {
-        await submitDebtTransaction(bookId, 'debt_lend');
+        await submitDebtTransaction(resolvedBookId, 'debt_lend');
       } else if (subType === 'borrow') {
-        await submitDebtTransaction(bookId, 'debt_borrow');
+        await submitDebtTransaction(resolvedBookId, 'debt_borrow');
       } else {
-        await submitRepayment(bookId);
+        await submitRepayment(resolvedBookId);
       }
 
-      navigate('/dashboard');
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        navigate('/dashboard');
+      }
     } catch (err) {
-      setError((err as Error).message || '创建失败');
+      setError((err as Error).message || (isEditMode ? '更新失败' : '创建失败'));
     } finally {
       setLoading(false);
     }
@@ -478,104 +553,107 @@ export default function OtherTransactionPage({
     </>
   );
 
-  return (
-    <TransactionFormLayout
-      pageTitle="其他交易"
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div className={transactionFormSectionClass}>
-          {subType === 'installment'
-            ? renderInstallmentFields()
-            : subType === 'repay'
-              ? renderRepayFields()
-              : renderDebtFields()}
+  const content = (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className={transactionFormSectionClass}>
+        {subType === 'installment'
+          ? renderInstallmentFields()
+          : subType === 'repay'
+            ? renderRepayFields()
+            : renderDebtFields()}
 
-          <div>
-            <label className={transactionFormLabelClass}>日期</label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className={transactionFormFieldClass}
-              required
-            />
-          </div>
+        <div>
+          <label className={transactionFormLabelClass}>日期</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className={transactionFormFieldClass}
+            required
+          />
+        </div>
 
-          <div>
-            <label className={transactionFormLabelClass}>备注</label>
-            <textarea
-              value={memo}
-              onChange={(e) => setMemo(e.target.value)}
-              placeholder="添加备注..."
-              rows={3}
-              className={transactionFormTextareaClass}
-            />
-          </div>
+        <div>
+          <label className={transactionFormLabelClass}>备注</label>
+          <textarea
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            placeholder="添加备注..."
+            rows={3}
+            className={transactionFormTextareaClass}
+          />
+        </div>
 
-          {subType !== 'repay' && (
-            <div>
-              <label className={transactionFormLabelClass}>标签</label>
-              <TagMultiSelect
-                allTags={tags}
-                value={tagIds}
-                onChange={setTagIds}
-                onTagsUpdated={setTags}
-                bookId={bookId}
-                placeholder="搜索、选择或创建标签"
-              />
-              {selectedTagLabels.length > 0 ? (
-                <div
+        <div>
+          <label className={transactionFormLabelClass}>标签</label>
+          <TagMultiSelect
+            allTags={tags}
+            value={tagIds}
+            onChange={setTagIds}
+            onTagsUpdated={setTags}
+            bookId={bookId}
+            placeholder="搜索、选择或创建标签"
+          />
+          {selectedTagLabels.length > 0 ? (
+            <div
+              style={{
+                marginTop: '8px',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px',
+              }}
+            >
+              {selectedTagLabels.map((label) => (
+                <span
+                  key={label}
                   style={{
-                    marginTop: '8px',
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '8px',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '999px',
+                    background: 'var(--bg-elevated)',
+                    padding: '4px 10px',
+                    fontSize: '12px',
                   }}
                 >
-                  {selectedTagLabels.map((label) => (
-                    <span
-                      key={label}
-                      style={{
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '999px',
-                        background: 'var(--bg-elevated)',
-                        padding: '4px 10px',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
+                  {label}
+                </span>
+              ))}
             </div>
-          )}
+          ) : null}
         </div>
+      </div>
 
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {error}
-          </div>
-        )}
-
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-          >
-            取消
-          </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? '保存中...' : '保存'}
-          </button>
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
         </div>
-      </form>
+      )}
 
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? (isEditMode ? '保存中...' : '保存中...') : isEditMode ? '保存' : '保存'}
+        </button>
+      </div>
+    </form>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <TransactionFormLayout pageTitle={isEditMode ? '编辑其他交易' : '其他交易'}>
+      {content}
     </TransactionFormLayout>
   );
 }

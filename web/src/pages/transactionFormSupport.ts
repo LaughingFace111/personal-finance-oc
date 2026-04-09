@@ -26,6 +26,29 @@ export interface TagOption {
   is_deleted?: boolean;
 }
 
+export interface TransferFormInitialValues {
+  transactionId?: string;
+  fromAccountId: string;
+  toAccountId: string;
+  amount: string;
+  feeAmount?: string;
+  feeAccountId?: string;
+  memo?: string;
+  tagIds?: string[];
+  occurredAt?: string;
+}
+
+export interface OtherTransactionFormInitialValues {
+  transactionId?: string;
+  subType?: 'installment' | 'lend' | 'borrow' | 'repay';
+  accountId?: string;
+  creditCardAccountId?: string;
+  amount?: string;
+  memo?: string;
+  tagIds?: string[];
+  date?: string;
+}
+
 interface SessionUser {
   default_book_id?: string;
 }
@@ -72,6 +95,47 @@ export function toOccurredAt(date: string) {
   }
 
   return new Date(`${date}T12:00:00`).toISOString();
+}
+
+export function toDateInputValue(value?: string | null) {
+  if (!value) return '';
+  return value.includes('T') ? value.split('T')[0] : value;
+}
+
+export function parseTransactionTagNames(tags: unknown): string[] {
+  if (!tags) return [];
+
+  if (Array.isArray(tags)) {
+    return tags
+      .map((tag) => {
+        if (typeof tag === 'string') return tag.trim();
+        if (tag && typeof tag === 'object' && 'name' in tag && typeof tag.name === 'string') {
+          return tag.name.trim();
+        }
+        return '';
+      })
+      .filter(Boolean);
+  }
+
+  if (typeof tags === 'string') {
+    try {
+      const parsed = JSON.parse(tags);
+      return parseTransactionTagNames(parsed);
+    } catch {
+      return tags
+        .split(/[,\s]+/)
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+export function mapTagNamesToIds(allTags: TagOption[], tagNames: string[]) {
+  return allTags
+    .filter((tag) => tagNames.includes(tag.name))
+    .map((tag) => tag.id);
 }
 
 export function getCategoryLabel(categories: CategoryOption[], categoryId: string) {

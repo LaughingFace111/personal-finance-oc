@@ -1,8 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
-import { apiPatch, apiDelete, apiPost } from '../services/api'
+import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api'
 import { HierarchyPickerModal } from './HierarchyPickerModal'
+import TransferPage from '../pages/TransferPage'
+import OtherTransactionPage from '../pages/OtherTransactionPage'
+import {
+  mapTagNamesToIds,
+  parseTransactionTagNames,
+  OtherTransactionFormInitialValues,
+  TransferFormInitialValues,
+  toDateInputValue,
+} from '../pages/transactionFormSupport'
 
 interface TransactionBottomDrawerProps {
   visible: boolean
@@ -31,6 +40,18 @@ interface TagOption {
   color?: string
 }
 
+interface TransferEditContextResponse {
+  transaction_id: string
+  occurred_at: string
+  from_account_id: string
+  to_account_id: string
+  amount: number | string
+  note?: string | null
+  tags?: string | null
+  fee_amount: number | string
+  fee_account_id?: string | null
+}
+
 export function TransactionBottomDrawer({
   visible,
   transaction,
@@ -53,10 +74,16 @@ export function TransactionBottomDrawer({
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [specialFormLoading, setSpecialFormLoading] = useState(false)
+  const [transferInitialValues, setTransferInitialValues] = useState<TransferFormInitialValues | null>(null)
 
   // 弹窗状态
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [tagModalOpen, setTagModalOpen] = useState(false)
+
+  const isTransferTransaction = transaction?.transaction_type === 'transfer'
+  const isRepaymentTransaction = transaction?.transaction_type === 'repayment_credit_card'
+  const isSpecialTransaction = isTransferTransaction || isRepaymentTransaction
 
   // 🛡️ L: Bug 2 修复 - 强制清理标签状态，防止跨交易泄漏
   useEffect(() => {
@@ -71,6 +98,7 @@ export function TransactionBottomDrawer({
   // 🛡️ L: Bug 2 修复 - 交易切换时立即清理状态
   useEffect(() => {
     if (!transaction || !visible) return
+    if (isSpecialTransaction) return
     setForm({
       type: transaction.direction === 'in' ? 'income' : 'expense',
       amount: String(transaction.amount),
@@ -94,7 +122,7 @@ export function TransactionBottomDrawer({
         console.error("Request failed:", error)
       }
     }
-  }, [transaction?.id, visible, tags])  // 依赖 transaction.id 而不是整个 transaction 对象
+  }, [isSpecialTransaction, transaction?.id, visible, tags])  // 依赖 transaction.id 而不是整个 transaction 对象
 
   // Body滚动锁定 - 防止滚动穿透
   useEffect(() => {
@@ -121,6 +149,7 @@ export function TransactionBottomDrawer({
   // 加载交易数据
   useEffect(() => {
     if (!transaction || !visible) return
+    if (isSpecialTransaction) return
     setForm({
       type: transaction.direction === 'in' ? 'income' : 'expense',
       amount: String(transaction.amount),
@@ -141,7 +170,70 @@ export function TransactionBottomDrawer({
         console.error("Request failed:", error)
       }
     }
-  }, [transaction, visible, tags])
+  }, [isSpecialTransaction, transaction, visible, tags])
+
+  useEffect(() => {
+    if (!transaction || !visible) {
+      setTransferInitialValues(null)
+      setSpecialFormLoading(false)
+      return
+    }
+
+    if (!isTransferTransaction) {
+      setTransferInitialValues(null)
+      setSpecialFormLoading(false)
+      return
+    }
+
+    let isCancelled = false
+    setSpecialFormLoading(true)
+    apiGet<TransferEditContextResponse>(`/api/transactions/transfer/${transaction.id}/edit?book_id=${bookId}`)
+      .then((context) => {
+        if (isCancelled) return
+        const tagIds = mapTagNamesToIds(tags as any, parseTransactionTagNames(context.tags))
+        setTransferInitialValues({
+          transactionId: context.transaction_id,
+          fromAccountId: context.from_account_id,
+          toAccountId: context.to_account_id,
+          amount: String(context.amount),
+          feeAmount: String(context.fee_amount ?? 0),
+          feeAccountId: context.fee_account_id ?? '',
+          memo: context.note ?? '',
+          tagIds,
+          occurredAt: toDateInputValue(context.occurred_at),
+        })
+      })
+      .catch((err: any) => {
+        if (!isCancelled) {
+          setTransferInitialValues(null)
+          message.error(err?.message || '加载转账编辑数据失败')
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setSpecialFormLoading(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [bookId, isTransferTransaction, tags, transaction, visible])
+
+  const repaymentInitialValues = useMemo<OtherTransactionFormInitialValues | null>(() => {
+    if (!isRepaymentTransaction || !transaction) return null
+    const tagIds = mapTagNamesToIds(tags as any, parseTransactionTagNames(transaction.tags))
+    return {
+      transactionId: transaction.id,
+      subType: 'repay',
+      accountId: transaction.account_id || '',
+      creditCardAccountId: transaction.counterparty_account_id || '',
+      amount: String(transaction.amount ?? ''),
+      memo: transaction.note || '',
+      tagIds,
+      date: toDateInputValue(transaction.occurred_at),
+    }
+  }, [isRepaymentTransaction, tags, transaction])
 
   // 过滤分类
   const filteredCategories = useMemo(() => {
@@ -300,6 +392,7 @@ export function TransactionBottomDrawer({
   const isExpense = form.type === 'expense'
   const accentColor = isExpense ? '#ff4d4f' : '#52c41a'
   const canRefund = transaction.direction === 'out'
+  const canCopyToToday = !isSpecialTransaction
 
   return (
     <Drawer
@@ -338,12 +431,13 @@ export function TransactionBottomDrawer({
                 size="small" 
                 icon={<UndoOutlined />} 
                 onClick={handleRefund}
-                disabled={!canRefund}
+                disabled={!canRefund || isSpecialTransaction}
               >退款</Button>
               <Button 
                 size="small" 
                 icon={<CopyOutlined />} 
                 onClick={handleCopyToToday}
+                disabled={!canCopyToToday}
               >复制到今天</Button>
             </div>
           </div>
@@ -356,6 +450,39 @@ export function TransactionBottomDrawer({
             padding: 16,
             paddingBottom: 24
           }}>
+            {isTransferTransaction ? (
+              specialFormLoading ? (
+                <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+              ) : transferInitialValues ? (
+                <TransferPage
+                  embedded
+                  isEditMode
+                  initialValues={transferInitialValues}
+                  onCancel={onClose}
+                  onSuccess={() => {
+                    message.success('更新成功')
+                    onRefresh()
+                    onClose()
+                  }}
+                />
+              ) : null
+            ) : isRepaymentTransaction ? (
+              repaymentInitialValues ? (
+                <OtherTransactionPage
+                  embedded
+                  isEditMode
+                  initialSubType="repay"
+                  initialValues={repaymentInitialValues}
+                  onCancel={onClose}
+                  onSuccess={() => {
+                    message.success('更新成功')
+                    onRefresh()
+                    onClose()
+                  }}
+                />
+              ) : null
+            ) : (
+              <>
             {/* 支出/收入切换 */}
             <div style={{ display: 'flex', justifyContent: 'center', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
               <div
@@ -511,9 +638,12 @@ export function TransactionBottomDrawer({
                 onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
               />
             </div>
+              </>
+            )}
           </div>
 
           {/* Footer 区域 - 固定不滚动 */}
+          {!isSpecialTransaction ? (
           <div style={{ 
             display: 'flex', 
             gap: 12, 
@@ -541,9 +671,10 @@ export function TransactionBottomDrawer({
               onClick={handleSave}
             >保存</Button>
           </div>
+          ) : null}
 
           {/* 分类选择弹窗 */}
-          <HierarchyPickerModal
+          {!isSpecialTransaction ? <HierarchyPickerModal
             open={categoryModalOpen}
             title="选择类别"
             items={filteredCategories as any}
@@ -554,10 +685,10 @@ export function TransactionBottomDrawer({
               setForm(f => ({ ...f, category_id: typeof nextValue === 'string' ? nextValue : '' }))
               setCategoryModalOpen(false)
             }}
-          />
+          /> : null}
 
           {/* 标签选择弹窗 */}
-          <HierarchyPickerModal
+          {!isSpecialTransaction ? <HierarchyPickerModal
             open={tagModalOpen}
             title="选择标签"
             items={tags as any}
@@ -569,7 +700,7 @@ export function TransactionBottomDrawer({
               setSelectedTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : [])
               setTagModalOpen(false)
             }}
-          />
+          /> : null}
         </>
       )}
     </Drawer>

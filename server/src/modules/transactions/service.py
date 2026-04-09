@@ -21,6 +21,7 @@ from .schemas import (
     RefundCreate,
     TransferCreate,
     CreditCardRepaymentCreate,
+    TransferEditResponse,
 )
 from src.modules.accounts.service import (
     get_account,
@@ -450,7 +451,82 @@ def create_transaction(
 
 
 
-def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Transaction]:
+def _collect_transfer_related_transactions(db: Session, txn: Transaction, book_id: str) -> List[Transaction]:
+    to_delete = {txn.id: txn}
+
+    related_transactions = []
+    if txn.related_transaction_id:
+        related_transactions.extend(
+            db.query(Transaction).filter(
+                Transaction.book_id == book_id,
+                Transaction.id == txn.related_transaction_id,
+            ).all()
+        )
+
+    related_transactions.extend(
+        db.query(Transaction).filter(
+            Transaction.book_id == book_id,
+            Transaction.related_transaction_id == txn.id,
+        ).all()
+    )
+
+    if txn.business_key:
+        related_transactions.extend(
+            db.query(Transaction).filter(
+                Transaction.book_id == book_id,
+                Transaction.transaction_type == TransactionType.TRANSFER.value,
+                Transaction.business_key == txn.business_key,
+            ).all()
+        )
+
+    for related_txn in related_transactions:
+        to_delete[related_txn.id] = related_txn
+
+    occurred_at_values = {item.occurred_at for item in to_delete.values()}
+    fee_candidates = db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type == TransactionType.FEE.value,
+        Transaction.occurred_at.in_(occurred_at_values),
+    ).all()
+
+    for fee_txn in fee_candidates:
+        merchant = fee_txn.merchant or ""
+        note = fee_txn.note or ""
+        if "转账手续费" in merchant or "转账手续费" in note or "手续费" in note:
+            to_delete[fee_txn.id] = fee_txn
+
+    return list(to_delete.values())
+
+
+def get_transfer_edit_context(db: Session, transaction_id: str, book_id: str) -> TransferEditResponse:
+    txn = get_transaction(db, transaction_id, book_id)
+    if not txn:
+        raise NotFoundException("Transaction not found")
+    if txn.transaction_type != TransactionType.TRANSFER.value:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Transaction is not a transfer")
+
+    related = _collect_transfer_related_transactions(db, txn, book_id)
+    transfer_rows = [item for item in related if item.transaction_type == TransactionType.TRANSFER.value]
+    fee_row = next((item for item in related if item.transaction_type == TransactionType.FEE.value), None)
+    primary_row = next(
+        (item for item in transfer_rows if item.direction == TransactionDirection.OUT.value),
+        transfer_rows[0] if transfer_rows else txn,
+    )
+
+    return TransferEditResponse(
+        transaction_id=primary_row.id,
+        occurred_at=primary_row.occurred_at,
+        from_account_id=primary_row.account_id,
+        to_account_id=primary_row.counterparty_account_id,
+        amount=primary_row.amount,
+        note=primary_row.note,
+        tags=primary_row.tags,
+        fee_amount=fee_row.amount if fee_row else Decimal("0"),
+        fee_account_id=fee_row.account_id if fee_row else None,
+    )
+
+
+def create_transfer(db: Session, book_id: str, data: TransferCreate, commit: bool = True) -> List[Transaction]:
     """Create transfer transaction and optional fee transaction."""
 
     # Validate accounts
@@ -586,9 +662,34 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         update_account_balance(db, fee_account.id, fee_amount, is_increase=False)
         created_transaction_ids.append(fee_txn.id)
 
-    db.commit()
-    clear_overview_cache()  # 🛡️ L: create_transfer
+    if commit:
+        db.commit()
+        clear_overview_cache()  # 🛡️ L: create_transfer
+    else:
+        db.flush()
     return _load_transactions_for_response(db, created_transaction_ids)
+
+
+def update_transfer(db: Session, transaction_id: str, book_id: str, data: TransferCreate) -> List[Transaction]:
+    txn = get_transaction(db, transaction_id, book_id)
+    if not txn:
+        raise NotFoundException("Transaction not found")
+    if txn.transaction_type != TransactionType.TRANSFER.value:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Transaction is not a transfer")
+
+    related_transactions = _collect_transfer_related_transactions(db, txn, book_id)
+
+    for item in related_transactions:
+        _reverse_transaction_effects(db, item)
+
+    for item in related_transactions:
+        db.delete(item)
+
+    db.flush()
+    created = create_transfer(db, book_id, data, commit=False)
+    db.commit()
+    clear_overview_cache()
+    return created
 
 
 def create_credit_card_repayment(

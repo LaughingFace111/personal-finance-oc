@@ -12,11 +12,13 @@ from src.modules.auth.models import User
 
 from .schemas import (
     TransactionCreate, TransactionResponse, TransactionUpdate,
-    TransferCreate, CreditCardRepaymentCreate, RefundCreate, TransactionFilter, TransactionSummary
+    TransferCreate, CreditCardRepaymentCreate, RefundCreate, TransactionFilter, TransactionSummary,
+    TransferEditResponse,
 )
 from .service import (
     create_transaction, create_transfer, create_credit_card_repayment, create_refund,
     get_transactions, get_transaction, update_transaction, delete_transaction,
+    get_transfer_edit_context, update_transfer,
     adjust_account_balance
 )
 from src.modules.books.service import get_default_book
@@ -86,6 +88,31 @@ def transfer(
     """Create transfer between two accounts"""
     bid = get_current_book_id(current_user, db, book_id)
     return create_transfer(db, bid, data)
+
+
+@router.get("/transfer/{transaction_id}/edit", response_model=TransferEditResponse)
+def transfer_edit_context(
+    transaction_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Get normalized edit payload for a transfer transaction."""
+    bid = get_current_book_id(current_user, db, book_id)
+    return get_transfer_edit_context(db, transaction_id, bid)
+
+
+@router.put("/transfer/{transaction_id}", response_model=List[TransactionResponse])
+def update_transfer_route(
+    transaction_id: str,
+    data: TransferCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Replace a transfer batch using the transfer form payload."""
+    bid = get_current_book_id(current_user, db, book_id)
+    return update_transfer(db, transaction_id, bid, data)
 
 
 @router.post("/repayment/credit-card", response_model=TransactionResponse)
@@ -265,6 +292,19 @@ def update(
     book_id: str = None
 ):
     """Update transaction"""
+    bid = get_current_book_id(current_user, db, book_id)
+    return update_transaction(db, transaction_id, bid, data)
+
+
+@router.put("/{transaction_id}", response_model=TransactionResponse)
+def replace(
+    transaction_id: str,
+    data: TransactionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Update transaction with PUT for form reuse."""
     bid = get_current_book_id(current_user, db, book_id)
     return update_transaction(db, transaction_id, bid, data)
 

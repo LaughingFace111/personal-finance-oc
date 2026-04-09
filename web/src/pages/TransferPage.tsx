@@ -5,18 +5,20 @@ import {
   TransactionFormLayout,
   transactionFormFieldClass,
   transactionFormLabelClass,
-  transactionFormSectionClass,
   transactionFormPrimaryButtonClass,
+  transactionFormSectionClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';
-import { apiPost } from '../services/api';
+import { apiPost, apiPut } from '../services/api';
 import {
   AccountOption,
-  getDefaultBookId,
   getAccountOptionLabel,
+  getDefaultBookId,
   loadTransferFormData,
-  toOccurredAt,
   TagOption,
+  toDateInputValue,
+  toOccurredAt,
+  TransferFormInitialValues,
 } from './transactionFormSupport';
 
 function getCurrentDateValue() {
@@ -26,20 +28,38 @@ function getCurrentDateValue() {
   return local.toISOString().slice(0, 10);
 }
 
-export default function TransferPage() {
+interface TransferPageProps {
+  initialValues?: TransferFormInitialValues;
+  isEditMode?: boolean;
+  embedded?: boolean;
+  onSuccess?: () => void;
+  onCancel?: () => void;
+}
+
+export default function TransferPage({
+  initialValues,
+  isEditMode = false,
+  embedded = false,
+  onSuccess,
+  onCancel,
+}: TransferPageProps) {
   const navigate = useNavigate();
   const [bookId, setBookId] = useState('');
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
-  const [fromAccountId, setFromAccountId] = useState<string>('');
-  const [toAccountId, setToAccountId] = useState<string>('');
-  const [amount, setAmount] = useState('');
-  const [feeAmount, setFeeAmount] = useState('0');
-  const [feeAccountId, setFeeAccountId] = useState<string>('');
-  const [memo, setMemo] = useState('');
-  const [tagIds, setTagIds] = useState<string[]>([]);
-  const [occurredAt, setOccurredAt] = useState(getCurrentDateValue);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [fromAccountId, setFromAccountId] = useState<string>(initialValues?.fromAccountId ?? '');
+  const [toAccountId, setToAccountId] = useState<string>(initialValues?.toAccountId ?? '');
+  const [amount, setAmount] = useState(initialValues?.amount ?? '');
+  const [feeAmount, setFeeAmount] = useState(initialValues?.feeAmount ?? '0');
+  const [feeAccountId, setFeeAccountId] = useState<string>(initialValues?.feeAccountId ?? '');
+  const [memo, setMemo] = useState(initialValues?.memo ?? '');
+  const [tagIds, setTagIds] = useState<string[]>(initialValues?.tagIds ?? []);
+  const [occurredAt, setOccurredAt] = useState(
+    initialValues?.occurredAt ? toDateInputValue(initialValues.occurredAt) : getCurrentDateValue(),
+  );
+  const [advancedOpen, setAdvancedOpen] = useState(
+    Boolean((initialValues?.feeAmount && initialValues.feeAmount !== '0') || initialValues?.memo || initialValues?.tagIds?.length),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -66,13 +86,24 @@ export default function TransferPage() {
   }, [tagIds, tags]);
 
   useEffect(() => {
+    setFromAccountId(initialValues?.fromAccountId ?? '');
+    setToAccountId(initialValues?.toAccountId ?? '');
+    setAmount(initialValues?.amount ?? '');
+    setFeeAmount(initialValues?.feeAmount ?? '0');
+    setFeeAccountId(initialValues?.feeAccountId ?? '');
+    setMemo(initialValues?.memo ?? '');
+    setTagIds(initialValues?.tagIds ?? []);
+    setOccurredAt(initialValues?.occurredAt ? toDateInputValue(initialValues.occurredAt) : getCurrentDateValue());
+  }, [initialValues]);
+
+  useEffect(() => {
     const loadData = async () => {
       try {
-        const bookId = await getDefaultBookId();
-        if (!bookId) throw new Error('无法获取账本信息');
-        setBookId(bookId);
+        const resolvedBookId = await getDefaultBookId();
+        if (!resolvedBookId) throw new Error('无法获取账本信息');
+        setBookId(resolvedBookId);
 
-        const formData = await loadTransferFormData(bookId);
+        const formData = await loadTransferFormData(resolvedBookId);
         setAccounts(formData.accounts);
         setTags(formData.tags);
       } catch (err) {
@@ -115,10 +146,18 @@ export default function TransferPage() {
     }
   }, [shouldShowFeeAccount, memo, tagIds.length]);
 
+  const handleCancel = () => {
+    if (onCancel) {
+      onCancel();
+      return;
+    }
+    navigate(-1);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
     if (!fromAccountId || !toAccountId || !amount || !occurredAt) {
       setError('请填写必填字段');
       return;
@@ -136,8 +175,8 @@ export default function TransferPage() {
 
     setLoading(true);
     try {
-      const bookId = await getDefaultBookId();
-      if (!bookId) {
+      const resolvedBookId = bookId || (await getDefaultBookId());
+      if (!resolvedBookId) {
         throw new Error('无法获取账本信息');
       }
 
@@ -162,198 +201,209 @@ export default function TransferPage() {
             : null,
       };
 
-      const response = await apiPost(`/api/transactions/transfer?book_id=${bookId}`, payload);
-
-      if (response) {
-        navigate('/dashboard');
+      if (isEditMode) {
+        if (!initialValues?.transactionId) {
+          throw new Error('缺少转账记录ID');
+        }
+        await apiPut(`/api/transactions/transfer/${initialValues.transactionId}?book_id=${resolvedBookId}`, payload);
       } else {
-        throw new Error('创建失败');
+        await apiPost(`/api/transactions/transfer?book_id=${resolvedBookId}`, payload);
+      }
+
+      if (onSuccess) {
+        onSuccess();
+      } else {
+        navigate('/dashboard');
       }
     } catch (err: any) {
-      setError(err.message || '创建失败');
+      setError(err.message || (isEditMode ? '更新失败' : '创建失败'));
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <TransactionFormLayout
-      pageTitle="转账"
-      showBackButton={true}
-    >
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div className={transactionFormSectionClass}>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={transactionFormLabelClass}>转出账户 *</label>
-              <select
-                value={fromAccountId}
-                onChange={e => setFromAccountId(e.target.value)}
-                className={transactionFormFieldClass}
-                required
-              >
-                <option value="">选择转出账户</option>
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {getAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className={transactionFormLabelClass}>转入账户 *</label>
-              <select
-                value={toAccountId}
-                onChange={e => setToAccountId(e.target.value)}
-                className={transactionFormFieldClass}
-                required
-              >
-                <option value="">选择转入账户</option>
-                {accounts.map(account => (
-                  <option key={account.id} value={account.id}>
-                    {getAccountOptionLabel(account)}
-                  </option>
-                ))}
-              </select>
-            </div>
+  const content = (
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <div className={transactionFormSectionClass}>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={transactionFormLabelClass}>转出账户 *</label>
+            <select
+              value={fromAccountId}
+              onChange={(e) => setFromAccountId(e.target.value)}
+              className={transactionFormFieldClass}
+              required
+            >
+              <option value="">选择转出账户</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {getAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
-            <label className={transactionFormLabelClass}>转账金额 *</label>
+            <label className={transactionFormLabelClass}>转入账户 *</label>
+            <select
+              value={toAccountId}
+              onChange={(e) => setToAccountId(e.target.value)}
+              className={transactionFormFieldClass}
+              required
+            >
+              <option value="">选择转入账户</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {getAccountOptionLabel(account)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className={transactionFormLabelClass}>转账金额 *</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="0.00"
+            className={transactionFormFieldClass}
+            required
+          />
+        </div>
+
+        <div>
+          <label className={transactionFormLabelClass}>日期 *</label>
+          <input
+            type="date"
+            value={occurredAt}
+            onChange={(e) => setOccurredAt(e.target.value)}
+            className={transactionFormFieldClass}
+            required
+          />
+        </div>
+      </div>
+
+      <details
+        className={transactionFormSectionClass}
+        open={advancedOpen}
+        onToggle={(event) => setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer list-none text-sm font-medium text-[var(--text-primary)]">
+          高级选项
+        </summary>
+
+        <div className="mt-4 space-y-4">
+          <div>
+            <label className={transactionFormLabelClass}>手续费（选填）</label>
             <input
               type="number"
               step="0.01"
               min="0"
-              value={amount}
-              onChange={e => setAmount(e.target.value)}
+              value={feeAmount}
+              onChange={(e) => setFeeAmount(e.target.value)}
               placeholder="0.00"
               className={transactionFormFieldClass}
-              required
+            />
+          </div>
+
+          {shouldShowFeeAccount ? (
+            <div>
+              <label className={transactionFormLabelClass}>手续费扣款账户 *</label>
+              <select
+                value={feeAccountId}
+                onChange={(e) => setFeeAccountId(e.target.value)}
+                className={transactionFormFieldClass}
+                required
+              >
+                <option value="">选择手续费扣款账户</option>
+                {feeEligibleAccounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {getAccountOptionLabel(account)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          <div>
+            <label className={transactionFormLabelClass}>备注</label>
+            <textarea
+              value={memo}
+              onChange={(e) => setMemo(e.target.value)}
+              placeholder="添加备注..."
+              rows={3}
+              className={transactionFormTextareaClass}
             />
           </div>
 
           <div>
-            <label className={transactionFormLabelClass}>日期 *</label>
-            <input
-              type="date"
-              value={occurredAt}
-              onChange={e => setOccurredAt(e.target.value)}
-              className={transactionFormFieldClass}
-              required
+            <label className={transactionFormLabelClass}>标签</label>
+            <TagMultiSelect
+              allTags={tags}
+              value={tagIds}
+              onChange={setTagIds}
+              onTagsUpdated={setTags}
+              bookId={bookId}
+              placeholder="搜索、选择或创建标签"
             />
-          </div>
-        </div>
-
-        <details
-          className={transactionFormSectionClass}
-          open={advancedOpen}
-          onToggle={(event) => setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}
-        >
-          <summary className="cursor-pointer list-none text-sm font-medium text-[var(--text-primary)]">
-            高级选项
-          </summary>
-
-          <div className="mt-4 space-y-4">
-            <div>
-              <label className={transactionFormLabelClass}>手续费（选填）</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={feeAmount}
-                onChange={e => setFeeAmount(e.target.value)}
-                placeholder="0.00"
-                className={transactionFormFieldClass}
-              />
-            </div>
-
-            {shouldShowFeeAccount && (
-              <div>
-                <label className={transactionFormLabelClass}>手续费扣款账户 *</label>
-                <select
-                  value={feeAccountId}
-                  onChange={e => setFeeAccountId(e.target.value)}
-                  className={transactionFormFieldClass}
-                  required={shouldShowFeeAccount}
-                >
-                  <option value="">选择手续费扣款账户</option>
-                  {feeEligibleAccounts.map(account => (
-                    <option key={account.id} value={account.id}>
-                      {getAccountOptionLabel(account)}
-                    </option>
-                  ))}
-                </select>
+            {selectedTagLabels.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selectedTagLabels.map((label) => (
+                  <span
+                    key={label}
+                    style={{
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '999px',
+                      background: 'var(--bg-elevated)',
+                      padding: '4px 10px',
+                      fontSize: '12px',
+                    }}
+                  >
+                    {label}
+                  </span>
+                ))}
               </div>
-            )}
-
-            <div>
-              <label className={transactionFormLabelClass}>备注</label>
-              <textarea
-                value={memo}
-                onChange={e => setMemo(e.target.value)}
-                placeholder="添加备注..."
-                rows={3}
-                className={transactionFormTextareaClass}
-              />
-            </div>
-
-            <div>
-              <label className={transactionFormLabelClass}>标签</label>
-              <TagMultiSelect
-                allTags={tags}
-                value={tagIds}
-                onChange={setTagIds}
-                onTagsUpdated={setTags}
-                bookId={bookId}
-                placeholder="搜索、选择或创建标签"
-              />
-              {selectedTagLabels.length > 0 ? (
-                <div
-                  style={{
-                    marginTop: '8px',
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '8px',
-                  }}
-                >
-                  {selectedTagLabels.map((label) => (
-                    <span
-                      key={label}
-                      style={{
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '999px',
-                        background: 'var(--bg-elevated)',
-                        padding: '4px 10px',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {label}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            ) : null}
           </div>
-        </details>
-
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {error}
-          </div>
-        )}
-
-        <div>
-          <button
-            type="submit"
-            disabled={loading}
-            className={transactionFormPrimaryButtonClass}
-          >
-            {loading ? '保存中...' : '确认转账'}
-          </button>
         </div>
-      </form>
+      </details>
 
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+          {error}
+        </div>
+      ) : null}
+
+      <div className="flex gap-3">
+        <button
+          type="button"
+          onClick={handleCancel}
+          className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          取消
+        </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className={`${transactionFormPrimaryButtonClass} flex-1`}
+        >
+          {loading ? (isEditMode ? '保存中...' : '创建中...') : isEditMode ? '保存' : '创建'}
+        </button>
+      </div>
+    </form>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
+  return (
+    <TransactionFormLayout pageTitle={isEditMode ? '编辑转账' : '转账'} showBackButton={true}>
+      {content}
     </TransactionFormLayout>
   );
 }
