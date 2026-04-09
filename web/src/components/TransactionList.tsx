@@ -452,9 +452,8 @@ export default function TransactionList({
                             <div
                               className="scrollbar-hide"
                               style={{
-                                flexGrow: 1,
+                                marginLeft: 'auto',
                                 flexShrink: 1,
-                                flexBasis: 0,
                                 minWidth: 0,
                                 overflowX: 'auto',
                                 overflowY: 'hidden',
