@@ -421,7 +421,7 @@ export default function TransactionList({
                     </div>
 
                     <div style={{
-                      flex: 1,
+                      flex: '1 1 0',
                       minWidth: 0,
                       display: 'flex',
                       alignItems: 'flex-start',
@@ -452,7 +452,9 @@ export default function TransactionList({
                             <div
                               className="scrollbar-hide"
                               style={{
-                                flex: 1,
+                                flexGrow: 1,
+                                flexShrink: 1,
+                                flexBasis: 0,
                                 minWidth: 0,
                                 overflowX: 'auto',
                                 overflowY: 'hidden',
