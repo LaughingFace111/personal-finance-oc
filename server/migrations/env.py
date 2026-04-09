@@ -17,6 +17,7 @@ from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
 from src.modules.loans.models import LoanPlan, LoanSchedule
 from src.modules.imports.models import ImportBatch, ImportRow
 from src.modules.rules.models import CategoryRule
+from src.modules.tags.models import Tag
 
 # this is the Alembic Config object
 config = context.config

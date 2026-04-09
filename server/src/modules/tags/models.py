@@ -1,11 +1,13 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, Column, DateTime, Index, String
 from sqlalchemy.sql import func
 from src.core.database import Base
 
 
 class Tag(Base):
     __tablename__ = "tags"
+    __table_args__ = (
+        Index("ix_tags_book_active", "book_id", "is_active"),
+    )
 
     id = Column(String(36), primary_key=True)
     book_id = Column(String(36), nullable=False, index=True)
