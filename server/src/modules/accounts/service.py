@@ -350,7 +350,8 @@ def get_credit_accounts_repayment_summary(db: Session, book_id: str) -> List[Dic
                 'account_name': account.name,
                 'statement_balance': info['current_statement_balance'],
                 'repayment_date': info['next_repayment_date'],
-                'days_until_repayment': info['days_until_repayment']
+                'days_until_repayment': info['days_until_repayment'],
+                'is_overdue': info['is_overdue']
             })
     
     # 按还款日期排序（近的在前）
