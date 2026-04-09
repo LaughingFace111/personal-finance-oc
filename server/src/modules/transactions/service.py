@@ -60,6 +60,94 @@ def _build_credit_repayment_merchant(from_account: Account, credit_account: Acco
     return f"信用卡还款: {from_account.name} -> {credit_account.name}"
 
 
+def _build_transfer_group_key(
+    transaction_id: str,
+    related_transaction_id: Optional[str],
+    business_key: Optional[str],
+) -> str:
+    """Build a stable key for transfer pair collapsing."""
+    if related_transaction_id:
+        left, right = sorted((transaction_id, related_transaction_id))
+        return f"pair:{left}:{right}"
+    return f"single:{transaction_id}"
+
+
+def _prefer_transfer_display_record(current, candidate) -> bool:
+    """Prefer OUT transfer rows for list display; keep IN as a fallback."""
+    current_direction = current.direction.value if hasattr(current.direction, "value") else current.direction
+    candidate_direction = candidate.direction.value if hasattr(candidate.direction, "value") else candidate.direction
+    return (
+        candidate_direction == TransactionDirection.OUT.value
+        and current_direction != TransactionDirection.OUT.value
+    )
+
+
+def _collapse_transfer_rows(rows) -> List[str]:
+    """Collapse split transfer rows into one visible transaction id per batch."""
+    visible_entries = []
+    transfer_map = {}
+
+    for row in rows:
+        if row.transaction_type != TransactionType.TRANSFER.value:
+            visible_entries.append(("transaction", row.id))
+            continue
+
+        transfer_key = _build_transfer_group_key(
+            transaction_id=row.id,
+            related_transaction_id=row.related_transaction_id,
+            business_key=row.business_key,
+        )
+        if transfer_key not in transfer_map:
+            transfer_map[transfer_key] = row
+            visible_entries.append(("transfer", transfer_key))
+            continue
+
+        if _prefer_transfer_display_record(transfer_map[transfer_key], row):
+            transfer_map[transfer_key] = row
+
+    visible_ids: List[str] = []
+    for entry_type, entry_value in visible_entries:
+        if entry_type == "transaction":
+            visible_ids.append(entry_value)
+        else:
+            visible_ids.append(transfer_map[entry_value].id)
+
+    return visible_ids
+
+
+def _apply_split_transfer_account_effect(
+    db: Session,
+    account_id: str,
+    account_type: str,
+    amount: Decimal,
+    direction: str,
+    reverse: bool = False,
+) -> None:
+    """
+    Apply split-transfer balance/debt effects for a single account.
+
+    资产账户:
+    - OUT: current_balance 减少
+    - IN:  current_balance 增加
+
+    信用/贷款账户:
+    - OUT: debt_amount 增加
+    - IN:  debt_amount 减少（还款）
+    """
+    if _is_asset_account(account_type):
+        is_increase = direction == TransactionDirection.IN.value
+        if reverse:
+            is_increase = not is_increase
+        update_account_balance(db, account_id, amount, is_increase=is_increase)
+        return
+
+    if _is_credit_account(account_type) or _is_loan_account(account_type):
+        is_increase = direction == TransactionDirection.OUT.value
+        if reverse:
+            is_increase = not is_increase
+        update_account_debt(db, account_id, amount, is_increase=is_increase)
+
+
 def _load_transactions_for_response(db: Session, transaction_ids: List[str]) -> List[Transaction]:
     """Reload transactions with common relations populated for response serialization."""
     if not transaction_ids:
@@ -192,18 +280,13 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
         is_split_transfer = bool(txn.related_transaction_id)
 
         if is_split_transfer:
-            if direction == TransactionDirection.OUT.value:
-                if _is_asset_account(account_type):
-                    update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
-                elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
-                elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
-            elif direction == TransactionDirection.IN.value:
-                if _is_asset_account(account_type):
-                    update_account_balance(db, txn.account_id, txn.amount, is_increase=True)
-                elif _is_credit_account(account_type) or _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
+            _apply_split_transfer_account_effect(
+                db=db,
+                account_id=txn.account_id,
+                account_type=account_type,
+                amount=txn.amount,
+                direction=direction,
+            )
         else:
             if _is_asset_account(account_type):
                 update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
@@ -398,9 +481,14 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
     transfer_merchant = _build_transfer_merchant(from_account, to_account)
     transfer_out_id = generate_uuid()
     transfer_in_id = generate_uuid()
-    business_key = (
+    # 为 OUT 和 IN 分别生成唯一的 business_key（使用各自的 transaction_id 作为后缀）
+    business_key_out = (
         f"transfer:{data.from_account_id}:{data.to_account_id}:{data.amount}:"
-        f"{occurred_at.isoformat()}:{generate_uuid()}"
+        f"{occurred_at.isoformat()}:{transfer_out_id}"
+    )
+    business_key_in = (
+        f"transfer:{data.from_account_id}:{data.to_account_id}:{data.amount}:"
+        f"{occurred_at.isoformat()}:{transfer_in_id}"
     )
 
     transfer_out_txn = Transaction(
@@ -418,7 +506,7 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
-        business_key=business_key,
+        business_key=business_key_out,
         include_in_expense=False,
         include_in_income=False,
         include_in_cashflow=False,
@@ -440,32 +528,28 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate) -> List[Tra
         note=data.note,
         tags=data.tags,
         source_type=SourceType.MANUAL.value,
-        business_key=business_key,
+        business_key=business_key_in,
         include_in_expense=False,
         include_in_income=False,
         include_in_cashflow=False,
         status=TransactionStatus.CONFIRMED.value,
     )
 
-    # Apply updates to both accounts based on their types
-    from_type = from_account.account_type
-    to_type = to_account.account_type
-
-    # From account: decreases balance or debt
-    if _is_asset_account(from_type):
-        update_account_balance(db, data.from_account_id, data.amount, is_increase=False)
-    elif _is_credit_account(from_type):
-        update_account_debt(db, data.from_account_id, data.amount, is_increase=True)
-    elif _is_loan_account(from_type):
-        update_account_debt(db, data.from_account_id, data.amount, is_increase=True)
-
-    # To account: increases balance or debt
-    if _is_asset_account(to_type):
-        update_account_balance(db, data.to_account_id, data.amount, is_increase=True)
-    elif _is_credit_account(to_type):
-        update_account_debt(db, data.to_account_id, data.amount, is_increase=False)
-    elif _is_loan_account(to_type):
-        update_account_debt(db, data.to_account_id, data.amount, is_increase=False)
+    # Apply updates to both accounts based on unified split-transfer polarity rules
+    _apply_split_transfer_account_effect(
+        db=db,
+        account_id=data.from_account_id,
+        account_type=from_account.account_type,
+        amount=data.amount,
+        direction=TransactionDirection.OUT.value,
+    )
+    _apply_split_transfer_account_effect(
+        db=db,
+        account_id=data.to_account_id,
+        account_type=to_account.account_type,
+        amount=data.amount,
+        direction=TransactionDirection.IN.value,
+    )
 
     db.add(transfer_out_txn)
     db.add(transfer_in_txn)
@@ -656,10 +740,7 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
 def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Transaction], int]:
     """Get transactions with filters - Optimized version"""
     # 🛡️ L: 预加载 category 和 account 关系，消除 N+1（避免遍历每条记录时单独查库）
-    query = db.query(Transaction).options(
-        selectinload(Transaction.category),
-        selectinload(Transaction.account),
-    ).filter(Transaction.book_id == book_id)
+    query = db.query(Transaction).filter(Transaction.book_id == book_id)
 
     # Apply filters
     if filters.get("date_from"):
@@ -690,16 +771,31 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
     if not filters.get("include_hidden"):
         query = query.filter(Transaction.is_hidden == False)
 
-    # Get total count - 使用窗口函数优化
-    total = query.count()
+    ordering = [
+        Transaction.occurred_at.desc(),
+        Transaction.created_at.desc(),
+        Transaction.id.desc(),
+    ]
+
+    visible_transaction_ids = _collapse_transfer_rows(
+        query.with_entities(
+            Transaction.id,
+            Transaction.transaction_type,
+            Transaction.direction,
+            Transaction.related_transaction_id,
+            Transaction.business_key,
+        ).order_by(*ordering).all()
+    )
+    total = len(visible_transaction_ids)
 
     # Pagination
     page = filters.get("page", 1)
     page_size = filters.get("page_size", 50)
-    query = query.order_by(Transaction.occurred_at.desc())
-    query = query.offset((page - 1) * page_size).limit(page_size)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_transaction_ids = visible_transaction_ids[start:end]
 
-    transactions = query.all()
+    transactions = _load_transactions_for_response(db, page_transaction_ids)
 
     # 🛡️ L: 优化 - 使用单次子查询获取所有已退款ID,避免 N+1
     if transactions:
@@ -779,18 +875,14 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
         is_split_transfer = bool(txn.related_transaction_id)
 
         if is_split_transfer:
-            if direction == TransactionDirection.OUT.value:
-                if _is_asset_account(account_type):
-                    update_account_balance(db, txn.account_id, amount, is_increase=True)
-                elif _is_credit_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=False)
-                elif _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=False)
-            elif direction == TransactionDirection.IN.value:
-                if _is_asset_account(account_type):
-                    update_account_balance(db, txn.account_id, amount, is_increase=False)
-                elif _is_credit_account(account_type) or _is_loan_account(account_type):
-                    update_account_debt(db, txn.account_id, amount, is_increase=True)
+            _apply_split_transfer_account_effect(
+                db=db,
+                account_id=txn.account_id,
+                account_type=account_type,
+                amount=amount,
+                direction=direction,
+                reverse=True,
+            )
         else:
             # Legacy single-entry transfer reversal: reverse both accounts
             if _is_asset_account(account_type):
@@ -898,16 +990,70 @@ def update_transaction(db: Session, transaction_id: str, book_id: str, data: Tra
 
 
 def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
-    """Delete transaction permanently"""
+    """
+    Delete a transaction permanently.
+
+    转账删除需要级联回滚整个批次:
+    - 删除目标交易
+    - 删除转账另一侧
+    - 删除关联手续费
+    - 在一次提交中回滚所有账户影响
+    """
     txn = get_transaction(db, transaction_id, book_id)
     if not txn:
         raise NotFoundException("Transaction not found")
 
-    # Reverse transaction effects first (update account balance)
-    _reverse_transaction_effects(db, txn)
+    to_delete = {}
+    to_delete[txn.id] = txn
 
-    # Delete the transaction permanently
-    db.delete(txn)
+    if txn.transaction_type == TransactionType.TRANSFER.value:
+        related_transactions = []
+        if txn.related_transaction_id:
+            related_transactions.extend(
+                db.query(Transaction).filter(
+                    Transaction.book_id == book_id,
+                    Transaction.id == txn.related_transaction_id,
+                ).all()
+            )
+
+        related_transactions.extend(
+            db.query(Transaction).filter(
+                Transaction.book_id == book_id,
+                Transaction.related_transaction_id == txn.id,
+            ).all()
+        )
+
+        if txn.business_key:
+            related_transactions.extend(
+                db.query(Transaction).filter(
+                    Transaction.book_id == book_id,
+                    Transaction.transaction_type == TransactionType.TRANSFER.value,
+                    Transaction.business_key == txn.business_key,
+                ).all()
+            )
+
+        for related_txn in related_transactions:
+            to_delete[related_txn.id] = related_txn
+
+        occurred_at_values = {item.occurred_at for item in to_delete.values()}
+        fee_candidates = db.query(Transaction).filter(
+            Transaction.book_id == book_id,
+            Transaction.transaction_type == TransactionType.FEE.value,
+            Transaction.occurred_at.in_(occurred_at_values),
+        ).all()
+
+        for fee_txn in fee_candidates:
+            merchant = fee_txn.merchant or ""
+            note = fee_txn.note or ""
+            if "转账手续费" in merchant or "转账手续费" in note or "手续费" in note:
+                to_delete[fee_txn.id] = fee_txn
+
+    for item in list(to_delete.values()):
+        _reverse_transaction_effects(db, item)
+
+    for item in list(to_delete.values()):
+        db.delete(item)
+
     db.commit()
     clear_overview_cache()  # 🛡️ L: delete_transaction
 

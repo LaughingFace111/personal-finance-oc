@@ -14,6 +14,7 @@ export default defineConfig({
       '32c10209.r9.cpolar.cn',
       '31d1662a.r38.cpolar.top',
       '230a81ac.r9.cpolar.cn',
+      'eabba5f.r38.cpolar.top',
     ],
     proxy: {
       '/api': {
