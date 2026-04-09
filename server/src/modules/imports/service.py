@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError  # 🛡️ L: 添加唯一约束异常
 from sqlalchemy.orm import Session
 
 from src.common.enums import ImportStatus, ConfirmStatus, TransactionType, TransactionDirection, SourceType
-from src.core import generate_uuid, NotFoundException
+from src.core import AppException, ErrorCode, generate_uuid, NotFoundException
 from src.common import safe_decimal, safe_int
 
 from .models import ImportBatch, ImportRow

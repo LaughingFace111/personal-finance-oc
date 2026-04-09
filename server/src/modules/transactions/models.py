@@ -39,7 +39,6 @@ class Transaction(Base):
     include_in_income = Column(Boolean, default=True, index=True)  # 🛡️ L: 添加索引
     is_hidden = Column(Boolean, default=False, index=True)  # 🛡️ L: 隐身账单标记（暗号触发）
     include_in_cashflow = Column(Boolean, default=True)
-    is_hidden = Column(Boolean, default=False, index=True)  # 🛡️ L: 隐身账单（备注含"隐藏"自动触发）
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

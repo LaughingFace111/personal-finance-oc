@@ -76,6 +76,7 @@ class ImportStatus(str, Enum):
 class ConfirmStatus(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
+    DUPLICATE = "duplicate"
     SKIPPED = "skipped"
 
 

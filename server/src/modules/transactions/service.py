@@ -1242,18 +1242,18 @@ def adjust_account_balance(
     count_in_income = is_counted_in_reports and transaction_type == TransactionType.INCOME
     count_in_cashflow = is_counted_in_reports
 
-    # 🛡️ L: 在同一事务中更新账户欠款 + 写快照，确保原子性
-    if adjust_mode == "available_credit" and adjustment_amount > 0:
-        from src.modules.accounts.service import update_account_debt
-        is_debt_increase = delta_debt >= 0
-        update_account_debt(db, account_id, adjustment_amount, is_increase=is_debt_increase)
-
-    # 🛡️ L: 同步写入余额快照(与账户更新在同一事务内)
-    _write_balance_snapshot(db, account, adjust_mode, book_id=book_id)
-
-    return create_transaction(
+    txn = create_transaction(
         db, book_id, tx_data,
         include_expense_override=count_in_expense,
         include_income_override=count_in_income,
         include_cashflow_override=count_in_cashflow
     )
+
+    # create_transaction already applies account effects; write the snapshot after that
+    # so the stored balance/debt reflects the final post-adjustment value.
+    refreshed_account = db.query(Account).filter(Account.id == account_id).first()
+    if refreshed_account:
+        _write_balance_snapshot(db, refreshed_account, adjust_mode, book_id=book_id)
+        db.commit()
+
+    return txn
