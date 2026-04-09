@@ -7,6 +7,7 @@ import { StagingImportTable } from './components/StagingImportTable'
 import { HierarchyPickerModal } from './components/HierarchyPickerModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
+import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
 import { useAppStore } from './stores/appStore'
@@ -975,6 +976,8 @@ const TransactionFormPage = () => {
   const isEditMode = Boolean(transactionId)
 
   const [loadedTx, setLoadedTx] = useState<any>(null)
+  const [specialFormLoading, setSpecialFormLoading] = useState(false)
+  const [transferInitialValues, setTransferInitialValues] = useState<any>(null)
   
   useEffect(() => {
     if (!bookId) return
@@ -1026,6 +1029,45 @@ const TransactionFormPage = () => {
       }
     }
   }, [loadedTx, tags])
+
+  useEffect(() => {
+    if (!bookId || !transactionId || !loadedTx || loadedTx.transaction_type !== 'transfer') {
+      setTransferInitialValues(null)
+      setSpecialFormLoading(false)
+      return
+    }
+
+    let isCancelled = false
+    setSpecialFormLoading(true)
+    apiGet(`/api/transactions/transfer/${transactionId}/edit?book_id=${bookId}`)
+      .then((context: any) => {
+        if (isCancelled) return
+        setTransferInitialValues({
+          transactionId: context.transaction_id,
+          fromAccountId: context.from_account_id,
+          toAccountId: context.to_account_id,
+          amount: String(context.amount),
+          feeAmount: String(context.fee_amount ?? 0),
+          feeAccountId: context.fee_account_id ?? '',
+          memo: context.note ?? '',
+          tagIds: mapTagNamesToIds(tags as any, parseTransactionTagNames(context.tags)),
+          occurredAt: toDateInputValue(context.occurred_at),
+        })
+      })
+      .catch((error) => {
+        if (!isCancelled) {
+          console.error("Request failed:", error)
+          message.error('加载转账失败')
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) setSpecialFormLoading(false)
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [bookId, loadedTx, tags, transactionId])
 
   useEffect(() => { 
     const params = new URLSearchParams(location.search)
@@ -1085,6 +1127,46 @@ const TransactionFormPage = () => {
   }
 
   if (fetching) return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+
+  if (isEditMode && loadedTx?.transaction_type === 'transfer') {
+    if (specialFormLoading || !transferInitialValues) {
+      return <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+    }
+
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <TransferPage
+          isEditMode
+          initialValues={transferInitialValues}
+          onCancel={() => navigate('/transactions')}
+          onSuccess={() => navigate('/transactions')}
+        />
+      </Suspense>
+    )
+  }
+
+  if (isEditMode && loadedTx?.transaction_type === 'repayment_credit_card') {
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <OtherTransactionPage
+          isEditMode
+          initialSubType="repay"
+          initialValues={{
+            transactionId: loadedTx.id,
+            subType: 'repay',
+            accountId: loadedTx.account_id || '',
+            creditCardAccountId: loadedTx.counterparty_account_id || '',
+            amount: String(loadedTx.amount ?? ''),
+            memo: loadedTx.note || '',
+            tagIds: mapTagNamesToIds(tags as any, parseTransactionTagNames(loadedTx.tags)),
+            date: toDateInputValue(loadedTx.occurred_at),
+          }}
+          onCancel={() => navigate('/transactions')}
+          onSuccess={() => navigate('/transactions')}
+        />
+      </Suspense>
+    )
+  }
 
   const isExpense = form.type === 'expense'
   const accentColor = isExpense ? '#ff4d4f' : '#52c41a'
@@ -1865,7 +1947,7 @@ const AccountEditPage = () => {
       }
 
       await fetch(`/api/accounts/${accountId}`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload)
       })
