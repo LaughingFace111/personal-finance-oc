@@ -179,7 +179,7 @@ export function TagMultiSelect<T extends TagId>({
           setLocalTags(nextTags);
           onTagsUpdated?.(nextTags);
           if (!selected.has(nextTag.id)) {
-            onChange([...value, nextTag.id]);
+            onChange([...(value || []), nextTag.id]);
           }
           setKeyword(createdTag.name);
           setCreateModalOpen(false);

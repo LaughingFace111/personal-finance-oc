@@ -1,5 +1,6 @@
 import uuid
 from typing import List, Optional, Dict, Any
+from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .models import Tag
@@ -42,14 +43,14 @@ def _pick_default_color(db: Session, book_id: str) -> str:
 def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool = False) -> Tag:
     normalized_name = tag_data.name.strip()
     if not normalized_name:
-        raise ValueError("Tag name cannot be empty")
+        raise HTTPException(status_code=400, detail="Tag name cannot be empty")
 
     existing_tag = db.query(Tag.id).filter(
         Tag.book_id == book_id,
         func.lower(func.trim(Tag.name)) == normalized_name.lower()
     ).first()
     if existing_tag:
-        raise ValueError("Tag name already exists (including deleted tags), global uniqueness enforced")
+        raise HTTPException(status_code=400, detail="Tag name already exists (including deleted tags), global uniqueness enforced")
 
     # 校验：如果传了 parent_id，必须指向一个一级标签
     if tag_data.parent_id:
@@ -59,9 +60,9 @@ def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool =
             Tag.is_active == True
         ).first()
         if not parent:
-            raise ValueError("父标签不存在")
+            raise HTTPException(status_code=400, detail="父标签不存在")
         if parent.parent_id is not None:
-            raise ValueError("不能将二级标签作为父标签，只支持两级结构")
+            raise HTTPException(status_code=400, detail="不能将二级标签作为父标签，只支持两级结构")
         # 二级标签颜色继承父级
         color = parent.color
     else:
@@ -172,9 +173,9 @@ def update_tag(db: Session, tag_id: str, book_id: str, tag_data: TagUpdate) -> O
             Tag.is_active == True
         ).first()
         if not parent:
-            raise ValueError("父标签不存在")
+            raise HTTPException(status_code=400, detail="父标签不存在")
         if parent.parent_id is not None:
-            raise ValueError("不能将二级标签作为父标签，只支持两级结构")
+            raise HTTPException(status_code=400, detail="不能将二级标签作为父标签，只支持两级结构")
 
     # 如果修改了一级标签颜色，同步其下所有二级标签
     if "color" in update_data and tag.parent_id is None:

@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from fastapi import HTTPException
 
 from src.core.database import Base
 from src.modules.books.models import Book
@@ -63,8 +64,9 @@ def test_create_tag_rejects_duplicate_name_across_parents_and_soft_deleted_rows(
                 book.id,
                 TagCreate(name="Shared Name", parent_id=parent_b.id),
             )
-        except ValueError as exc:
-            assert str(exc) == "Tag name already exists (including deleted tags), global uniqueness enforced"
+        except HTTPException as exc:
+            assert exc.status_code == 400
+            assert exc.detail == "Tag name already exists (including deleted tags), global uniqueness enforced"
         else:
             raise AssertionError("Expected duplicate tag creation to be blocked across parents")
 
@@ -74,8 +76,9 @@ def test_create_tag_rejects_duplicate_name_across_parents_and_soft_deleted_rows(
                 book.id,
                 TagCreate(name="Archived Tag"),
             )
-        except ValueError as exc:
-            assert str(exc) == "Tag name already exists (including deleted tags), global uniqueness enforced"
+        except HTTPException as exc:
+            assert exc.status_code == 400
+            assert exc.detail == "Tag name already exists (including deleted tags), global uniqueness enforced"
         else:
             raise AssertionError("Expected duplicate tag creation to be blocked for soft-deleted rows")
     finally:
