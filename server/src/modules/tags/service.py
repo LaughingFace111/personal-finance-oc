@@ -1,5 +1,6 @@
 import uuid
 from typing import List, Optional, Dict, Any
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from .models import Tag
 from .schemas import TagCreate, TagUpdate
@@ -39,6 +40,17 @@ def _pick_default_color(db: Session, book_id: str) -> str:
 
 
 def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool = False) -> Tag:
+    normalized_name = tag_data.name.strip()
+    if not normalized_name:
+        raise ValueError("Tag name cannot be empty")
+
+    existing_tag = db.query(Tag.id).filter(
+        Tag.book_id == book_id,
+        func.lower(func.trim(Tag.name)) == normalized_name.lower()
+    ).first()
+    if existing_tag:
+        raise ValueError("Tag name already exists (including deleted tags), global uniqueness enforced")
+
     # 校验：如果传了 parent_id，必须指向一个一级标签
     if tag_data.parent_id:
         parent = db.query(Tag).filter(
@@ -59,7 +71,7 @@ def create_tag(db: Session, book_id: str, tag_data: TagCreate, is_system: bool =
     tag = Tag(
         id=str(uuid.uuid4()),
         book_id=book_id if not is_system else None,  # 🛡️ L: 系统标签无账本归属
-        name=tag_data.name,
+        name=normalized_name,
         color=color,
         parent_id=tag_data.parent_id,
         is_system=is_system,  # 🛡️ L: 标记为系统标签

@@ -50,6 +50,7 @@ interface TagItem {
 interface TagDisplayItem {
   name: string
   color?: string
+  isDeleted?: boolean
 }
 
 const NEUTRAL_TRANSACTION_TYPES = new Set([
@@ -254,7 +255,10 @@ export default function TransactionList({
           if (!name) return null
           return {
             name,
-            color: typeof tag.color === 'string' ? tag.color : tagMap.get(name)?.color
+            color: typeof tag.color === 'string' ? tag.color : tagMap.get(name)?.color,
+            isDeleted:
+              ('is_deleted' in tag && Boolean(tag.is_deleted)) ||
+              ('is_active' in tag && tag.is_active === false)
           }
         }
 
@@ -283,11 +287,13 @@ export default function TransactionList({
     return luminance >= 186
   }
 
-  const getTagStyle = (color?: string) => ({
+  const getTagStyle = (color?: string, isDeleted?: boolean) => ({
     background: color || 'var(--bg-elevated)',
     color: color
       ? (isLightColor(color) ? 'var(--text-primary)' : '#ffffff')
-      : 'var(--text-secondary)'
+      : 'var(--text-secondary)',
+    opacity: isDeleted ? 0.6 : 1,
+    textDecoration: isDeleted ? 'line-through' : 'none'
   })
 
   const getFlowAccountLabel = (item: TransactionItem) => {
@@ -455,7 +461,7 @@ export default function TransactionList({
                             >
                               <div style={{ display: 'inline-flex', gap: 6 }}>
                                 {tags.map((tag, tagIndex) => {
-                                  const tagStyle = getTagStyle(tag.color)
+                                  const tagStyle = getTagStyle(tag.color, tag.isDeleted)
 
                                   return (
                                     <span
@@ -468,7 +474,9 @@ export default function TransactionList({
                                         fontSize: 11,
                                         lineHeight: '16px',
                                         color: tagStyle.color,
-                                        background: tagStyle.background
+                                        background: tagStyle.background,
+                                        opacity: tagStyle.opacity,
+                                        textDecoration: tagStyle.textDecoration
                                       }}
                                     >
                                       {tag.name}

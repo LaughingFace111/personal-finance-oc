@@ -13,7 +13,7 @@ interface TagCreateModalProps {
   bookId: string | null;
   initialName?: string;
   onCancel: () => void;
-  onCreated?: (tag: { id?: string; name: string; parent_id?: string }) => void;
+  onCreated?: (tag: { id?: string; name: string; parent_id?: string; color?: string }) => void;
 }
 
 export function TagCreateModal({
@@ -62,12 +62,13 @@ export function TagCreateModal({
         parent_id: values.parent_id,
         book_id: bookId,
       };
-      const created = await apiPost<{ id?: string; name?: string; parent_id?: string }>('/api/tags', payload);
+      const created = await apiPost<{ id?: string; name?: string; parent_id?: string; color?: string }>('/api/tags', payload);
       message.success('创建成功');
       onCreated?.({
         id: created?.id,
         name: created?.name || payload.name,
         parent_id: created?.parent_id || payload.parent_id,
+        color: created?.color || selectedParentColor || undefined,
       });
       form.resetFields();
     } catch (err) {
