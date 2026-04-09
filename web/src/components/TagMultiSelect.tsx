@@ -1,3 +1,4 @@
+import { Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TagCreateModal } from './TagCreateModal';
 
@@ -172,6 +173,8 @@ export function TagMultiSelect<T extends TagId>({
 
   const [localTags, setLocalTags] = useState<TagItem<T>[]>(resolvedTags);
   const [search, setSearch] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [draftValue, setDraftValue] = useState<T[]>(value ?? []);
   const [isCreatingInline, setIsCreatingInline] = useState(false);
   const [createDraft, setCreateDraft] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -187,7 +190,22 @@ export function TagMultiSelect<T extends TagId>({
     }
   }, [isCreatingInline]);
 
+  useEffect(() => {
+    if (modalVisible) {
+      setDraftValue(value ?? []);
+      return;
+    }
+
+    setSearch('');
+    setCreateDraft('');
+    setIsCreatingInline(false);
+  }, [modalVisible, value]);
+
   const selectedSet = useMemo(() => new Set((value ?? []).map((item) => String(item))), [value]);
+  const draftSelectedSet = useMemo(
+    () => new Set((draftValue ?? []).map((item) => String(item))),
+    [draftValue]
+  );
   const totalTags = localTags.length;
   const canSearch = totalTags > 10;
 
@@ -219,16 +237,16 @@ export function TagMultiSelect<T extends TagId>({
     if (disabled) return;
 
     const key = String(tagId);
-    if (selectedSet.has(key)) {
-      onChange((value ?? []).filter((item) => String(item) !== key));
+    if (draftSelectedSet.has(key)) {
+      setDraftValue((current) => current.filter((item) => String(item) !== key));
       return;
     }
 
-    if (maxSelect && (value ?? []).length >= maxSelect) {
+    if (maxSelect && (draftValue ?? []).length >= maxSelect) {
       return;
     }
 
-    onChange([...(value ?? []), tagId]);
+    setDraftValue((current) => [...current, tagId]);
   };
 
   const openCreateModal = () => {
@@ -240,10 +258,27 @@ export function TagMultiSelect<T extends TagId>({
   };
 
   const selectionHint = maxSelect ? `已选 ${(value ?? []).length}/${maxSelect}` : `已选 ${(value ?? []).length}`;
+  const draftSelectionHint = maxSelect
+    ? `已选 ${(draftValue ?? []).length}/${maxSelect}`
+    : `已选 ${(draftValue ?? []).length}`;
+  const selectedTags = localTags.filter((tag) => selectedSet.has(String(tag.id)));
 
   return (
     <>
       <div
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        onClick={() => {
+          if (disabled) return;
+          setModalVisible(true);
+        }}
+        onKeyDown={(event) => {
+          if (disabled) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setModalVisible(true);
+          }
+        }}
         style={{
           width: '100%',
           border: '1px solid var(--border-color)',
@@ -251,7 +286,68 @@ export function TagMultiSelect<T extends TagId>({
           background: 'var(--bg-card)',
           padding: '14px',
           opacity: disabled ? 0.75 : 1,
+          cursor: disabled ? 'not-allowed' : 'pointer',
         }}
+      >
+        {selectedTags.length === 0 ? (
+          <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>请选择标签...</div>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {selectedTags.map((tag) => (
+              <TagPill
+                key={String(tag.id)}
+                label={tag.name}
+                color={tag.color || DEFAULT_TAG_COLOR}
+                selected
+                disabled
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Modal
+        open={modalVisible}
+        title="选择标签"
+        onCancel={() => setModalVisible(false)}
+        footer={[
+          <button
+            key="cancel"
+            type="button"
+            onClick={() => setModalVisible(false)}
+            style={{
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-elevated)',
+              color: 'var(--text-primary)',
+              borderRadius: '10px',
+              padding: '8px 14px',
+              fontSize: '13px',
+              cursor: 'pointer',
+            }}
+          >
+            取消
+          </button>,
+          <button
+            key="confirm"
+            type="button"
+            onClick={() => {
+              onChange(draftValue);
+              setModalVisible(false);
+            }}
+            style={{
+              border: 'none',
+              background: 'var(--accent-color)',
+              color: '#fff',
+              borderRadius: '10px',
+              padding: '8px 14px',
+              fontSize: '13px',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            确定
+          </button>,
+        ]}
       >
         <div
           style={{
@@ -263,7 +359,7 @@ export function TagMultiSelect<T extends TagId>({
             flexWrap: 'wrap',
           }}
         >
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{selectionHint}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{draftSelectionHint}</div>
           {canSearch ? (
             <input
               value={search}
@@ -321,8 +417,10 @@ export function TagMultiSelect<T extends TagId>({
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                 {group.tags.map((tag) => {
-                  const selected = selectedSet.has(String(tag.id));
-                  const maxReached = Boolean(maxSelect && (value ?? []).length >= maxSelect && !selected);
+                  const selected = draftSelectedSet.has(String(tag.id));
+                  const maxReached = Boolean(
+                    maxSelect && (draftValue ?? []).length >= maxSelect && !selected
+                  );
                   return (
                     <TagPill
                       key={String(tag.id)}
@@ -410,7 +508,7 @@ export function TagMultiSelect<T extends TagId>({
             </button>
           )}
         </div>
-      </div>
+      </Modal>
 
       <TagCreateModal
         open={createModalOpen}
@@ -430,8 +528,8 @@ export function TagMultiSelect<T extends TagId>({
           setLocalTags(nextTags);
           handleTagsChange?.(nextTags);
 
-          if (!selectedSet.has(String(nextTag.id))) {
-            onChange([...(value ?? []), nextTag.id]);
+          if (!draftSelectedSet.has(String(nextTag.id))) {
+            setDraftValue((current) => [...current, nextTag.id]);
           }
 
           setCreateDraft('');
