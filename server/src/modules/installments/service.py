@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import json
+import logging
 from typing import List, Optional
 from dateutil.relativedelta import relativedelta
 
@@ -18,6 +19,8 @@ from src.modules.accounts.service import update_account_frozen as update_account
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
 from src.modules.tags.models import Tag
+
+logger = logging.getLogger(__name__)
 
 
 def _write_installment_balance_snapshot(db: Session, account, plan, executed_period: int) -> None:
@@ -125,6 +128,21 @@ def _get_first_schedule_date(data: CreateInstallmentRequest) -> date:
     return compute_period_date(data.start_date, data.repayment_day, 0)
 
 
+def _resolve_schedule_anchor_date(
+    plan: InstallmentPlan,
+    data: Optional[CreateInstallmentRequest] = None,
+) -> date:
+    if plan.first_billing_date:
+        return plan.first_billing_date
+    if plan.first_execution_date:
+        return plan.first_execution_date
+    if data is not None:
+        return _get_first_schedule_date(data)
+    if plan.repayment_day is None:
+        raise ValueError("repayment_day is required for installment schedules")
+    return compute_period_date(plan.start_date, plan.repayment_day, 0)
+
+
 def _get_next_pending_schedule_date(db: Session, plan_id: str) -> Optional[date]:
     next_pending_schedule = db.query(InstallmentSchedule).filter(
         InstallmentSchedule.installment_plan_id == plan_id,
@@ -136,8 +154,18 @@ def _get_next_pending_schedule_date(db: Session, plan_id: str) -> Optional[date]
 def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmentRequest) -> List[InstallmentSchedule]:
     """Generate schedules from creation date and target billing day."""
     schedules = []
-    first_schedule_date = _get_first_schedule_date(data)
+    first_schedule_date = _resolve_schedule_anchor_date(plan, data)
     target_day = first_schedule_date.day
+
+    logger.info(
+        "Generating installment schedules plan_id=%s first_schedule_date=%s first_billing_date=%s first_execution_date=%s repayment_day=%s total_periods=%s",
+        plan.id,
+        first_schedule_date.isoformat(),
+        plan.first_billing_date.isoformat() if plan.first_billing_date else None,
+        plan.first_execution_date.isoformat() if plan.first_execution_date else None,
+        plan.repayment_day,
+        data.total_periods,
+    )
 
     from decimal import ROUND_DOWN
     total = Decimal(str(data.total_amount))
@@ -147,6 +175,12 @@ def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmen
     for period in range(1, data.total_periods + 1):
         # 首期严格锚定用户配置的首次日期，后续期次从该日期按月顺延。
         due_date = compute_period_date(first_schedule_date, target_day, period - 1)
+        logger.info(
+            "Installment schedule due_date computed plan_id=%s period=%s due_date=%s",
+            plan.id,
+            period,
+            due_date.isoformat(),
+        )
 
         # 尾差兜底：最后一期用减法确保总额精确等于 total_amount
         if period < data.total_periods:
@@ -167,6 +201,67 @@ def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmen
         schedules.append(schedule)
 
     return schedules
+
+
+def _has_collapsed_due_dates(schedules: List[InstallmentSchedule]) -> bool:
+    if len(schedules) <= 1:
+        return False
+    return len({schedule.due_date for schedule in schedules}) == 1
+
+
+def _rebuild_collapsed_schedules_if_needed(db: Session, plan: InstallmentPlan) -> bool:
+    schedules = db.query(InstallmentSchedule).filter(
+        InstallmentSchedule.installment_plan_id == plan.id
+    ).order_by(InstallmentSchedule.period_no).all()
+    if not _has_collapsed_due_dates(schedules):
+        return False
+
+    if any(schedule.status != "pending" for schedule in schedules):
+        logger.warning(
+            "Detected collapsed installment due_dates but skipped rebuild because schedules are not all pending plan_id=%s",
+            plan.id,
+        )
+        return False
+
+    first_schedule_date = _resolve_schedule_anchor_date(plan)
+    logger.warning(
+        "Detected collapsed installment due_dates; rebuilding schedules plan_id=%s first_schedule_date=%s schedule_count=%s",
+        plan.id,
+        first_schedule_date.isoformat(),
+        len(schedules),
+    )
+
+    for schedule in schedules:
+        db.delete(schedule)
+    db.flush()
+
+    rebuilt_schedules: List[InstallmentSchedule] = []
+    target_day = first_schedule_date.day
+    for period in range(1, plan.total_periods + 1):
+        due_date = compute_period_date(first_schedule_date, target_day, period - 1)
+        original_schedule = schedules[period - 1]
+        rebuilt_schedules.append(
+            InstallmentSchedule(
+                id=generate_uuid(),
+                installment_plan_id=plan.id,
+                period_no=period,
+                due_date=due_date,
+                principal_amount=original_schedule.principal_amount,
+                fee_amount=original_schedule.fee_amount,
+                total_due=original_schedule.total_due,
+                status="pending",
+            )
+        )
+        logger.info(
+            "Rebuilt installment schedule due_date plan_id=%s period=%s due_date=%s",
+            plan.id,
+            period,
+            due_date.isoformat(),
+        )
+
+    db.add_all(rebuilt_schedules)
+    db.flush()
+    return True
 
 
 def create_installment_with_transaction(db: Session, book_id: str, data: CreateInstallmentRequest) -> tuple:
@@ -201,6 +296,8 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
     first_schedule_date = _get_first_schedule_date(data)
     first_execution_date = data.first_execution_date or first_schedule_date
     first_billing_date = data.first_billing_date or first_schedule_date
+    if data.first_billing_date is None and data.first_execution_date is None and data.repayment_day is None:
+        raise ValueError("first_billing_date, first_execution_date or repayment_day is required")
 
     # 使用事务保证原子性
     try:
@@ -234,6 +331,11 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
             note=data.note,
         )
         db.add(plan)
+        db.flush()
+        plan.first_execution_date = first_execution_date
+        plan.first_billing_date = first_billing_date
+        plan.first_repayment_date = first_schedule_date
+        db.flush()
 
         # 2. 生成还款计划：第1期严格使用用户配置的首次日期
         schedules = generate_installment_schedules(plan, data)
@@ -382,14 +484,21 @@ def get_installment_plans(db: Session, book_id: str, account_id: str = None, sta
 
 def get_installment_plan(db: Session, plan_id: str, book_id: str) -> Optional[InstallmentPlan]:
     """Get installment plan by ID"""
-    return db.query(InstallmentPlan).filter(
+    plan = db.query(InstallmentPlan).filter(
         InstallmentPlan.id == plan_id,
         InstallmentPlan.book_id == book_id
     ).first()
+    if plan and _rebuild_collapsed_schedules_if_needed(db, plan):
+        db.commit()
+        db.refresh(plan)
+    return plan
 
 
 def get_installment_schedules(db: Session, plan_id: str) -> List[InstallmentSchedule]:
     """Get all schedules for an installment plan"""
+    plan = db.query(InstallmentPlan).filter(InstallmentPlan.id == plan_id).first()
+    if plan and _rebuild_collapsed_schedules_if_needed(db, plan):
+        db.commit()
     return db.query(InstallmentSchedule).filter(
         InstallmentSchedule.installment_plan_id == plan_id
     ).order_by(InstallmentSchedule.period_no).all()

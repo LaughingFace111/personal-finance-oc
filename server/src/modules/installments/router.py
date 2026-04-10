@@ -1,3 +1,4 @@
+import logging
 from typing import List
 
 from fastapi import APIRouter, Depends
@@ -19,6 +20,7 @@ from .service import (
 from src.modules.books.service import get_default_book
 
 router = APIRouter(prefix="/installments", tags=["installments"])
+logger = logging.getLogger(__name__)
 
 
 def get_current_book_id(
@@ -45,6 +47,16 @@ def create(
 ):
     """Create installment with purchase transaction"""
     bid = get_current_book_id(current_user, db, book_id)
+    logger.info(
+        "Create installment request received book_id=%s account_id=%s start_date=%s first_billing_date=%s first_execution_date=%s repayment_day=%s total_periods=%s",
+        bid,
+        data.account_id,
+        data.start_date.isoformat(),
+        data.first_billing_date.isoformat() if data.first_billing_date else None,
+        data.first_execution_date.isoformat() if data.first_execution_date else None,
+        data.repayment_day,
+        data.total_periods,
+    )
     plan, _ = create_installment_with_transaction(db, bid, data)
     return plan
 
