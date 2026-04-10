@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 
-from sqlalchemy import and_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from src.common.enums import (
@@ -871,7 +871,17 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
     if filters.get("date_to"):
         query = query.filter(Transaction.occurred_at <= filters["date_to"])
     if filters.get("account_id"):
-        query = query.filter(Transaction.account_id == filters["account_id"])
+        account_id = filters["account_id"]
+        account = get_account(db, account_id, book_id)
+        if account and _is_credit_account(account.account_type):
+            query = query.filter(
+                or_(
+                    Transaction.account_id == account_id,
+                    Transaction.counterparty_account_id == account_id,
+                )
+            )
+        else:
+            query = query.filter(Transaction.account_id == account_id)
     if filters.get("category_id"):
         query = query.filter(Transaction.category_id == filters["category_id"])
     if filters.get("transaction_type"):
