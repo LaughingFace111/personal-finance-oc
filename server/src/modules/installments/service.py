@@ -4,6 +4,7 @@ import json
 from typing import List, Optional
 from dateutil.relativedelta import relativedelta
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.common.enums import PlanStatus, TransactionType, TransactionDirection, SourceType
@@ -13,6 +14,7 @@ from .models import InstallmentPlan, InstallmentSchedule
 from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
 from src.modules.transactions.service import create_transaction, delete_transaction
 from src.modules.transactions.schemas import TransactionCreate
+from src.modules.accounts.service import update_account_frozen as update_account_frozen_amount
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
 
@@ -395,10 +397,12 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
         raise NotFoundException("Installment period not found")
 
     plan = schedule.plan
+    if schedule.period_no != plan.executed_periods:
+        raise HTTPException(status_code=400, detail="只能按顺序撤回最新执行的一期分期任务")
     if schedule.status != "executed":
-        raise ValueError("Only executed installment periods can be reverted")
+        raise HTTPException(status_code=400, detail="Only executed installment periods can be reverted")
     if not schedule.payment_transaction_id:
-        raise ValueError("Installment period has no linked transaction")
+        raise HTTPException(status_code=400, detail="Installment period has no linked transaction")
 
     transaction = db.query(Transaction).filter(
         Transaction.id == schedule.payment_transaction_id,
@@ -407,9 +411,15 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
     if not transaction:
         raise NotFoundException("Linked transaction not found")
     if transaction.posted_at is not None:
-        raise ValueError("Settled transaction cannot be reverted")
+        raise HTTPException(status_code=400, detail="Settled transaction cannot be reverted")
 
     delete_transaction(db, transaction.id, book_id)
+    update_account_frozen_amount(
+        db,
+        plan.account_id,
+        Decimal(str(schedule.principal_amount)),
+        is_increase=True,
+    )
 
     schedule.payment_transaction_id = None
     schedule.paid_amount = Decimal("0")
