@@ -23,6 +23,24 @@ router = APIRouter(prefix="/installments", tags=["installments"])
 logger = logging.getLogger(__name__)
 
 
+def _serialize_schedule(schedule) -> dict:
+    return {
+        "id": schedule.id,
+        "installment_plan_id": schedule.installment_plan_id,
+        "period_no": schedule.period_no,
+        "due_date": schedule.due_date.isoformat() if schedule.due_date else None,
+        "principal_amount": float(schedule.principal_amount),
+        "fee_amount": float(schedule.fee_amount),
+        "total_due": float(schedule.total_due),
+        "paid_amount": float(schedule.paid_amount or 0),
+        "paid_at": schedule.paid_at.isoformat() if schedule.paid_at else None,
+        "payment_transaction_id": schedule.payment_transaction_id,
+        "status": schedule.status,
+        "created_at": schedule.created_at.isoformat() if schedule.created_at else None,
+        "updated_at": schedule.updated_at.isoformat() if schedule.updated_at else None,
+    }
+
+
 def get_current_book_id(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -111,13 +129,14 @@ def get_plan(
     return plan
 
 
-@router.get("/{plan_id}/schedules", response_model=List[InstallmentScheduleResponse])
+@router.get("/{plan_id}/schedules", response_model=List[dict])
 def list_schedules(
     plan_id: str,
     db: Session = Depends(get_db),
-) -> List[InstallmentScheduleResponse]:
+) -> List[dict]:
     """Get installment schedules"""
-    return get_installment_schedules(db, plan_id)
+    schedules = get_installment_schedules(db, plan_id)
+    return [_serialize_schedule(schedule) for schedule in schedules]
 
 
 @router.patch("/{plan_id}", response_model=InstallmentPlanResponse)

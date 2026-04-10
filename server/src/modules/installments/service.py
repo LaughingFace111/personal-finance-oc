@@ -499,6 +499,7 @@ def get_installment_schedules(db: Session, plan_id: str) -> List[InstallmentSche
     plan = db.query(InstallmentPlan).filter(InstallmentPlan.id == plan_id).first()
     if plan and _rebuild_collapsed_schedules_if_needed(db, plan):
         db.commit()
+        db.refresh(plan)
     return db.query(InstallmentSchedule).filter(
         InstallmentSchedule.installment_plan_id == plan_id
     ).order_by(InstallmentSchedule.period_no).all()
@@ -682,29 +683,3 @@ def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str,
     db.refresh(schedule)
     clear_overview_cache()  # 🛡️ L: settle_installment
     return schedule, transaction
-
-
-def get_installment_schedules(db: Session, plan_id: str) -> List[dict]:
-    """Get all schedules for an installment plan"""
-    schedules = db.query(InstallmentSchedule).filter(
-        InstallmentSchedule.installment_plan_id == plan_id
-    ).order_by(InstallmentSchedule.period_no).all()
-    
-    return [
-        {
-            "id": s.id,
-            "installment_plan_id": s.installment_plan_id,
-            "period_no": s.period_no,
-            "due_date": s.due_date.isoformat() if s.due_date else None,
-            "principal_amount": float(s.principal_amount),
-            "fee_amount": float(s.fee_amount),
-            "total_due": float(s.total_due),
-            "paid_amount": float(s.paid_amount or 0),
-            "paid_at": s.paid_at.isoformat() if s.paid_at else None,
-            "payment_transaction_id": s.payment_transaction_id,
-            "status": s.status,
-            "created_at": s.created_at.isoformat() if s.created_at else None,
-            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-        }
-        for s in schedules
-    ]
