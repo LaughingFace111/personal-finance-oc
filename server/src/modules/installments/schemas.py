@@ -3,7 +3,7 @@ from decimal import Decimal
 import json
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from src.common.enums import PlanStatus
 
 
@@ -67,14 +67,11 @@ class InstallmentPlanResponse(InstallmentPlanBase):
                 return None
         return value
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Installment Schedule schemas
-class InstallmentScheduleResponse(BaseModel):
-    id: str
-    installment_plan_id: str
+class InstallmentScheduleBase(BaseModel):
     period_no: int
     due_date: date
     principal_amount: Decimal
@@ -84,11 +81,15 @@ class InstallmentScheduleResponse(BaseModel):
     paid_at: Optional[datetime] = None
     payment_transaction_id: Optional[str] = None
     status: str = "pending"
+
+
+class InstallmentScheduleResponse(InstallmentScheduleBase):
+    id: str
+    installment_plan_id: str
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Create installment with transaction

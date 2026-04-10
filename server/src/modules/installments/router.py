@@ -100,7 +100,10 @@ def get_plan(
 
 
 @router.get("/{plan_id}/schedules", response_model=List[InstallmentScheduleResponse])
-def list_schedules(plan_id: str, db: Session = Depends(get_db)):
+def list_schedules(
+    plan_id: str,
+    db: Session = Depends(get_db),
+) -> List[InstallmentScheduleResponse]:
     """Get installment schedules"""
     return get_installment_schedules(db, plan_id)
 
