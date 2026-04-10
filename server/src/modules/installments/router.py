@@ -13,7 +13,8 @@ from .schemas import (
 )
 from .service import (
     create_installment_with_transaction, get_installment_plans, get_installment_plan,
-    get_installment_schedules, get_upcoming_installments, update_installment_plan, settle_installment
+    get_installment_schedules, get_upcoming_installments, update_installment_plan, settle_installment,
+    delete_installment_plan, revert_installment_period
 )
 from src.modules.books.service import get_default_book
 
@@ -117,6 +118,18 @@ def update_plan(
     return update_installment_plan(db, plan_id, bid, data)
 
 
+@router.delete("/{plan_id}")
+def delete_plan(
+    plan_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    book_id: str = None
+):
+    bid = get_current_book_id(current_user, db, book_id)
+    delete_installment_plan(db, plan_id, bid)
+    return {"ok": True}
+
+
 @router.post("/{plan_id}/settle")
 def settle(
     plan_id: str, 
@@ -161,4 +174,22 @@ def execute_period(
         "remaining_periods": result["plan"].total_periods - result["plan"].executed_periods,
         "next_execution_date": result["next_execution_date"],
         "status": result["plan"].status
+    }
+
+
+@router.post("/periods/{period_id}/revert")
+def revert_period(
+    period_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    book_id: str = None
+):
+    bid = get_current_book_id(current_user, db, book_id)
+    result = revert_installment_period(db, period_id, bid)
+    return {
+        "plan_id": result["plan"].id,
+        "period_id": result["schedule"].id,
+        "executed_period": result["plan"].executed_periods,
+        "next_execution_date": result["plan"].next_execution_date,
+        "status": result["plan"].status,
     }

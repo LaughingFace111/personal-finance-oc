@@ -11,7 +11,8 @@ export default defineConfig({
       'localhost',
       '127.0.0.1',
       '192.168.22.221',
-      '2c852fca.r38.cpolar.top',
+      '.cpolar.top',
+      '.cpolar.cn',
     ],
     proxy: {
       '/api': {

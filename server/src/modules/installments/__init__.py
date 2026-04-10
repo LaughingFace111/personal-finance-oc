@@ -6,7 +6,8 @@ from .schemas import (
 )
 from .service import (
     create_installment_with_transaction, get_installment_plans, get_installment_plan,
-    get_installment_schedules, get_upcoming_installments, update_installment_plan, settle_installment
+    get_installment_schedules, get_upcoming_installments, update_installment_plan, settle_installment,
+    delete_installment_plan, revert_installment_period
 )
 
 __all__ = [
@@ -25,4 +26,6 @@ __all__ = [
     "get_upcoming_installments",
     "update_installment_plan",
     "settle_installment",
+    "delete_installment_plan",
+    "revert_installment_period",
 ]

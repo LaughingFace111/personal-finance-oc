@@ -60,6 +60,28 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+input[type="date"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.app-date-picker.ant-picker {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.app-date-picker.ant-picker .ant-picker-input {
+  min-width: 0;
+}
+
+.app-date-picker.ant-picker .ant-picker-input > input {
+  min-width: 0;
+  width: 100%;
+  text-overflow: ellipsis;
+}
+
 /* iOS 安全区 */
 @supports (padding-top: env(safe-area-inset-top)) {
   body {

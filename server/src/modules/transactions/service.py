@@ -1,7 +1,8 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Tuple
 from datetime import datetime, timezone
 import hashlib
+import json
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session, selectinload
@@ -59,6 +60,33 @@ def _build_transfer_merchant(from_account: Account, to_account: Account) -> str:
 def _build_credit_repayment_merchant(from_account: Account, credit_account: Account) -> str:
     """Build a stable display name for credit repayment transactions."""
     return f"信用卡还款: {from_account.name} -> {credit_account.name}"
+
+
+def _get_installment_frozen_release_amount(txn: Transaction) -> Decimal:
+    """Return the frozen amount to release for a system-generated installment execution."""
+    if not (
+        txn.source_type == SourceType.SYSTEM.value
+        and not txn.counterparty_account_id
+        and bool(txn.business_key)
+        and txn.business_key.startswith("installment:")
+        and ":p" in txn.business_key
+    ):
+        return Decimal("0")
+
+    if txn.extra:
+        try:
+            extra = json.loads(txn.extra)
+        except (TypeError, json.JSONDecodeError):
+            extra = None
+        if isinstance(extra, dict):
+            release_amount = extra.get("frozen_release_amount", extra.get("principal_amount"))
+            if release_amount is not None:
+                try:
+                    return Decimal(str(release_amount))
+                except (InvalidOperation, ValueError):
+                    pass
+
+    return txn.amount
 
 
 def _build_transfer_group_key(
@@ -244,16 +272,10 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
             # Asset account: balance decreases, cashflow
             update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
         elif _is_credit_account(account_type):
-            is_system_installment_execution = (
-                txn.source_type == SourceType.SYSTEM.value
-                and not txn.counterparty_account_id
-                and bool(txn.business_key)
-                and txn.business_key.startswith("installment:")
-                and ":p" in txn.business_key
-            )
             update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
-            if is_system_installment_execution:
-                update_account_frozen(db, txn.account_id, txn.amount, is_increase=False)
+            frozen_release_amount = _get_installment_frozen_release_amount(txn)
+            if frozen_release_amount > 0:
+                update_account_frozen(db, txn.account_id, frozen_release_amount, is_increase=False)
             txn.include_in_cashflow = False
         elif _is_loan_account(account_type):
             # Loan account: not typical for expense
@@ -950,17 +972,11 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
             # Reverse: balance increase
             update_account_balance(db, txn.account_id, amount, is_increase=True)
         elif _is_credit_account(account_type):
-            is_system_installment_execution = (
-                txn.source_type == SourceType.SYSTEM.value
-                and not txn.counterparty_account_id
-                and bool(txn.business_key)
-                and txn.business_key.startswith("installment:")
-                and ":p" in txn.business_key
-            )
             # Reverse: debt decrease
             update_account_debt(db, txn.account_id, amount, is_increase=False)
-            if is_system_installment_execution:
-                update_account_frozen(db, txn.account_id, amount, is_increase=True)
+            frozen_release_amount = _get_installment_frozen_release_amount(txn)
+            if frozen_release_amount > 0:
+                update_account_frozen(db, txn.account_id, frozen_release_amount, is_increase=True)
 
     elif tx_type == TransactionType.INCOME.value:
         if _is_asset_account(account_type):

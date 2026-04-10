@@ -285,7 +285,11 @@ export default function DurableAssetsPage() {
             rules={[{ required: true, message: '请选择购买日期' }]}
             initialValue={dayjs()}
           >
-            <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
+            <DatePicker
+              className="app-date-picker"
+              format="YYYY-MM-DD"
+              getPopupContainer={(trigger) => trigger.parentElement ?? document.body}
+            />
           </Form.Item>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>

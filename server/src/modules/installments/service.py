@@ -3,7 +3,6 @@ from decimal import Decimal
 import json
 from typing import List, Optional
 from dateutil.relativedelta import relativedelta
-import calendar
 
 from sqlalchemy.orm import Session
 
@@ -12,7 +11,7 @@ from src.core import generate_uuid, NotFoundException
 
 from .models import InstallmentPlan, InstallmentSchedule
 from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
-from src.modules.transactions.service import create_transaction
+from src.modules.transactions.service import create_transaction, delete_transaction
 from src.modules.transactions.schemas import TransactionCreate
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
@@ -59,44 +58,27 @@ def _safe_date(year: int, month: int, day: int) -> date:
     return date(year, month, day)
 
 
-def _calculate_next_execution_date(current_date: date, repayment_day: int) -> date:
-    """
-    🛡️ L: 推算下次执行日期（跨月防错）
-    
-    逻辑：
-    1. 将当前日期 + 1个月
-    2. 如果原日期是月末（如31日），新日期也调整为月末
-    3. 确保新日期的日期部分不超过该月的最大天数
-    
-    示例：
-    - 1月31日 -> 2月28日 (2月没有31日)
-    - 1月30日 -> 2月28日 (2月没有30日)
-    - 1月15日 -> 2月15日 (正常跨月)
-    """
-    # 跨月
-    next_month = current_date + relativedelta(months=1)
-    
-    # 检查原日期是否为月末（取原日期的月份最后一天）
-    original_last_day = calendar.monthrange(current_date.year, current_date.month)[1]
-    is_original_eom = current_date.day >= original_last_day
-    
-    if is_original_eom:
-        # 原日期是月末，新日期也设为月末
-        new_last_day = calendar.monthrange(next_month.year, next_month.month)[1]
-        return date(next_month.year, next_month.month, new_last_day)
-    else:
-        # 原日期非月末，保持日期部分
-        new_last_day = calendar.monthrange(next_month.year, next_month.month)[1]
-        target_day = min(repayment_day, new_last_day)
-        return date(next_month.year, next_month.month, target_day)
+def compute_period_date(start_date: date, target_day: int, period_index: int) -> date:
+    """Derive the period date from creation date and target billing day."""
+    if target_day < 1 or target_day > 31:
+        raise ValueError("target_day must be between 1 and 31")
+    if period_index < 0:
+        raise ValueError("period_index must be >= 0")
+
+    first_period_month = start_date.replace(day=1)
+    if start_date.day > target_day:
+        first_period_month = first_period_month + relativedelta(months=1)
+
+    period_month = first_period_month + relativedelta(months=period_index)
+    return _safe_date(period_month.year, period_month.month, target_day)
 
 
 def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmentRequest) -> List[InstallmentSchedule]:
-    """Generate schedules using the user-provided first billing/execution date as period 1."""
+    """Generate schedules from creation date and target billing day."""
     schedules = []
-    first_schedule_date = data.first_billing_date or data.first_execution_date
-    if first_schedule_date is None:
-        first_schedule_date = data.start_date + relativedelta(months=1)
+    target_day = data.repayment_day
+    if target_day is None:
+        raise ValueError("repayment_day is required for installment schedules")
 
     from decimal import ROUND_DOWN
     total = Decimal(str(data.total_amount))
@@ -104,7 +86,7 @@ def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmen
     base_principal = (total / periods).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
     for period in range(1, data.total_periods + 1):
-        due_date = first_schedule_date + relativedelta(months=period - 1)
+        due_date = compute_period_date(data.start_date, target_day, period - 1)
 
         # 尾差兜底：最后一期用减法确保总额精确等于 total_amount
         if period < data.total_periods:
@@ -156,8 +138,9 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
     )
     serialized_tags = json.dumps(data.tags, ensure_ascii=False) if data.tags else None
     frozen_amount = Decimal(str(data.total_amount))
-    first_execution_date = data.first_execution_date or data.start_date + relativedelta(months=1)
-    first_billing_date = data.first_billing_date or data.start_date + relativedelta(months=1)
+    first_schedule_date = compute_period_date(data.start_date, data.repayment_day, 0)
+    first_execution_date = data.first_execution_date or first_schedule_date
+    first_billing_date = data.first_billing_date or first_schedule_date
 
     # 使用事务保证原子性
     try:
@@ -183,7 +166,7 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
             application_date=datetime.utcnow(),  # 🛡️ L: 申请日期
             first_execution_date=first_execution_date,
             first_billing_date=first_billing_date,
-            first_repayment_date=data.start_date + relativedelta(months=1),
+            first_repayment_date=first_schedule_date,
             next_execution_date=first_execution_date,  # 🛡️ L: 下次执行日期
             repayment_day=data.repayment_day,
             status=PlanStatus.ACTIVE.value,
@@ -251,8 +234,22 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
     try:
         # 1. 为本期分期生成一笔支出账单，发生日期以计划日为准
         note = f"[{next_period}/{plan.total_periods}] 期 - {plan.plan_name}"
-        amount = Decimal(str(schedule.total_due))
+        principal_amount = Decimal(str(schedule.principal_amount))
+        fee_amount = Decimal(str(schedule.fee_amount))
+        amount = principal_amount + fee_amount
         occurred_at = datetime.combine(schedule.due_date, datetime.min.time())
+        transaction_extra = json.dumps(
+            {
+                "installment_period_no": next_period,
+                "installment_schedule_id": schedule.id,
+                "principal_amount": str(principal_amount),
+                "fee_amount": str(fee_amount),
+                # 银行额度冻结只占用本金，执行期释放时也只能释放本金。
+                "frozen_release_amount": str(principal_amount),
+                "book_amount": str(amount),
+            },
+            ensure_ascii=False,
+        )
 
         txn_data = TransactionCreate(
             occurred_at=occurred_at,
@@ -263,6 +260,8 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
             category_id=plan.category_id,
             merchant=plan.plan_name,
             note=note,
+            tags=plan.tags,
+            extra=transaction_extra,
             business_key=f"installment:{plan.id}:p{next_period}",
             source_type=SourceType.SYSTEM,
             include_expense_override=True,
@@ -273,17 +272,21 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         # 2. 交易创建时已完成 debt/frozen 迁移，这里只刷新账户对象
         db.refresh(account)
 
+        # 3. 标记期次已执行
+        schedule.payment_transaction_id = transaction.id
+        schedule.paid_amount = amount
+        schedule.paid_at = occurred_at
+        schedule.status = "executed"
+
         # 4. 更新计划进度
         plan.executed_periods = next_period
         plan.current_period = next_period
 
         # 5. 🛡️ L: 推算下一个执行日期
         if next_period < plan.total_periods:
-            current_exec_date = plan.next_execution_date or datetime.now().date()
-            plan.next_execution_date = _calculate_next_execution_date(
-                current_exec_date,
-                plan.repayment_day or 15
-            )
+            plan.next_execution_date = compute_period_date(plan.start_date, plan.repayment_day or 15, next_period)
+        else:
+            plan.next_execution_date = None
 
         # 6. 🛡️ L: 同步写入余额快照
         _write_installment_balance_snapshot(db, account, plan, next_period)
@@ -291,8 +294,6 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         # 7. 检查是否完成
         if plan.executed_periods >= plan.total_periods:
             plan.status = PlanStatus.COMPLETED.value
-            # 全额解冻
-            account.frozen_amount = Decimal("0")
 
         db.commit()
         db.refresh(plan)
@@ -354,14 +355,109 @@ def update_installment_plan(db: Session, plan_id: str, book_id: str, data: Insta
     plan = get_installment_plan(db, plan_id, book_id)
     if not plan:
         raise NotFoundException("Installment plan not found")
+    update_data = data.model_dump(exclude_unset=True)
+    schedule_related_fields = {"start_date", "repayment_day"}
+    should_rebuild_schedule = bool(schedule_related_fields & set(update_data.keys()))
+    if plan.executed_periods > 0 and should_rebuild_schedule:
+        raise ValueError("已执行期次后禁止修改创建日期或账单日")
 
-    for key, value in data.model_dump(exclude_unset=True).items():
+    if "tags" in update_data:
+        update_data["tags"] = json.dumps(update_data["tags"], ensure_ascii=False) if update_data["tags"] else None
+
+    for key, value in update_data.items():
         setattr(plan, key, value)
+
+    if should_rebuild_schedule:
+        first_schedule_date = compute_period_date(plan.start_date, plan.repayment_day, 0)
+        plan.first_execution_date = first_schedule_date
+        plan.first_billing_date = first_schedule_date
+        plan.first_repayment_date = first_schedule_date
+        plan.next_execution_date = first_schedule_date
+        schedules = db.query(InstallmentSchedule).filter(
+            InstallmentSchedule.installment_plan_id == plan.id
+        ).order_by(InstallmentSchedule.period_no).all()
+        for schedule in schedules:
+            schedule.due_date = compute_period_date(plan.start_date, plan.repayment_day, schedule.period_no - 1)
 
     db.commit()
     db.refresh(plan)
     clear_overview_cache()  # 🛡️ L: update plan
     return plan
+
+
+def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict:
+    """Revert an executed installment period and rollback account impact."""
+    schedule = db.query(InstallmentSchedule).join(InstallmentPlan).filter(
+        InstallmentSchedule.id == period_id,
+        InstallmentPlan.book_id == book_id,
+    ).first()
+    if not schedule:
+        raise NotFoundException("Installment period not found")
+
+    plan = schedule.plan
+    if schedule.status != "executed":
+        raise ValueError("Only executed installment periods can be reverted")
+    if not schedule.payment_transaction_id:
+        raise ValueError("Installment period has no linked transaction")
+
+    transaction = db.query(Transaction).filter(
+        Transaction.id == schedule.payment_transaction_id,
+        Transaction.book_id == book_id,
+    ).first()
+    if not transaction:
+        raise NotFoundException("Linked transaction not found")
+    if transaction.posted_at is not None:
+        raise ValueError("Settled transaction cannot be reverted")
+
+    delete_transaction(db, transaction.id, book_id)
+
+    schedule.payment_transaction_id = None
+    schedule.paid_amount = Decimal("0")
+    schedule.paid_at = None
+    schedule.status = "pending"
+
+    if plan.executed_periods == schedule.period_no:
+        plan.executed_periods -= 1
+        plan.current_period = max(plan.executed_periods, 0)
+    else:
+        executed_count = db.query(InstallmentSchedule).filter(
+            InstallmentSchedule.installment_plan_id == plan.id,
+            InstallmentSchedule.status == "executed",
+        ).count()
+        plan.executed_periods = executed_count
+        plan.current_period = executed_count
+
+    plan.status = PlanStatus.ACTIVE.value
+    plan.next_execution_date = schedule.due_date
+
+    db.commit()
+    db.refresh(schedule)
+    db.refresh(plan)
+    clear_overview_cache()
+    return {"plan": plan, "schedule": schedule}
+
+
+def delete_installment_plan(db: Session, plan_id: str, book_id: str) -> None:
+    """Delete an unexecuted installment plan and release frozen amount."""
+    plan = get_installment_plan(db, plan_id, book_id)
+    if not plan:
+        raise NotFoundException("Installment plan not found")
+    if plan.executed_periods > 0:
+        raise ValueError("已执行过期次的分期计划禁止删除")
+
+    from src.modules.accounts.models import Account
+
+    account = db.query(Account).filter(Account.id == plan.account_id).with_for_update().first()
+    if not account:
+        raise NotFoundException("Account not found")
+
+    account.frozen_amount = max(
+        Decimal("0"),
+        Decimal(str(account.frozen_amount or 0)) - Decimal(str(plan.total_amount or 0)),
+    )
+    db.delete(plan)
+    db.commit()
+    clear_overview_cache()
 
 
 def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str, occurred_at: datetime) -> List:
@@ -420,12 +516,19 @@ def get_installment_schedules(db: Session, plan_id: str) -> List[dict]:
     
     return [
         {
+            "id": s.id,
+            "installment_plan_id": s.installment_plan_id,
             "period_no": s.period_no,
             "due_date": s.due_date.isoformat() if s.due_date else None,
             "principal_amount": float(s.principal_amount),
             "fee_amount": float(s.fee_amount),
             "total_due": float(s.total_due),
-            "status": s.status
+            "paid_amount": float(s.paid_amount or 0),
+            "paid_at": s.paid_at.isoformat() if s.paid_at else None,
+            "payment_transaction_id": s.payment_transaction_id,
+            "status": s.status,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
         }
         for s in schedules
     ]

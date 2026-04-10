@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { CategorySelector } from '../components/CategorySelector';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
@@ -9,7 +9,7 @@ import {
   transactionFormSectionClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';
-import { apiPost } from '../services/api';
+import { apiGet, apiPatch, apiPost } from '../services/api';
 import {
   AccountOption,
   CategoryOption,
@@ -71,11 +71,14 @@ function calculateInstallmentPlan(
 
 export default function InstallmentPage() {
   const navigate = useNavigate();
+  const { id } = useParams();
+  const isEditMode = Boolean(id);
   const [bookId, setBookId] = useState('');
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
 
@@ -96,6 +99,7 @@ export default function InstallmentPage() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        setInitializing(true);
         const bookId = await getDefaultBookId();
         if (!bookId) throw new Error('无法获取账本信息');
         setBookId(bookId);
@@ -103,12 +107,31 @@ export default function InstallmentPage() {
         setAccounts(accs);
         setCategories(cats);
         setTags(tgs);
+
+        if (id) {
+          const plan = await apiGet<any>(`/api/installments/${id}?book_id=${bookId}`);
+          setAccountId(plan.account_id || '');
+          setCategoryId(plan.category_id || '');
+          setMerchant(plan.plan_name || '');
+          setAmount(String(plan.total_amount || ''));
+          setPeriods(Number(plan.total_periods || 12));
+          setFeePerPeriod(String(plan.fee_per_period || ''));
+          setRepaymentDay(Number(plan.repayment_day || 1));
+          setMemo(plan.note || '');
+          setDate(plan.start_date || '');
+          setFirstExecutionDate(plan.first_execution_date || plan.next_execution_date || '');
+          setFirstBillingDate(plan.first_billing_date || plan.start_date || '');
+          setTagIds(Array.isArray(plan.tags) ? plan.tags : []);
+          setIsInterestFree(Number(plan.fee_per_period || 0) === 0);
+        }
       } catch (err) {
         setError((err as Error).message || '加载数据失败');
+      } finally {
+        setInitializing(false);
       }
     };
     loadData();
-  }, []);
+  }, [id]);
 
   const creditAccounts = useMemo(
     () => accounts.filter((account) => ['credit_card', 'credit_line'].includes(account.account_type)),
@@ -119,6 +142,20 @@ export default function InstallmentPage() {
     () => categories.filter((c) => c.category_type === 'expense' || c.category_type === 'income_expense'),
     [categories],
   );
+  const selectedAccount = useMemo(
+    () => creditAccounts.find((account) => account.id === accountId),
+    [accountId, creditAccounts],
+  );
+
+  useEffect(() => {
+    if (!selectedAccount) return;
+    const rawStatementDay = selectedAccount.statement_date ?? selectedAccount.billing_day;
+    const statementDay = Number(rawStatementDay);
+    if (!Number.isFinite(statementDay) || statementDay < 1 || statementDay > 31) return;
+
+    const derivedBillingDay = statementDay === 1 ? 31 : statementDay - 1;
+    setRepaymentDay(derivedBillingDay);
+  }, [selectedAccount?.id]);
 
   // 计算预览计划
   const previewPlan = useMemo(() => {
@@ -155,24 +192,35 @@ export default function InstallmentPage() {
       if (!bookId) throw new Error('无法获取账本信息');
       const normalizedTagIds = tagIds.filter(Boolean);
 
-      await apiPost('/api/installments', {
-        occurred_at: new Date(date).toISOString(),
-        book_id: bookId,
-        account_id: accountId,
-        merchant,
-        category_id: categoryId || null,
-        note: memo || null,
-        total_amount: parseFloat(amount),
-        total_periods: periods,
-        fee_per_period: isInterestFree ? 0 : (feePerPeriod ? parseFloat(feePerPeriod) : 0),
-        installment_amount: previewPlan[0]?.total || 0,
-        start_date: date,
-        first_execution_date: firstExecutionDate,
-        first_billing_date: firstBillingDate,
-        repayment_day: repaymentDay,
-        plan_name: merchant,
-        tags: normalizedTagIds.length > 0 ? normalizedTagIds : null,
-      });
+      if (isEditMode) {
+        await apiPatch(`/api/installments/${id}?book_id=${bookId}`, {
+          plan_name: merchant,
+          category_id: categoryId || null,
+          note: memo || null,
+          start_date: date,
+          repayment_day: repaymentDay,
+          tags: normalizedTagIds.length > 0 ? normalizedTagIds : null,
+        });
+      } else {
+        await apiPost('/api/installments', {
+          occurred_at: new Date(date).toISOString(),
+          book_id: bookId,
+          account_id: accountId,
+          merchant,
+          category_id: categoryId || null,
+          note: memo || null,
+          total_amount: parseFloat(amount),
+          total_periods: periods,
+          fee_per_period: isInterestFree ? 0 : (feePerPeriod ? parseFloat(feePerPeriod) : 0),
+          installment_amount: previewPlan[0]?.total || 0,
+          start_date: date,
+          first_execution_date: firstExecutionDate,
+          first_billing_date: firstBillingDate,
+          repayment_day: repaymentDay,
+          plan_name: merchant,
+          tags: normalizedTagIds.length > 0 ? normalizedTagIds : null,
+        });
+      }
 
       navigate('/installments');
     } catch (err) {
@@ -182,8 +230,12 @@ export default function InstallmentPage() {
     }
   };
 
+  if (initializing) {
+    return <TransactionFormLayout pageTitle={isEditMode ? "编辑分期" : "信用卡分期购物"}>加载中...</TransactionFormLayout>;
+  }
+
   return (
-    <TransactionFormLayout pageTitle="信用卡分期购物">
+    <TransactionFormLayout pageTitle={isEditMode ? "编辑分期" : "信用卡分期购物"}>
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className={transactionFormSectionClass}>
           {/* 支出项目 - 分类 */}
@@ -206,7 +258,7 @@ export default function InstallmentPage() {
           {/* 信用卡账户 */}
           <div>
             <label className={transactionFormLabelClass}>信用卡账户 *</label>
-            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={transactionFormFieldClass} required>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className={transactionFormFieldClass} required disabled={isEditMode}>
               <option value="">选择信用卡/信用账户</option>
               {creditAccounts.map((account) => (
                 <option key={account.id} value={account.id}>{account.name}</option>
@@ -216,27 +268,40 @@ export default function InstallmentPage() {
 
           {/* 分期申请日期 */}
           <div>
-            <label className={transactionFormLabelClass}>分期申请日期</label>
+            <label className={transactionFormLabelClass}>分期创建日期</label>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={transactionFormFieldClass} required />
           </div>
 
           {/* 首次入账日期 */}
           <div>
             <label className={transactionFormLabelClass}>首次入账日期</label>
-            <input type="date" value={firstBillingDate} onChange={(e) => setFirstBillingDate(e.target.value)} className={transactionFormFieldClass} required />
+            <input type="date" value={firstBillingDate} onChange={(e) => setFirstBillingDate(e.target.value)} className={transactionFormFieldClass} required={!isEditMode} disabled={isEditMode} />
           </div>
 
           <div>
             <label className={transactionFormLabelClass}>首次执行日期</label>
-            <input type="date" value={firstExecutionDate} onChange={(e) => setFirstExecutionDate(e.target.value)} className={transactionFormFieldClass} required />
+            <input type="date" value={firstExecutionDate} onChange={(e) => setFirstExecutionDate(e.target.value)} className={transactionFormFieldClass} required={!isEditMode} disabled={isEditMode} />
           </div>
 
           {/* 分期的总期数 */}
           <div>
             <label className={transactionFormLabelClass}>分期期数 *</label>
-            <select value={periods} onChange={(e) => setPeriods(Number(e.target.value))} className={transactionFormFieldClass}>
+            <select value={periods} onChange={(e) => setPeriods(Number(e.target.value))} className={transactionFormFieldClass} disabled={isEditMode}>
               {[3, 6, 9, 12, 18, 24, 36].map((p) => <option key={p} value={p}>{p} 期</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className={transactionFormLabelClass}>每月账单日</label>
+            <input
+              type="number"
+              min="1"
+              max="31"
+              value={repaymentDay}
+              onChange={(e) => setRepaymentDay(Number(e.target.value))}
+              className={transactionFormFieldClass}
+              required
+            />
           </div>
 
           {/* 手续费与利息 - Switch */}
@@ -325,13 +390,13 @@ export default function InstallmentPage() {
           <button 
             type="button" 
             onClick={() => setShowPreview(true)}
-            disabled={!amount || !accountId}
+            disabled={isEditMode || !amount || !accountId}
             className="flex-1 rounded-xl border border-blue-300 bg-blue-50 py-3 text-sm font-semibold text-blue-600 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
           >
             预览
           </button>
           <button type="submit" disabled={loading} className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60">
-            {loading ? '保存中...' : '确认提交'}
+            {loading ? '保存中...' : isEditMode ? '保存修改' : '确认提交'}
           </button>
         </div>
       </form>

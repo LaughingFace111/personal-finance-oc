@@ -33,6 +33,11 @@ class InstallmentPlanCreate(InstallmentPlanBase):
 
 class InstallmentPlanUpdate(BaseModel):
     plan_name: Optional[str] = None
+    category_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    note: Optional[str] = None
+    start_date: Optional[date] = None
+    repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     status: Optional[PlanStatus] = None
     current_period: Optional[int] = None
 

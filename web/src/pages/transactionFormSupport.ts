@@ -8,6 +8,8 @@ export interface AccountOption {
   credit_limit?: number;
   debt_amount?: number;
   frozen_amount?: number;
+  billing_day?: number | string | null;
+  statement_date?: number | string | null;
 }
 
 export interface CategoryOption {
