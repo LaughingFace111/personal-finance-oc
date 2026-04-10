@@ -17,6 +17,7 @@ from src.modules.transactions.schemas import TransactionCreate
 from src.modules.accounts.service import update_account_frozen as update_account_frozen_amount
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
+from src.modules.tags.models import Tag
 
 
 def _write_installment_balance_snapshot(db: Session, account, plan, executed_period: int) -> None:
@@ -75,12 +76,68 @@ def compute_period_date(start_date: date, target_day: int, period_index: int) ->
     return _safe_date(period_month.year, period_month.month, target_day)
 
 
+def _parse_json_list(raw_value) -> List[str]:
+    if raw_value in (None, "", []):
+        return []
+    if isinstance(raw_value, list):
+        return [str(item).strip() for item in raw_value if str(item).strip()]
+    if isinstance(raw_value, str):
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            parsed = [item.strip() for item in raw_value.split(",") if item.strip()]
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return []
+
+
+def _resolve_plan_transaction_tags(db: Session, book_id: str, raw_tags) -> Optional[str]:
+    """
+    Transactions store tag names as JSON.
+    Installment plans may persist tag ids for edit forms, so resolve ids to names here.
+    """
+    values = _parse_json_list(raw_tags)
+    if not values:
+        return None
+
+    tag_rows = db.query(Tag.id, Tag.name).filter(
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
+        Tag.id.in_(values),
+    ).all()
+    tag_name_by_id = {tag_id: tag_name for tag_id, tag_name in tag_rows}
+
+    normalized_names: List[str] = []
+    for value in values:
+        normalized = tag_name_by_id.get(value, value)
+        if normalized and normalized not in normalized_names:
+            normalized_names.append(normalized)
+
+    return json.dumps(normalized_names, ensure_ascii=False) if normalized_names else None
+
+
+def _get_first_schedule_date(data: CreateInstallmentRequest) -> date:
+    if data.first_billing_date:
+        return data.first_billing_date
+    if data.first_execution_date:
+        return data.first_execution_date
+    if data.repayment_day is None:
+        raise ValueError("repayment_day is required for installment schedules")
+    return compute_period_date(data.start_date, data.repayment_day, 0)
+
+
+def _get_next_pending_schedule_date(db: Session, plan_id: str) -> Optional[date]:
+    next_pending_schedule = db.query(InstallmentSchedule).filter(
+        InstallmentSchedule.installment_plan_id == plan_id,
+        InstallmentSchedule.status == "pending",
+    ).order_by(InstallmentSchedule.period_no).first()
+    return next_pending_schedule.due_date if next_pending_schedule else None
+
+
 def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmentRequest) -> List[InstallmentSchedule]:
     """Generate schedules from creation date and target billing day."""
     schedules = []
-    target_day = data.repayment_day
-    if target_day is None:
-        raise ValueError("repayment_day is required for installment schedules")
+    first_schedule_date = _get_first_schedule_date(data)
+    target_day = first_schedule_date.day
 
     from decimal import ROUND_DOWN
     total = Decimal(str(data.total_amount))
@@ -88,7 +145,8 @@ def generate_installment_schedules(plan: InstallmentPlan, data: CreateInstallmen
     base_principal = (total / periods).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
     for period in range(1, data.total_periods + 1):
-        due_date = compute_period_date(data.start_date, target_day, period - 1)
+        # 首期严格锚定用户配置的首次日期，后续期次从该日期按月顺延。
+        due_date = compute_period_date(first_schedule_date, target_day, period - 1)
 
         # 尾差兜底：最后一期用减法确保总额精确等于 total_amount
         if period < data.total_periods:
@@ -140,7 +198,7 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
     )
     serialized_tags = json.dumps(data.tags, ensure_ascii=False) if data.tags else None
     frozen_amount = Decimal(str(data.total_amount))
-    first_schedule_date = compute_period_date(data.start_date, data.repayment_day, 0)
+    first_schedule_date = _get_first_schedule_date(data)
     first_execution_date = data.first_execution_date or first_schedule_date
     first_billing_date = data.first_billing_date or first_schedule_date
 
@@ -262,7 +320,7 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
             category_id=plan.category_id,
             merchant=plan.plan_name,
             note=note,
-            tags=plan.tags,
+            tags=_resolve_plan_transaction_tags(db, book_id, plan.tags),
             extra=transaction_extra,
             business_key=f"installment:{plan.id}:p{next_period}",
             source_type=SourceType.SYSTEM,
@@ -285,10 +343,7 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         plan.current_period = next_period
 
         # 5. 🛡️ L: 推算下一个执行日期
-        if next_period < plan.total_periods:
-            plan.next_execution_date = compute_period_date(plan.start_date, plan.repayment_day or 15, next_period)
-        else:
-            plan.next_execution_date = None
+        plan.next_execution_date = _get_next_pending_schedule_date(db, plan.id)
 
         # 6. 🛡️ L: 同步写入余额快照
         _write_installment_balance_snapshot(db, account, plan, next_period)
@@ -370,7 +425,9 @@ def update_installment_plan(db: Session, plan_id: str, book_id: str, data: Insta
         setattr(plan, key, value)
 
     if should_rebuild_schedule:
-        first_schedule_date = compute_period_date(plan.start_date, plan.repayment_day, 0)
+        first_schedule_date = plan.first_billing_date or plan.first_execution_date
+        if not first_schedule_date:
+            first_schedule_date = compute_period_date(plan.start_date, plan.repayment_day, 0)
         plan.first_execution_date = first_schedule_date
         plan.first_billing_date = first_schedule_date
         plan.first_repayment_date = first_schedule_date
@@ -379,7 +436,7 @@ def update_installment_plan(db: Session, plan_id: str, book_id: str, data: Insta
             InstallmentSchedule.installment_plan_id == plan.id
         ).order_by(InstallmentSchedule.period_no).all()
         for schedule in schedules:
-            schedule.due_date = compute_period_date(plan.start_date, plan.repayment_day, schedule.period_no - 1)
+            schedule.due_date = compute_period_date(first_schedule_date, first_schedule_date.day, schedule.period_no - 1)
 
     db.commit()
     db.refresh(plan)

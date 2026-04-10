@@ -143,7 +143,11 @@ export default function TransactionList({
   }, [accounts])
 
   const tagMap = useMemo(() => {
-    return new Map(tags.map((tag) => [tag.name, tag]))
+    const entries = tags.flatMap((tag) => [
+      [tag.name, tag] as const,
+      [tag.id, tag] as const,
+    ])
+    return new Map(entries)
   }, [tags])
 
   const groupedData = useMemo(() => {
@@ -244,9 +248,10 @@ export default function TransactionList({
         if (typeof tag === 'string') {
           const trimmedName = tag.trim()
           if (!trimmedName) return null
+          const matchedTag = tagMap.get(trimmedName)
           return {
-            name: trimmedName,
-            color: tagMap.get(trimmedName)?.color
+            name: matchedTag?.name || trimmedName,
+            color: matchedTag?.color
           }
         }
 

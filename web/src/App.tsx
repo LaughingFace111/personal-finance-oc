@@ -1024,8 +1024,7 @@ const TransactionFormPage = () => {
       try {
         const tagNames = typeof loadedTx.tags === 'string' ? JSON.parse(loadedTx.tags) : loadedTx.tags
         if (Array.isArray(tagNames)) {
-          const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
-          setSelectedTagIds(matchedIds)
+          setSelectedTagIds(mapTagNamesToIds(tags as any, tagNames.map(String)))
         }
       } catch (error) {
         console.error("Request failed:", error)

@@ -114,9 +114,7 @@ export function TransactionBottomDrawer({
       try {
         const tagNames = typeof transaction.tags === 'string' ? JSON.parse(transaction.tags) : transaction.tags
         if (Array.isArray(tagNames)) {
-          // 根据标签名匹配ID
-          const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
-          setSelectedTagIds(matchedIds)
+          setSelectedTagIds(mapTagNamesToIds(tags as any, tagNames.map(String)))
         }
       } catch (error) {
         console.error("Request failed:", error)
@@ -163,8 +161,7 @@ export function TransactionBottomDrawer({
       try {
         const tagNames = typeof transaction.tags === 'string' ? JSON.parse(transaction.tags) : transaction.tags
         if (Array.isArray(tagNames)) {
-          const matchedIds = tags.filter((t: any) => tagNames.includes(t.name)).map((t: any) => t.id)
-          setSelectedTagIds(matchedIds)
+          setSelectedTagIds(mapTagNamesToIds(tags as any, tagNames.map(String)))
         }
       } catch (error) {
         console.error("Request failed:", error)

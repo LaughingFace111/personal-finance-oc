@@ -136,7 +136,7 @@ export function parseTransactionTagNames(tags: unknown): string[] {
 
 export function mapTagNamesToIds(allTags: TagOption[], tagNames: string[]) {
   return allTags
-    .filter((tag) => tagNames.includes(tag.name))
+    .filter((tag) => tagNames.includes(tag.name) || tagNames.includes(tag.id))
     .map((tag) => tag.id);
 }
 
