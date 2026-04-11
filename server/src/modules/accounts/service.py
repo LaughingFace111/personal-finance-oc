@@ -36,7 +36,19 @@ def _get_billing_cycle_dates(today: date, billing_day: int, billing_day_rule: st
 
 
 def _get_adjacent_bill_dates(today: date, billing_day: int) -> Tuple[date, date]:
-    """Return the most recent past/current bill date and the next upcoming bill date."""
+    """
+    Return the bill-date anchors used by statement calculations.
+
+    - `last_bill_date`: the bill date that anchors the current statement decision.
+      When today < billing_day, this is this month's upcoming bill date.
+      When today >= billing_day, this is this month's bill date that has already occurred.
+    - `next_bill_date`: the bill date for the following cycle.
+
+    Example with billing_day=5:
+    - On Apr 4 (before billing day): last=Apr 5, next=May 5
+    - On Apr 5 (on billing day):     last=Apr 5, next=May 5
+    - On Apr 6 (after billing day):  last=Apr 5, next=May 5
+    """
     current_month_bill_date = _safe_date(today.year, today.month, billing_day)
 
     if today >= current_month_bill_date:
@@ -46,11 +58,15 @@ def _get_adjacent_bill_dates(today: date, billing_day: int) -> Tuple[date, date]
         else:
             next_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month + 1, billing_day)
     else:
-        next_bill_date = current_month_bill_date
-        if current_month_bill_date.month == 1:
-            last_bill_date = _safe_date(current_month_bill_date.year - 1, 12, billing_day)
-        else:
-            last_bill_date = _safe_date(current_month_bill_date.year, current_month_bill_date.month - 1, billing_day)
+        # When today < billing_day: this month's bill has not been generated yet.
+        # The most recent 'current' bill date is this month's billing date.
+        # Example: today=Apr 4, billing_day=5 -> last_bill_date=Apr 5, next_bill_date=May 5
+        last_bill_date = current_month_bill_date
+        next_bill_date = _safe_date(
+            current_month_bill_date.year + (1 if current_month_bill_date.month == 12 else 0),
+            (current_month_bill_date.month % 12) + 1,
+            billing_day,
+        )
 
     return last_bill_date, next_bill_date
 
@@ -229,6 +245,10 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     2. 基于最近已出账日统一计算未出账区间净消费
     3. 旧账单欠款 = 当前总欠款 - 未出账净消费
     4. 若旧账未清，继续锚定最近已出账账单；否则轮转到即将出账的新账单
+
+    `credit_balance` sign convention:
+    - `0.0`: no overpayment credit
+    - negative float: user has overpaid and carries a credit balance
     """
     # 如果不是信用账户，返回 None
     if account.account_type not in ['credit_card', 'credit_line']:
@@ -236,7 +256,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
             'current_statement_balance': None,
             'next_repayment_date': None,
             'days_until_repayment': None,
-            'is_overdue': False
+            'is_overdue': False,
+            'credit_balance': 0.0,
         }
     
     # 如果未设置账单日或还款日，返回 None
@@ -248,7 +269,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
             'current_statement_balance': None,
             'next_repayment_date': None,
             'days_until_repayment': None,
-            'is_overdue': False
+            'is_overdue': False,
+            'credit_balance': 0.0,
         }
     
     try:
@@ -259,7 +281,8 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
             'current_statement_balance': None,
             'next_repayment_date': None,
             'days_until_repayment': None,
-            'is_overdue': False
+            'is_overdue': False,
+            'credit_balance': 0.0,
         }
     
     today = date.today()
@@ -319,12 +342,16 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     next_repay_date = _get_statement_due_date(target_bill_date, repayment_day)
     is_overdue = today > next_repay_date
     days_until = (next_repay_date - today).days
-    
+
+    # Negative credit_balance means the account currently carries an overpayment credit.
+    credit_balance = old_billed_debt if old_billed_debt < Decimal("0") else None
+
     return {
         'current_statement_balance': statement_balance,
         'next_repayment_date': next_repay_date.isoformat(),
         'days_until_repayment': days_until,
-        'is_overdue': is_overdue
+        'is_overdue': is_overdue,
+        'credit_balance': float(credit_balance) if credit_balance is not None else 0.0,
     }
 
 

@@ -580,13 +580,9 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
     if transaction.posted_at is not None:
         raise HTTPException(status_code=400, detail="Settled transaction cannot be reverted")
 
-    delete_transaction(db, transaction.id, book_id)
-    update_account_frozen_amount(
-        db,
-        plan.account_id,
-        Decimal(str(schedule.principal_amount)),
-        is_increase=True,
-    )
+    delete_transaction(db, transaction.id, book_id, auto_commit=False)
+    # 🛡️ L: delete_transaction 内部已通过 _reverse_transaction_effects → update_account_frozen
+    # 恢复了 frozen_release_amount（= principal_amount），此处不再重复恢复，避免双倍解冻
 
     schedule.payment_transaction_id = None
     schedule.paid_amount = Decimal("0")
@@ -596,21 +592,24 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
     if plan.executed_periods == schedule.period_no:
         plan.executed_periods -= 1
         plan.current_period = max(plan.executed_periods, 0)
-    else:
-        executed_count = db.query(InstallmentSchedule).filter(
-            InstallmentSchedule.installment_plan_id == plan.id,
-            InstallmentSchedule.status == "executed",
-        ).count()
-        plan.executed_periods = executed_count
-        plan.current_period = executed_count
 
     plan.status = PlanStatus.ACTIVE.value
     plan.next_execution_date = schedule.due_date
 
-    db.commit()
-    db.refresh(schedule)
-    db.refresh(plan)
-    clear_overview_cache()
+    # Compensating snapshot: write updated balance after revert
+    from src.modules.accounts.models import Account
+    account = db.query(Account).filter(Account.id == plan.account_id).with_for_update().first()
+    _write_installment_balance_snapshot(db, account, plan, schedule.period_no)
+
+    try:
+        db.commit()
+        db.refresh(schedule)
+        db.refresh(plan)
+        clear_overview_cache()  # 🛡️ L: revert_installment_period
+    except Exception as e:
+        db.rollback()
+        raise e
+
     return {"plan": plan, "schedule": schedule}
 
 

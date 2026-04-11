@@ -72,6 +72,7 @@ export default function OtherTransactionPage({
   const [creditCardAccountId, setCreditCardAccountId] = useState(initialValues?.creditCardAccountId ?? '');
   const [repayAmount, setRepayAmount] = useState(initialValues?.amount ?? '');
   const [repayAmountLoading, setRepayAmountLoading] = useState(false);
+  const [currentStatementBalance, setCurrentStatementBalance] = useState<number | null>(null);
 
   const [memo, setMemo] = useState(initialValues?.memo ?? '');
   const [date, setDate] = useState(initialValues?.date ? toDateInputValue(initialValues.date) : new Date().toISOString().split('T')[0]);
@@ -119,22 +120,14 @@ export default function OtherTransactionPage({
   useEffect(() => {
     if (subType !== 'repay') {
       setRepayAmountLoading(false);
+      setCurrentStatementBalance(null);
       return;
     }
 
     if (!creditCardAccountId) {
       setRepayAmount(initialValues?.amount ?? '');
       setRepayAmountLoading(false);
-      return;
-    }
-
-    if (
-      isEditMode &&
-      initialValues?.creditCardAccountId === creditCardAccountId &&
-      initialValues?.amount
-    ) {
-      setRepayAmount(initialValues.amount);
-      setRepayAmountLoading(false);
+      setCurrentStatementBalance(null);
       return;
     }
 
@@ -144,11 +137,23 @@ export default function OtherTransactionPage({
       setRepayAmountLoading(true);
       try {
         const account = await apiGet<AccountDetailResponse>(`/api/accounts/${creditCardAccountId}`);
+        const statementBalance =
+          account.current_statement_balance == null ? null : Number(account.current_statement_balance);
         if (!isCancelled) {
-          setRepayAmount(account.current_statement_balance == null ? '' : String(account.current_statement_balance));
+          setCurrentStatementBalance(statementBalance);
+          if (
+            isEditMode &&
+            initialValues?.creditCardAccountId === creditCardAccountId &&
+            initialValues?.amount
+          ) {
+            setRepayAmount(initialValues.amount);
+          } else {
+            setRepayAmount(account.current_statement_balance == null ? '' : String(account.current_statement_balance));
+          }
         }
       } catch {
         if (!isCancelled) {
+          setCurrentStatementBalance(null);
           setRepayAmount('');
         }
       } finally {
@@ -194,6 +199,20 @@ export default function OtherTransactionPage({
       })
       .filter(Boolean);
   }, [tagIds, tags]);
+
+  const formattedCurrentStatementBalance = useMemo(() => {
+    if (currentStatementBalance == null || Number.isNaN(currentStatementBalance)) {
+      return null;
+    }
+    return currentStatementBalance.toFixed(2);
+  }, [currentStatementBalance]);
+
+  const isRepaymentBlocked =
+    subType === 'repay' &&
+    !isEditMode &&
+    !!creditCardAccountId &&
+    !repayAmountLoading &&
+    (currentStatementBalance == null || currentStatementBalance <= 0);
 
   const handleCancel = () => {
     if (onCancel) {
@@ -535,6 +554,13 @@ export default function OtherTransactionPage({
             </option>
           ))}
         </select>
+        {creditCardAccountId ? (
+          <p className="mt-2 text-sm text-slate-500">
+            {currentStatementBalance == null || currentStatementBalance <= 0
+              ? '本期已结清，暂无需要还款的账单'
+              : `本期待还: ${formattedCurrentStatementBalance}元`}
+          </p>
+        ) : null}
       </div>
 
       <div>
@@ -638,7 +664,7 @@ export default function OtherTransactionPage({
         </button>
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || isRepaymentBlocked}
           className="flex-1 rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? (isEditMode ? '保存中...' : '保存中...') : isEditMode ? '保存' : '保存'}

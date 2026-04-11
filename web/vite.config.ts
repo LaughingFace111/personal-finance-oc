@@ -13,6 +13,8 @@ export default defineConfig({
       '192.168.22.221',
       '.cpolar.top',
       '.cpolar.cn',
+      'personal-finance-web.loca.lt',
+      'fast-monkey-60.loca.lt',
     ],
     proxy: {
       '/api': {

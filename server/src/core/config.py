@@ -20,7 +20,15 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 300  # 300 minutes (5 hours)
 
     # CORS
-    CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
+    CORS_ORIGINS: list = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://192.168.22.221:5173",
+        "https://personal-finance-web.loca.lt",
+        "https://fast-monkey-60.loca.lt",
+        "https://409b61ca.r11.vip.cpolar.cn",
+        "https://fuzzy-pumas-work.loca.lt",
+    ]
 
     class Config:
         env_file = ".env"

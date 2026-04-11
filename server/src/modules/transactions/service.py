@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 
+from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, selectinload
 
@@ -25,6 +26,7 @@ from .schemas import (
     TransferEditResponse,
 )
 from src.modules.accounts.service import (
+    calculate_credit_statement_info,
     get_account,
     get_account_by_id,
     update_account_balance,
@@ -60,6 +62,30 @@ def _build_transfer_merchant(from_account: Account, to_account: Account) -> str:
 def _build_credit_repayment_merchant(from_account: Account, credit_account: Account) -> str:
     """Build a stable display name for credit repayment transactions."""
     return f"信用卡还款: {from_account.name} -> {credit_account.name}"
+
+
+def _validate_credit_repayment_amount(
+    db: Session,
+    credit_account: Account,
+    repayment_amount: Decimal,
+) -> Decimal:
+    """Block repayments that exceed the currently billed statement balance."""
+    statement_info = calculate_credit_statement_info(db, credit_account)
+    current_statement_balance = statement_info.get("current_statement_balance")
+
+    if current_statement_balance is None or current_statement_balance <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="上期账单已结清，本期账单尚未出账，当前无须还款",
+        )
+
+    if repayment_amount > current_statement_balance:
+        raise HTTPException(
+            status_code=400,
+            detail="还款金额不能超过本期已出账欠款。系统不支持未出账单提前还款",
+        )
+
+    return current_statement_balance
 
 
 def _get_installment_frozen_release_amount(txn: Transaction) -> Decimal:
@@ -398,10 +424,20 @@ def create_transaction(
         raise NotFoundException("Account not found")
 
     # Check counterparty account if provided
+    counterparty = None
     if data.counterparty_account_id:
         counterparty = get_account(db, data.counterparty_account_id, book_id)
         if not counterparty:
             raise NotFoundException("Counterparty account not found")
+
+    if data.transaction_type == TransactionType.REPAYMENT_CREDIT_CARD:
+        if not counterparty:
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Counterparty account not found")
+        if not _is_asset_account(account.account_type):
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Repayment source must be an asset account")
+        if not _is_credit_account(counterparty.account_type):
+            raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Repayment target must be a credit account")
+        _validate_credit_repayment_amount(db, counterparty, data.amount)
 
     # Idempotency check for non-manual transactions
     # 排除状态为 void 的交易,允许重新导入已删除的交易
@@ -560,6 +596,9 @@ def create_transfer(db: Session, book_id: str, data: TransferCreate, commit: boo
 
     if data.from_account_id == data.to_account_id:
         raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Cannot transfer to same account")
+
+    if _is_credit_account(to_account.account_type):
+        _validate_credit_repayment_amount(db, to_account, data.amount)
 
     occurred_at = data.occurred_at or datetime.now(timezone.utc)
     created_transaction_ids: List[str] = []
@@ -736,16 +775,7 @@ def create_credit_card_repayment(
     if not _is_credit_account(credit_account.account_type):
         raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Repayment target must be a credit account")
 
-    current_debt = credit_account.debt_amount or Decimal("0")
-    if current_debt <= 0:
-        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS, message="Credit account has no outstanding debt")
-
-    if data.amount > current_debt:
-        raise AppException(
-            status_code=400,
-            code=ErrorCode.INVALID_PARAMS,
-            message=f"Repayment amount exceeds current debt: {current_debt}"
-        )
+    _validate_credit_repayment_amount(db, credit_account, data.amount)
 
     txn = Transaction(
         id=generate_uuid(),
@@ -1116,7 +1146,12 @@ def update_transaction(db: Session, transaction_id: str, book_id: str, data: Tra
 
 
 
-def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
+def delete_transaction(
+    db: Session,
+    transaction_id: str,
+    book_id: str,
+    auto_commit: bool = True,
+) -> None:
     """
     Delete a transaction permanently.
 
@@ -1125,6 +1160,8 @@ def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
     - 删除转账另一侧
     - 删除关联手续费
     - 在一次提交中回滚所有账户影响
+
+    When `auto_commit` is False, the caller owns the transaction boundary.
     """
     txn = get_transaction(db, transaction_id, book_id)
     if not txn:
@@ -1181,8 +1218,9 @@ def delete_transaction(db: Session, transaction_id: str, book_id: str) -> None:
     for item in list(to_delete.values()):
         db.delete(item)
 
-    db.commit()
-    clear_overview_cache()  # 🛡️ L: delete_transaction
+    if auto_commit:
+        db.commit()
+        clear_overview_cache()  # 🛡️ L: delete_transaction
 
 
 def _get_or_create_adjustment_category(db: Session, book_id: str) -> str:
