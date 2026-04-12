@@ -23,6 +23,48 @@ from src.modules.tags.models import Tag
 logger = logging.getLogger(__name__)
 
 
+def _get_installment_execution_business_key(plan_id: str, period_no: int) -> str:
+    return f"installment:{plan_id}:p{period_no}"
+
+
+def _get_installment_repayment_business_key(plan_id: str, period_no: int) -> str:
+    return f"installment-repayment:{plan_id}:p{period_no}"
+
+
+def _get_installment_execution_transaction(
+    db: Session,
+    book_id: str,
+    plan_id: str,
+    period_no: int,
+) -> Optional[Transaction]:
+    return db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.business_key == _get_installment_execution_business_key(plan_id, period_no),
+    ).first()
+
+
+def _get_installment_repayment_transaction(
+    db: Session,
+    book_id: str,
+    schedule: InstallmentSchedule,
+) -> Optional[Transaction]:
+    if schedule.payment_transaction_id:
+        repayment_txn = db.query(Transaction).filter(
+            Transaction.id == schedule.payment_transaction_id,
+            Transaction.book_id == book_id,
+        ).first()
+        if repayment_txn and repayment_txn.transaction_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
+            return repayment_txn
+
+    return db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.business_key == _get_installment_repayment_business_key(
+            schedule.installment_plan_id,
+            schedule.period_no,
+        ),
+    ).first()
+
+
 def _write_installment_balance_snapshot(db: Session, account, plan, executed_period: int) -> None:
     """🛡️ L: 分期执行后同步写入余额快照"""
     from src.modules.account_balance_snapshots import AccountBalanceSnapshot
@@ -555,7 +597,7 @@ def update_installment_plan(db: Session, plan_id: str, book_id: str, data: Insta
 
 
 def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict:
-    """Revert an executed installment period and rollback account impact."""
+    """Revert the latest installment period from executed/settled back one step."""
     schedule = db.query(InstallmentSchedule).join(InstallmentPlan).filter(
         InstallmentSchedule.id == period_id,
         InstallmentPlan.book_id == book_id,
@@ -566,35 +608,59 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
     plan = schedule.plan
     if schedule.period_no != plan.executed_periods:
         raise HTTPException(status_code=400, detail="只能按顺序撤回最新执行的一期分期任务")
-    if schedule.status != "executed":
-        raise HTTPException(status_code=400, detail="Only executed installment periods can be reverted")
-    if not schedule.payment_transaction_id:
-        raise HTTPException(status_code=400, detail="Installment period has no linked transaction")
+    if schedule.status not in {"executed", "settled", "paid"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Only executed or settled installment periods can be reverted",
+        )
 
-    transaction = db.query(Transaction).filter(
-        Transaction.id == schedule.payment_transaction_id,
-        Transaction.book_id == book_id,
-    ).first()
-    if not transaction:
-        raise NotFoundException("Linked transaction not found")
-    if transaction.posted_at is not None:
-        raise HTTPException(status_code=400, detail="Settled transaction cannot be reverted")
+    execution_transaction = _get_installment_execution_transaction(
+        db, book_id, plan.id, schedule.period_no
+    )
+    revert_to_pending = schedule.status == "executed" or execution_transaction is None
 
-    delete_transaction(db, transaction.id, book_id, auto_commit=False)
-    # 🛡️ L: delete_transaction 内部已通过 _reverse_transaction_effects → update_account_frozen
-    # 恢复了 frozen_release_amount（= principal_amount），此处不再重复恢复，避免双倍解冻
+    if schedule.status in {"settled", "paid"}:
+        repayment_transaction = _get_installment_repayment_transaction(db, book_id, schedule)
+        if not repayment_transaction:
+            raise NotFoundException("Linked repayment transaction not found")
 
-    schedule.payment_transaction_id = None
-    schedule.paid_amount = Decimal("0")
-    schedule.paid_at = None
-    schedule.status = "pending"
+        delete_transaction(db, repayment_transaction.id, book_id, auto_commit=False)
 
-    if plan.executed_periods == schedule.period_no:
-        plan.executed_periods -= 1
-        plan.current_period = max(plan.executed_periods, 0)
+        if revert_to_pending:
+            schedule.payment_transaction_id = None
+            schedule.paid_amount = Decimal("0")
+            schedule.paid_at = None
+            schedule.status = "pending"
+            if plan.executed_periods == schedule.period_no:
+                plan.executed_periods -= 1
+        else:
+            schedule.payment_transaction_id = execution_transaction.id
+            schedule.paid_amount = execution_transaction.amount
+            schedule.paid_at = execution_transaction.occurred_at
+            schedule.status = "executed"
+    else:
+        if not execution_transaction:
+            raise NotFoundException("Linked installment transaction not found")
 
-    plan.status = PlanStatus.ACTIVE.value
-    plan.next_execution_date = schedule.due_date
+        delete_transaction(db, execution_transaction.id, book_id, auto_commit=False)
+        # 🛡️ L: delete_transaction 内部已通过 _reverse_transaction_effects → update_account_frozen
+        # 恢复了 frozen_release_amount（= principal_amount），此处不再重复恢复，避免双倍解冻
+
+        schedule.payment_transaction_id = None
+        schedule.paid_amount = Decimal("0")
+        schedule.paid_at = None
+        schedule.status = "pending"
+
+        if plan.executed_periods == schedule.period_no:
+            plan.executed_periods -= 1
+
+    plan.current_period = max(plan.executed_periods, 0)
+    plan.status = (
+        PlanStatus.COMPLETED.value
+        if plan.executed_periods >= plan.total_periods
+        else PlanStatus.ACTIVE.value
+    )
+    plan.next_execution_date = _get_next_pending_schedule_date(db, plan.id)
 
     # Compensating snapshot: write updated balance after revert
     from src.modules.accounts.models import Account
@@ -661,12 +727,13 @@ def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str,
         credit_card_account_id=plan.account_id,
     )
     transaction = create_credit_card_repayment(db, book_id, txn_data)
+    transaction.business_key = _get_installment_repayment_business_key(plan.id, schedule.period_no)
 
     # Update schedule
     schedule.paid_amount = total_repayment
     schedule.paid_at = occurred_at
     schedule.payment_transaction_id = transaction.id
-    schedule.status = "paid"
+    schedule.status = "settled"
 
     # Update plan current period
     plan.current_period = schedule.period_no
