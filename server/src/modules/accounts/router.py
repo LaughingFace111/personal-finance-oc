@@ -210,18 +210,78 @@ def get_balance_trend(
     book_id: str = None
 ):
     """
-    🛡️ L: 获取账户可用额度每日趋势数据
-    
-    对于信用账户：
-    - 每日可用额度 = Credit_Limit - 当日累计欠款 - 冻结金额
-    - 使用当前信用额度减去每天的运行欠款（Running Debt）
-    
-    对于资产账户：
-    - 每日余额 = Opening_Balance + 运行支出/收入
+    获取账户每日收盘趋势数据。
+
+    - 资产账户: 每日收盘余额
+    - 信用账户: 每日收盘可用额度 = credit_limit - debt_amount - frozen_amount
+    - 贷款账户: 每日收盘剩余本金 / 负债
+
+    返回区间内每一天的数据；无交易日沿用上一日收盘值。
     """
-    from datetime import datetime, date, timedelta
-    from decimal import Decimal
+    from datetime import datetime, time, timedelta
     from src.modules.accounts.service import get_account
+
+    def _parse_boundary(raw_value: str | None, *, is_end: bool) -> datetime:
+        if not raw_value:
+            return datetime.now(timezone.utc)
+
+        normalized = raw_value.replace('Z', '+00:00')
+        parsed = datetime.fromisoformat(normalized)
+        is_date_only = 'T' not in raw_value and ' ' not in raw_value
+        if not is_date_only:
+            return parsed
+
+        boundary_time = time.max if is_end else time.min
+        return datetime.combine(parsed.date(), boundary_time, tzinfo=parsed.tzinfo)
+
+    def _load_daily_changes(change_case_sql: str, start_dt: datetime, end_dt: datetime) -> tuple[Decimal, dict[str, Decimal]]:
+        params = {
+            'account_id': account_id,
+            'start_dt': start_dt,
+            'end_dt': end_dt,
+        }
+
+        change_after_end = Decimal(str(
+            db.execute(
+                text(f"""
+                    SELECT COALESCE(SUM({change_case_sql}), 0)
+                    FROM transactions
+                    WHERE status = 'confirmed'
+                      AND occurred_at > :end_dt
+                      AND (
+                            account_id = :account_id
+                         OR counterparty_account_id = :account_id
+                      )
+                """),
+                params,
+            ).scalar() or 0
+        ))
+
+        rows = db.execute(
+            text(f"""
+                SELECT
+                    date(occurred_at) AS txn_date,
+                    COALESCE(SUM({change_case_sql}), 0) AS daily_change
+                FROM transactions
+                WHERE status = 'confirmed'
+                  AND occurred_at >= :start_dt
+                  AND occurred_at <= :end_dt
+                  AND (
+                        account_id = :account_id
+                     OR counterparty_account_id = :account_id
+                  )
+                GROUP BY date(occurred_at)
+                ORDER BY date(occurred_at)
+            """),
+            params,
+        ).all()
+
+        changes_by_day: dict[str, Decimal] = {}
+        for txn_date, daily_change in rows:
+            key = txn_date.isoformat() if hasattr(txn_date, 'isoformat') else str(txn_date)
+            changes_by_day[key] = Decimal(str(daily_change or 0))
+
+        return change_after_end, changes_by_day
     
     # 获取账本
     bid = get_current_book_id(current_user, db, book_id)
@@ -233,18 +293,18 @@ def get_balance_trend(
         raise HTTPException(status_code=404, detail="Account not found")
     
     # 确定日期范围
-    if end_date:
-        end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-    else:
-        end_dt = datetime.now(timezone.utc)
-    
+    end_dt = _parse_boundary(end_date, is_end=True)
     if start_date:
-        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        start_dt = _parse_boundary(start_date, is_end=False)
     else:
-        start_dt = end_dt - timedelta(days=90)
-    
-    start_date_str = start_dt.strftime('%Y-%m-%d')
-    end_date_str = end_dt.strftime('%Y-%m-%d')
+        start_dt = datetime.combine((end_dt - timedelta(days=90)).date(), time.min, tzinfo=end_dt.tzinfo)
+
+    if start_dt > end_dt:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="start_date must be earlier than or equal to end_date",
+        )
     
     # 判断账户类型
     is_credit = account.account_type in ['credit_card', 'credit_line']
@@ -255,209 +315,138 @@ def get_balance_trend(
     opening_balance = Decimal(str(account.opening_balance or 0))
     current_debt = Decimal(str(account.debt_amount or 0))
     frozen_amount = Decimal(str(account.frozen_amount or 0))
-    
-    data_points = []
-    
-    if is_credit:
-        # 🛡️ L: 信用账户 - 计算每日可用额度
-        # 算法：对于每一天，使用窗口函数计算累计欠款变化，然后：
-        # Available_Credit = Credit_Limit - Running_Debt - Frozen_Amount
 
-        credit_debt_change_case = """
+    if is_loan:
+        loan_principal_remaining = db.execute(
+            text("""
+                SELECT COALESCE(SUM(principal_remaining), 0)
+                FROM loan_plans
+                WHERE account_id = :account_id
+            """),
+            {'account_id': account_id},
+        ).scalar()
+        current_debt = Decimal(str(
+            loan_principal_remaining if loan_principal_remaining is not None else account.debt_amount or 0
+        ))
+
+    if is_credit:
+        metric_change_case = """
             CASE
                 WHEN account_id = :account_id
-                  AND transaction_type IN ('expense', 'fee', 'installment_purchase')
-                  AND direction = 'out'
+                  AND transaction_type IN ('expense', 'installment_purchase')
                   THEN amount
                 WHEN account_id = :account_id
                   AND transaction_type = 'refund'
-                  AND direction = 'in'
                   THEN -amount
                 WHEN account_id = :account_id
                   AND transaction_type = 'transfer'
-                  AND direction = 'in' THEN amount
+                  AND direction = 'out'
+                  THEN amount
                 WHEN account_id = :account_id
                   AND transaction_type = 'transfer'
-                  AND direction = 'out' THEN -amount
+                  AND direction = 'in'
+                  THEN -amount
                 WHEN counterparty_account_id = :account_id
                   AND transaction_type = 'repayment_credit_card'
-                  AND direction = 'out'
+                  THEN -amount
+                WHEN counterparty_account_id = :account_id
+                  AND transaction_type = 'transfer'
+                  AND related_transaction_id IS NULL
                   THEN -amount
                 ELSE 0
             END
         """
 
-        debt_change_after_end = db.execute(
-            text("""
-                SELECT COALESCE(SUM(
-                    """ + credit_debt_change_case + """
-                ), 0)
-                FROM transactions
-                WHERE status = 'confirmed'
-                  AND occurred_at > :end_dt
-                  AND (
-                        account_id = :account_id
-                     OR counterparty_account_id = :account_id
-                  )
-            """),
-            {
-                'account_id': account_id,
-                'end_dt': end_dt,
-            }
-        ).scalar() or 0
-
-        debt_change_in_range = db.execute(
-            text("""
-                SELECT COALESCE(SUM(
-                    """ + credit_debt_change_case + """
-                ), 0)
-                FROM transactions
-                WHERE status = 'confirmed'
-                  AND occurred_at >= :start_dt
-                  AND occurred_at <= :end_dt
-                  AND (
-                        account_id = :account_id
-                     OR counterparty_account_id = :account_id
-                  )
-            """),
-            {
-                'account_id': account_id,
-                'start_dt': start_dt,
-                'end_dt': end_dt,
-            }
-        ).scalar() or 0
-
-        current_debt_at_end = current_debt - Decimal(str(debt_change_after_end))
-        initial_debt = current_debt_at_end - Decimal(str(debt_change_in_range))
-
-        # 使用 SQL 窗口函数计算每天的运行欠款
-        sql = """
-        WITH daily_changes AS (
-            SELECT 
-                date(occurred_at) as txn_date,
-                SUM(
-                    """ + credit_debt_change_case + """
-                ) as daily_change
-            FROM transactions
-            WHERE status = 'confirmed'
-              AND occurred_at >= :start_dt
-              AND occurred_at <= :end_dt
-              AND (
-                    account_id = :account_id
-                 OR counterparty_account_id = :account_id
-              )
-            GROUP BY date(occurred_at)
-        ),
-        running_debt AS (
-            SELECT 
-                txn_date,
-                daily_change,
-                SUM(daily_change) OVER (ORDER BY txn_date ROWS UNBOUNDED PRECEDING) as running_debt_change
-            FROM daily_changes
-        )
-        SELECT 
-            txn_date,
-            :initial_debt + COALESCE(running_debt_change, 0) as daily_debt
-        FROM running_debt
-        ORDER BY txn_date
-        """
-        
-        result = db.execute(
-            text(sql),
-            {
-                'account_id': account_id,
-                'start_dt': start_dt,
-                'end_dt': end_dt,
-                'initial_debt': float(initial_debt)
-            }
-        )
-        
-        for row in result:
-            txn_date = row[0]
-            daily_debt = Decimal(str(row[1]))
-            
-            # 🛡️ L: 可用额度 = 信用额度 - 欠款 - 冻结金额
-            # 这是用户真正可以使用的额度
-            available_credit = credit_limit - daily_debt - frozen_amount
-            
-            data_points.append({
-                'date': txn_date.isoformat() if hasattr(txn_date, 'isoformat') else str(txn_date),
-                'balance': float(available_credit)
-            })
-        
-        # 如果没有交易数据，返回当前可用额度作为起点
-        if not data_points:
-            available_credit = credit_limit - current_debt - frozen_amount
-            data_points.append({
-                'date': start_date_str,
-                'balance': float(available_credit)
-            })
-    
+        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_dt)
+        metric_at_end = current_debt - change_after_end
+        opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
     else:
-        # 🛡️ L: 资产账户/贷款账户 - 保持原有逻辑
-        opening = opening_balance if not is_loan else Decimal("0")
-        
-        sql = """
-        WITH daily_changes AS (
-            SELECT 
-                date(occurred_at) as txn_date,
-                SUM(
-                    CASE 
-                        WHEN direction = 'in' THEN amount
-                        WHEN direction = 'out' THEN -amount
-                        ELSE 0
-                    END
-                ) as daily_change
-            FROM transactions
-            WHERE account_id = :account_id
-              AND occurred_at >= :start_dt
-              AND occurred_at <= :end_dt
-              AND status = 'confirmed'
-            GROUP BY date(occurred_at)
-        ),
-        running_total AS (
-            SELECT 
-                txn_date,
-                daily_change,
-                SUM(daily_change) OVER (ORDER BY txn_date ROWS UNBOUNDED PRECEDING) as running_sum
-            FROM daily_changes
-        )
-        SELECT 
-            txn_date,
-            :opening_balance + COALESCE(running_sum, 0) as balance
-        FROM running_total
-        ORDER BY txn_date
-        """
-        
-        result = db.execute(
-            text(sql),
-            {
-                'account_id': account_id,
-                'start_dt': start_dt,
-                'end_dt': end_dt,
-                'opening_balance': float(opening)
-            }
-        )
-        
-        for row in result:
-            txn_date = row[0]
-            balance = Decimal(str(row[1]))
-            
-            # 贷款账户余额取负
-            if is_loan:
-                balance = -balance
-            
-            data_points.append({
-                'date': txn_date.isoformat() if hasattr(txn_date, 'isoformat') else str(txn_date),
-                'balance': float(balance)
-            })
-        
-        if not data_points and opening > 0:
-            data_points.append({
-                'date': start_date_str,
-                'balance': float(-opening if is_loan else opening)
-            })
-    
+        if is_loan:
+            metric_change_case = """
+                CASE
+                    WHEN account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND direction = 'out'
+                      THEN amount
+                    WHEN account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND direction = 'in'
+                      THEN -amount
+                    WHEN counterparty_account_id = :account_id
+                      AND transaction_type = 'repayment_loan'
+                      THEN -amount
+                    WHEN counterparty_account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND related_transaction_id IS NULL
+                      THEN -amount
+                    ELSE 0
+                END
+            """
+            current_metric = current_debt
+        else:
+            metric_change_case = """
+                CASE
+                    WHEN account_id = :account_id
+                      AND transaction_type = 'income'
+                      THEN amount
+                    WHEN account_id = :account_id
+                      AND transaction_type IN (
+                          'expense',
+                          'fee',
+                          'repayment_credit_card',
+                          'repayment_loan',
+                          'debt_lend',
+                          'debt_pay_back'
+                      )
+                      THEN -amount
+                    WHEN account_id = :account_id
+                      AND transaction_type IN (
+                          'refund',
+                          'debt_borrow',
+                          'debt_receive_back'
+                      )
+                      THEN amount
+                    WHEN account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND direction = 'out'
+                      THEN -amount
+                    WHEN account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND direction = 'in'
+                      THEN amount
+                    WHEN counterparty_account_id = :account_id
+                      AND transaction_type = 'transfer'
+                      AND related_transaction_id IS NULL
+                      THEN amount
+                    ELSE 0
+                END
+            """
+            current_metric = Decimal(str(account.current_balance or opening_balance or 0))
+
+        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_dt)
+        metric_at_end = current_metric - change_after_end
+        opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
+
+    data_points = []
+    running_metric = opening_metric
+    current_day = start_dt.date()
+    end_day = end_dt.date()
+
+    while current_day <= end_day:
+        day_key = current_day.isoformat()
+        running_metric += changes_by_day.get(day_key, Decimal("0"))
+
+        if is_credit:
+            display_value = credit_limit - running_metric - frozen_amount
+        else:
+            display_value = running_metric
+
+        data_points.append({
+            'date': day_key,
+            'balance': float(display_value),
+        })
+        current_day += timedelta(days=1)
+
     return data_points
 
 

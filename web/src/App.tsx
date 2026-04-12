@@ -1448,17 +1448,19 @@ const AccountDetailPage = () => {
 
   const typeLabels: Record<string, string> = { cash: '现金', debit_card: '借记卡', credit_card: '信用卡', loan: '贷款', ewallet: '电子钱包', credit_line: '信用账户' }
 
-  useEffect(() => {
+  const loadAccount = async () => {
     if (!bookId || !accountId) return
-    
-    // 加载账户信息
-    apiGet(`/api/accounts/${accountId}`)
-      .then(setAccount)
-      .catch(() => { message.error('加载失败'); navigate('/accounts') })
-  }, [bookId, accountId])
 
-  // 🛡️ L: 加载余额趋势数据
-  useEffect(() => {
+    try {
+      const data = await apiGet(`/api/accounts/${accountId}`)
+      setAccount(data)
+    } catch {
+      message.error('加载失败')
+      navigate('/accounts')
+    }
+  }
+
+  const loadBalanceTrend = async () => {
     if (!accountId) return
 
     const endDate = formatLocalDate(new Date())
@@ -1466,14 +1468,21 @@ const AccountDetailPage = () => {
     startDateValue.setDate(startDateValue.getDate() - 90)
     const startDate = formatLocalDate(startDateValue)
 
-    apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${startDate}&end_date=${endDate}`)
-      .then((data: any) => {
-        setBalanceTrendData(data || [])
-      })
-      .catch((error) => {
-        console.error("Request failed:", error)
-        setBalanceTrendData([])
-      })
+    try {
+      const data = await apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${startDate}&end_date=${endDate}`)
+      setBalanceTrendData(data || [])
+    } catch (error) {
+      console.error("Request failed:", error)
+      setBalanceTrendData([])
+    }
+  }
+
+  useEffect(() => {
+    loadAccount()
+  }, [bookId, accountId])
+
+  useEffect(() => {
+    loadBalanceTrend()
   }, [accountId])
 
   useEffect(() => {
@@ -1495,7 +1504,19 @@ const AccountDetailPage = () => {
 
   // 判断账户类型
   const isCreditAccount = account?.account_type === 'credit_card' || account?.account_type === 'credit_line'
+  const isLoanAccount = account?.account_type === 'loan'
   const isAssetAccount = ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account?.account_type)
+  const trendTitle = isCreditAccount
+    ? '每日收盘可用额度趋势'
+    : isLoanAccount
+      ? '每日收盘剩余本金趋势'
+      : '每日收盘余额趋势'
+  const trendValueLabel = isCreditAccount
+    ? '收盘可用额度'
+    : isLoanAccount
+      ? '收盘剩余本金'
+      : '收盘余额'
+  const trendColor = isCreditAccount ? '#52c41a' : isLoanAccount ? '#fa8c16' : '#1890ff'
   
   // 余额调整（合规平账操作）
   const handleBalanceAdjust = async (values: any) => {
@@ -1531,9 +1552,8 @@ const AccountDetailPage = () => {
       message.success('调整成功')
       setAdjustModalVisible(false)
       adjustForm.resetFields()
-      // 重新加载账户信息
-      const updated = await apiGet(`/api/accounts/${accountId}`)
-      setAccount(updated)
+      await loadAccount()
+      await loadBalanceTrend()
     } catch {
       message.error('调整失败')
     } finally {
@@ -1661,15 +1681,14 @@ const AccountDetailPage = () => {
 
       {/* 余额趋势图 */}
       {balanceTrendData && balanceTrendData.length > 0 && (
-        <Card style={{ marginBottom: 16 }} title={isCreditAccount ? "每日可用额度趋势" : "余额趋势"}>
+        <Card style={{ marginBottom: 16 }} title={trendTitle}>
           <ReactECharts
             option={{
               tooltip: { 
                 trigger: 'axis', 
                 formatter: (params: any) => {
                   const value = params[0].value
-                  const label = isCreditAccount ? "可用额度" : "余额"
-                  return `${params[0].name}<br/>${label}: ¥${value.toFixed(2)}`
+                  return `${params[0].name}<br/>${trendValueLabel}: ¥${value.toFixed(2)}`
                 }
               },
               grid: { left: 60, right: 20, top: 20, bottom: 30 },
@@ -1684,7 +1703,7 @@ const AccountDetailPage = () => {
                 data: balanceTrendData.map((p: any) => p.balance),
                 smooth: true,
                 areaStyle: { opacity: 0.2 },
-                itemStyle: { color: isCreditAccount ? '#52c41a' : '#1890ff' },
+                itemStyle: { color: trendColor },
                 lineStyle: { width: 2 },
               }],
             }}
@@ -1791,9 +1810,8 @@ const AccountDetailPage = () => {
               message.success('额度调整成功')
               setLimitModalVisible(false)
               limitForm.resetFields()
-              // 重新加载账户信息
-              const updated = await apiGet(`/api/accounts/${accountId}`)
-              setAccount(updated)
+              await loadAccount()
+              await loadBalanceTrend()
             } catch { message.error('调整失败') } finally {
               setLimitSubmitting(false)
             }

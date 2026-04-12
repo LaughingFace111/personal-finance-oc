@@ -82,7 +82,7 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
 
     # Calculate new balance/debt
     new_balance = account.opening_balance
-    new_debt = Decimal("0")
+    new_debt = account.opening_balance if _is_loan_account(account.account_type) else Decimal("0")
 
     account_type = account.account_type
 
@@ -157,8 +157,9 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
                 new_debt += amount
 
             elif tx_type == TransactionType.TRANSFER.value:
-                # Transfer to credit account increases debt, from decreases debt
-                if direction == TransactionDirection.IN.value:
+                # Split-transfer polarity must match _apply_split_transfer_account_effect:
+                # OUT increases debt, IN decreases debt.
+                if direction == TransactionDirection.OUT.value:
                     new_debt += amount
                 else:
                     new_debt -= amount
@@ -178,8 +179,9 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
                 new_debt += amount
 
             elif tx_type == TransactionType.TRANSFER.value:
-                # Transfer to loan account increases debt, from decreases debt
-                if direction == TransactionDirection.IN.value:
+                # Split-transfer polarity must match _apply_split_transfer_account_effect:
+                # OUT increases debt, IN decreases debt.
+                if direction == TransactionDirection.OUT.value:
                     new_debt += amount
                 else:
                     new_debt -= amount
