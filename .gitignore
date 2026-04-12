@@ -26,3 +26,4 @@ server/data/*.db
 docs/
 *.md
 !README.md
+server/venv/
