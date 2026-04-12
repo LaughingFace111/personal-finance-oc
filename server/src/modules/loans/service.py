@@ -7,14 +7,11 @@ from sqlalchemy.orm import Session
 
 from src.common.enums import PlanStatus, TransactionType, TransactionDirection, SourceType
 from src.core import generate_uuid, NotFoundException
-from src.common import safe_decimal
 
 from .models import LoanPlan, LoanSchedule
 from .schemas import CreateLoanRequest, LoanPlanUpdate, RepayLoanRequest
-from src.modules.accounts.service import get_account, update_account_balance, update_account_debt
+from src.modules.accounts.service import get_account, update_account_balance
 from src.modules.transactions.models import Transaction
-from src.modules.transactions.service import create_transaction
-from src.modules.transactions.schemas import TransactionCreate
 
 
 def _safe_date(year: int, month: int, day: int) -> date:
@@ -23,6 +20,14 @@ def _safe_date(year: int, month: int, day: int) -> date:
     _, last_day = monthrange(year, month)
     day = min(day, last_day)
     return date(year, month, day)
+
+
+def _normalize_annual_interest_rate(rate: Decimal) -> Decimal:
+    """Accept either decimal rate (0.12) or percentage (12)."""
+    normalized_rate = Decimal(str(rate))
+    if normalized_rate > Decimal("1"):
+        normalized_rate = normalized_rate / Decimal("100")
+    return normalized_rate
 
 
 def _calculate_monthly_payment(principal: Decimal, annual_rate: Decimal, periods: int, method: str) -> Decimal:
@@ -45,6 +50,7 @@ def _calculate_monthly_payment(principal: Decimal, annual_rate: Decimal, periods
 
 def create_loan_with_account(db: Session, book_id: str, data: CreateLoanRequest) -> tuple:
     """Create loan plan with account"""
+    annual_interest_rate = _normalize_annual_interest_rate(data.annual_interest_rate)
 
     # Create loan account
     from src.modules.accounts.schemas import AccountCreate
@@ -66,7 +72,7 @@ def create_loan_with_account(db: Session, book_id: str, data: CreateLoanRequest)
     # Calculate monthly payment
     monthly_payment = _calculate_monthly_payment(
         data.principal_total, 
-        data.annual_interest_rate, 
+        annual_interest_rate,
         data.total_periods,
         data.repayment_method
     )
@@ -78,7 +84,7 @@ def create_loan_with_account(db: Session, book_id: str, data: CreateLoanRequest)
         loan_name=data.loan_name or data.account_name,
         principal_total=data.principal_total,
         principal_remaining=data.principal_total,
-        annual_interest_rate=data.annual_interest_rate,
+        annual_interest_rate=annual_interest_rate,
         repayment_method=data.repayment_method,
         total_periods=data.total_periods,
         current_period=0,
@@ -92,16 +98,20 @@ def create_loan_with_account(db: Session, book_id: str, data: CreateLoanRequest)
     # Generate schedules
     schedules = []
     current_date = data.first_due_date
+    remaining_principal = data.principal_total
     for period in range(1, data.total_periods + 1):
         # Calculate interest for this period
-        interest = data.principal_total * (data.annual_interest_rate / 12)
-        
+        interest = remaining_principal * (annual_interest_rate / 12)
+
         # Calculate principal
         if data.repayment_method == "equal_principal":
-            principal = data.principal_total / data.total_periods
+            principal = remaining_principal if period == data.total_periods else data.principal_total / data.total_periods
         else:
             # 等额本息，本金逐月递增
-            principal = monthly_payment - interest
+            principal = remaining_principal if period == data.total_periods else monthly_payment - interest
+
+        if principal > remaining_principal:
+            principal = remaining_principal
 
         # Calculate due date
         if data.repayment_day:
@@ -120,6 +130,7 @@ def create_loan_with_account(db: Session, book_id: str, data: CreateLoanRequest)
             status="pending"
         )
         schedules.append(schedule)
+        remaining_principal -= principal
         current_date = current_date + relativedelta(months=1)
 
     db.add_all(schedules)
@@ -252,9 +263,6 @@ def repay_loan(db: Session, plan_id: str, book_id: str, data: RepayLoanRequest) 
     loan_plan.current_period = schedule.period_no
     if loan_plan.current_period >= loan_plan.total_periods:
         loan_plan.status = PlanStatus.COMPLETED.value
-
-    # Update loan account debt
-    update_account_debt(db, loan_plan.account_id, schedule.principal_due, is_increase=False)
 
     db.commit()
     db.refresh(schedule)

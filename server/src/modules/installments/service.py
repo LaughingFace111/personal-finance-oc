@@ -13,8 +13,8 @@ from src.core import generate_uuid, NotFoundException
 
 from .models import InstallmentPlan, InstallmentSchedule
 from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
-from src.modules.transactions.service import create_transaction, delete_transaction
-from src.modules.transactions.schemas import TransactionCreate
+from src.modules.transactions.service import create_transaction, create_credit_card_repayment, delete_transaction
+from src.modules.transactions.schemas import CreditCardRepaymentCreate, TransactionCreate
 from src.modules.accounts.service import update_account_frozen as update_account_frozen_amount
 from src.core.cache import clear_overview_cache  # 🛡️ L: 缓存失效
 from src.modules.transactions.models import Transaction
@@ -642,28 +642,25 @@ def settle_installment(db: Session, plan_id: str, book_id: str, account_id: str,
     if not plan:
         raise NotFoundException("Installment plan not found")
 
-    # Get next pending schedule
+    # Repayment must settle an already executed statement, not a future pending one.
     schedule = db.query(InstallmentSchedule).filter(
         InstallmentSchedule.installment_plan_id == plan_id,
-        InstallmentSchedule.status == "pending"
+        InstallmentSchedule.status == "executed"
     ).order_by(InstallmentSchedule.period_no).first()
 
     if not schedule:
-        raise ValueError("No pending installment to settle")
+        raise ValueError("No executed installment to settle")
 
-    # Create repayment transaction
+    # Reuse the same credit-card repayment path as manual repayments so the
+    # transaction attributes stay consistent across both flows.
     total_repayment = schedule.principal_amount + schedule.fee_amount
-    txn_data = TransactionCreate(
+    txn_data = CreditCardRepaymentCreate(
         occurred_at=occurred_at,
-        transaction_type=TransactionType.REPAYMENT_CREDIT_CARD,
-        direction=TransactionDirection.INTERNAL,
         amount=total_repayment,
-        account_id=account_id,
-        counterparty_account_id=plan.account_id,
-        business_key=f"installment:{plan.id}:p{schedule.period_no}",
-        source_type=SourceType.MANUAL,
+        from_account_id=account_id,
+        credit_card_account_id=plan.account_id,
     )
-    transaction = create_transaction(db, book_id, txn_data)
+    transaction = create_credit_card_repayment(db, book_id, txn_data)
 
     # Update schedule
     schedule.paid_amount = total_repayment

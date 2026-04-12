@@ -269,7 +269,6 @@ def _get_category_amounts_for_period(
         OriginalTxn.c.book_id == book_id,
         RefundTxn.c.transaction_type == TransactionType.REFUND.value,
         RefundTxn.c.status == "confirmed",
-        RefundTxn.c.include_in_expense == True,  # 🛡️ L: 收支开关过滤（退款也计入支出抵消）
         RefundTxn.c.occurred_at >= dt_from,
         RefundTxn.c.occurred_at <= dt_to,
         OriginalTxn.c.category_id.in_(category_ids),
@@ -725,7 +724,6 @@ def get_daily_summary(db: Session, book_id: str, date_from: date, date_to: date)
         Transaction.book_id == book_id,
         Transaction.transaction_type == TransactionType.REFUND.value,
         Transaction.status == "confirmed",
-        Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤（退款计入支出）
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max)
     ).group_by(func.date(Transaction.occurred_at)).all()

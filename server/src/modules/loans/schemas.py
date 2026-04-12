@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from src.common.enums import PlanStatus
 
 
@@ -17,6 +17,16 @@ class LoanPlanBase(BaseModel):
     total_periods: int = Field(..., gt=0)
     first_due_date: date
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
+
+    @field_validator("annual_interest_rate", mode="before")
+    @classmethod
+    def normalize_annual_interest_rate(cls, value):
+        if value is None:
+            return value
+        rate = Decimal(str(value))
+        if rate > Decimal("1"):
+            rate = rate / Decimal("100")
+        return rate
 
 
 class LoanPlanCreate(LoanPlanBase):
@@ -76,6 +86,16 @@ class CreateLoanRequest(BaseModel):
     first_due_date: date
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     note: Optional[str] = None
+
+    @field_validator("annual_interest_rate", mode="before")
+    @classmethod
+    def normalize_annual_interest_rate(cls, value):
+        if value is None:
+            return value
+        rate = Decimal(str(value))
+        if rate > Decimal("1"):
+            rate = rate / Decimal("100")
+        return rate
 
 
 # Repay loan request

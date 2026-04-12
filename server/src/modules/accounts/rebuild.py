@@ -41,8 +41,8 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
       - - transfer out
       - + debt_borrow
       - - debt_lend
-      - - debt_receive_back
-      - + debt_pay_back
+      - + debt_receive_back
+      - - debt_pay_back
       - - fee
 
     - 信用类账户 (credit_card/credit_line):
@@ -140,12 +140,12 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
                     new_balance -= amount
 
             elif tx_type == TransactionType.DEBT_RECEIVE_BACK.value:
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-
-            elif tx_type == TransactionType.DEBT_PAY_BACK.value:
                 if direction == TransactionDirection.IN.value:
                     new_balance += amount
+
+            elif tx_type == TransactionType.DEBT_PAY_BACK.value:
+                if direction == TransactionDirection.OUT.value:
+                    new_balance -= amount
 
         elif _is_credit_account(account_type):
             # Credit account debt calculation

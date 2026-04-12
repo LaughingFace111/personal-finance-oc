@@ -7,7 +7,7 @@ from calendar import monthrange
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from src.common.enums import AccountType, TransactionType, TransactionDirection, SourceType
+from src.common.enums import AccountType, TransactionType, TransactionDirection
 from src.core import ErrorCode, AppException, generate_uuid, NotFoundException
 
 from .models import Account
@@ -239,16 +239,12 @@ def update_account_frozen(db: Session, account_id: str, amount: Decimal, is_incr
 def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, Any]:
     """
     🛡️ L: 计算信用账户的本期待还和下一个还款日
-    
-    算法：
-    1. 推算最近已出账日和即将出账日
-    2. 基于最近已出账日统一计算未出账区间净消费
-    3. 旧账单欠款 = 当前总欠款 - 未出账净消费
-    4. 若旧账未清，继续锚定最近已出账账单；否则轮转到即将出账的新账单
 
-    `credit_balance` sign convention:
-    - `0.0`: no overpayment credit
-    - negative float: user has overpaid and carries a credit balance
+    三段式算法：
+    1. 计算上一账单日、当前账单日、下一账单日
+    2. 分别统计逾期、当前已出账、未出账三个窗口的消费/退款/还款净额
+    3. 展示值始终使用各窗口的剩余应还净额，而不是原始消费额
+    4. 按 逾期 > 当前已出账 > 未出账投影 的优先级决定展示金额和还款日
     """
     # 如果不是信用账户，返回 None
     if account.account_type not in ['credit_card', 'credit_line']:
@@ -290,68 +286,134 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     last_bill_date, next_bill_date = _get_adjacent_bill_dates(today, billing_day)
     current_debt = account.debt_amount or Decimal("0")
 
+    if last_bill_date.month == 1:
+        prev_bill_date = _safe_date(last_bill_date.year - 1, 12, billing_day)
+    else:
+        prev_bill_date = _safe_date(last_bill_date.year, last_bill_date.month - 1, billing_day)
+
     if billing_day_rule == "next_cycle":
+        current_cycle_start_date = prev_bill_date
         unbilled_cycle_start_date = last_bill_date
     else:
+        current_cycle_start_date = prev_bill_date
         unbilled_cycle_start_date = last_bill_date + timedelta(days=1)
 
-    unbilled_cycle_start_datetime = datetime.combine(unbilled_cycle_start_date, datetime.min.time())
+    current_cycle_start_dt = datetime.combine(current_cycle_start_date, datetime.min.time())
+    unbilled_cycle_start_dt = datetime.combine(unbilled_cycle_start_date, datetime.min.time())
+    next_bill_date_dt = datetime.combine(next_bill_date, datetime.min.time())
 
     # 延迟导入避免循环依赖
     from src.modules.transactions.models import Transaction as TxnModel
+    OriginalTxn = TxnModel.__table__.alias("statement_original_txn")
+    RefundTxn = TxnModel.__table__.alias("statement_refund_txn")
 
-    # 净消费 = 支出总额 - 退款总额（出账日之后）
-    expense_query = db.query(func.sum(TxnModel.amount)).filter(
-        TxnModel.account_id == account.id,
-        TxnModel.occurred_at >= unbilled_cycle_start_datetime,
-        TxnModel.status == "confirmed",
-        TxnModel.direction == TransactionDirection.OUT.value,
-        ~(
-            (TxnModel.source_type == SourceType.SYSTEM.value) &
-            (TxnModel.business_key.like("installment:%"))
-        ),
-        TxnModel.transaction_type.in_([
-            TransactionType.EXPENSE.value,
-            TransactionType.FEE.value,
-            TransactionType.INSTALLMENT_PURCHASE.value
-        ])
-    )
-    expense_total = expense_query.scalar() or Decimal("0")
+    expense_types = [
+        TransactionType.EXPENSE.value,
+        TransactionType.FEE.value,
+        TransactionType.INSTALLMENT_PURCHASE.value,
+    ]
 
-    # 退款（减少负债）
-    # 当前为简化实现：所有出账日后的退款均视为冲抵未出账消费。
-    # 完整实现需要区分退款对应的原消费是否已经出账。
-    refund_query = db.query(func.sum(TxnModel.amount)).filter(
-        TxnModel.account_id == account.id,
-        TxnModel.occurred_at >= unbilled_cycle_start_datetime,
-        TxnModel.status == "confirmed",
-        TxnModel.transaction_type == TransactionType.REFUND.value
-    )
-    refund_total = refund_query.scalar() or Decimal("0")
+    def _sum_expenses(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
+        expense_total = db.query(func.sum(TxnModel.amount)).filter(
+            TxnModel.account_id == account.id,
+            TxnModel.status == "confirmed",
+            TxnModel.direction == TransactionDirection.OUT.value,
+            TxnModel.transaction_type.in_(expense_types),
+        )
+        if start_dt is not None:
+            expense_total = expense_total.filter(TxnModel.occurred_at >= start_dt)
+        if end_dt is not None:
+            expense_total = expense_total.filter(TxnModel.occurred_at < end_dt)
+        return expense_total.scalar() or Decimal("0")
 
-    unbilled_net = expense_total - refund_total
-    old_billed_debt = current_debt - unbilled_net
+    def _sum_refunds(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
+        linked_refunds = db.query(func.sum(RefundTxn.c.amount)).join(
+            OriginalTxn, RefundTxn.c.related_transaction_id == OriginalTxn.c.id
+        ).filter(
+            RefundTxn.c.account_id == account.id,
+            RefundTxn.c.status == "confirmed",
+            RefundTxn.c.transaction_type == TransactionType.REFUND.value,
+            OriginalTxn.c.account_id == account.id,
+        )
+        if start_dt is not None:
+            linked_refunds = linked_refunds.filter(OriginalTxn.c.occurred_at >= start_dt)
+        if end_dt is not None:
+            linked_refunds = linked_refunds.filter(OriginalTxn.c.occurred_at < end_dt)
 
-    if old_billed_debt > Decimal("0"):
-        statement_balance = old_billed_debt
-        target_bill_date = last_bill_date
+        unlinked_refunds = db.query(func.sum(TxnModel.amount)).filter(
+            TxnModel.account_id == account.id,
+            TxnModel.status == "confirmed",
+            TxnModel.transaction_type == TransactionType.REFUND.value,
+            TxnModel.related_transaction_id.is_(None),
+        )
+        if start_dt is not None:
+            unlinked_refunds = unlinked_refunds.filter(TxnModel.occurred_at >= start_dt)
+        if end_dt is not None:
+            unlinked_refunds = unlinked_refunds.filter(TxnModel.occurred_at < end_dt)
+
+        return (linked_refunds.scalar() or Decimal("0")) + (unlinked_refunds.scalar() or Decimal("0"))
+
+    def _sum_repayments(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
+        repayments = db.query(func.sum(TxnModel.amount)).filter(
+            TxnModel.counterparty_account_id == account.id,
+            TxnModel.status == "confirmed",
+            TxnModel.transaction_type == TransactionType.REPAYMENT_CREDIT_CARD.value,
+        )
+        if start_dt is not None:
+            repayments = repayments.filter(TxnModel.occurred_at >= start_dt)
+        if end_dt is not None:
+            repayments = repayments.filter(TxnModel.occurred_at < end_dt)
+        return repayments.scalar() or Decimal("0")
+
+    def _calculate_raw_window_charges(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
+        return _sum_expenses(start_dt, end_dt) - _sum_refunds(start_dt, end_dt)
+
+    # Repayments should offset the oldest billed debt first. If we bucket
+    # repayments only by their occurred_at date, a repayment made after the next
+    # cycle starts can be incorrectly treated as paying the new cycle instead of
+    # the older billed statement, which keeps "本期待还" unchanged.
+    raw_current_billed = _calculate_raw_window_charges(current_cycle_start_dt, unbilled_cycle_start_dt)
+    raw_unbilled = _calculate_raw_window_charges(unbilled_cycle_start_dt, next_bill_date_dt)
+    total_repayments = _sum_repayments(None, None)
+    raw_overdue = max(Decimal("0"), current_debt + total_repayments - raw_current_billed - raw_unbilled)
+
+    remaining_repayments = total_repayments
+
+    overdue_debt = max(Decimal("0"), raw_overdue - remaining_repayments)
+    remaining_repayments = max(Decimal("0"), remaining_repayments - raw_overdue)
+
+    current_billed_net = max(Decimal("0"), raw_current_billed - remaining_repayments)
+    remaining_repayments = max(Decimal("0"), remaining_repayments - raw_current_billed)
+
+    unbilled_net = max(Decimal("0"), raw_unbilled - remaining_repayments)
+
+    prev_billed_due_date = _get_statement_due_date(prev_bill_date, repayment_day)
+    current_billed_due_date = _get_statement_due_date(last_bill_date, repayment_day)
+    next_projected_due_date = _get_statement_due_date(next_bill_date, repayment_day)
+
+    if overdue_debt > Decimal("0"):
+        statement_balance = overdue_debt
+        next_repay_date = prev_billed_due_date
+        is_overdue = today > prev_billed_due_date
+    elif current_billed_net > Decimal("0"):
+        statement_balance = current_billed_net
+        next_repay_date = current_billed_due_date
+        is_overdue = today > current_billed_due_date
     else:
         statement_balance = max(Decimal("0"), unbilled_net)
-        target_bill_date = next_bill_date
+        next_repay_date = next_projected_due_date
+        is_overdue = False
 
-    next_repay_date = _get_statement_due_date(target_bill_date, repayment_day)
-    is_overdue = today > next_repay_date
     days_until = (next_repay_date - today).days
 
-    # Negative credit_balance means the account currently carries an overpayment credit.
-    credit_balance = old_billed_debt if old_billed_debt < Decimal("0") else None
+    credit_balance = -current_debt if current_debt < Decimal("0") else Decimal("0")
 
     return {
         'current_statement_balance': statement_balance,
         'next_repayment_date': next_repay_date.isoformat(),
         'days_until_repayment': days_until,
         'is_overdue': is_overdue,
-        'credit_balance': float(credit_balance) if credit_balance is not None else 0.0,
+        'credit_balance': float(credit_balance),
     }
 
 

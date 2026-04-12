@@ -262,27 +262,90 @@ def get_balance_trend(
         # 🛡️ L: 信用账户 - 计算每日可用额度
         # 算法：对于每一天，使用窗口函数计算累计欠款变化，然后：
         # Available_Credit = Credit_Limit - Running_Debt - Frozen_Amount
-        
-        # 信用账户的初始欠款（opening_balance 存储为 debt_amount）
-        initial_debt = opening_balance
-        
+
+        credit_debt_change_case = """
+            CASE
+                WHEN account_id = :account_id
+                  AND transaction_type IN ('expense', 'fee', 'installment_purchase')
+                  AND direction = 'out'
+                  THEN amount
+                WHEN account_id = :account_id
+                  AND transaction_type = 'refund'
+                  AND direction = 'in'
+                  THEN -amount
+                WHEN account_id = :account_id
+                  AND transaction_type = 'transfer'
+                  AND direction = 'in' THEN amount
+                WHEN account_id = :account_id
+                  AND transaction_type = 'transfer'
+                  AND direction = 'out' THEN -amount
+                WHEN counterparty_account_id = :account_id
+                  AND transaction_type = 'repayment_credit_card'
+                  AND direction = 'out'
+                  THEN -amount
+                ELSE 0
+            END
+        """
+
+        debt_change_after_end = db.execute(
+            text("""
+                SELECT COALESCE(SUM(
+                    """ + credit_debt_change_case + """
+                ), 0)
+                FROM transactions
+                WHERE status = 'confirmed'
+                  AND occurred_at > :end_dt
+                  AND (
+                        account_id = :account_id
+                     OR counterparty_account_id = :account_id
+                  )
+            """),
+            {
+                'account_id': account_id,
+                'end_dt': end_dt,
+            }
+        ).scalar() or 0
+
+        debt_change_in_range = db.execute(
+            text("""
+                SELECT COALESCE(SUM(
+                    """ + credit_debt_change_case + """
+                ), 0)
+                FROM transactions
+                WHERE status = 'confirmed'
+                  AND occurred_at >= :start_dt
+                  AND occurred_at <= :end_dt
+                  AND (
+                        account_id = :account_id
+                     OR counterparty_account_id = :account_id
+                  )
+            """),
+            {
+                'account_id': account_id,
+                'start_dt': start_dt,
+                'end_dt': end_dt,
+            }
+        ).scalar() or 0
+
+        current_debt_at_end = current_debt - Decimal(str(debt_change_after_end))
+        initial_debt = current_debt_at_end - Decimal(str(debt_change_in_range))
+
         # 使用 SQL 窗口函数计算每天的运行欠款
         sql = """
         WITH daily_changes AS (
             SELECT 
                 date(occurred_at) as txn_date,
                 SUM(
-                    CASE 
-                        WHEN direction = 'out' THEN amount
-                        WHEN direction = 'in' THEN -amount
-                        ELSE 0
-                    END
+                    """ + credit_debt_change_case + """
                 ) as daily_change
             FROM transactions
-            WHERE account_id = :account_id
+            WHERE status = 'confirmed'
               AND occurred_at >= :start_dt
               AND occurred_at <= :end_dt
-              AND status = 'confirmed'
+              AND (
+                    account_id = :account_id
+                 OR counterparty_account_id = :account_id
+              )
             GROUP BY date(occurred_at)
         ),
         running_debt AS (

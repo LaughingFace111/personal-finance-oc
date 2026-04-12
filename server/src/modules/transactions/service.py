@@ -802,6 +802,7 @@ def create_credit_card_repayment(
 
     db.commit()
     db.refresh(txn)
+    clear_overview_cache()
     return txn
 
 
