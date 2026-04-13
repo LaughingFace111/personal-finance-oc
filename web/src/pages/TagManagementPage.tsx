@@ -15,7 +15,34 @@ type TagItem = {
   is_deleted?: boolean;
 };
 
+type TagGroupResult = {
+  key: string;
+  label: string;
+  color: string;
+  parent?: TagItem;
+  tags: TagItem[];
+};
+
 const cardBorder = (color?: string) => `4px solid ${color || '#1677ff'}`;
+
+function normalizeTagItems(input: unknown): TagItem[] {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item) => ({
+      id: String(item.id ?? ''),
+      name: typeof item.name === 'string' ? item.name.trim() : '',
+      color: typeof item.color === 'string' ? item.color : undefined,
+      parent_id:
+        item.parent_id === null || item.parent_id === undefined || item.parent_id === ''
+          ? null
+          : String(item.parent_id),
+      is_active: typeof item.is_active === 'boolean' ? item.is_active : true,
+      is_deleted: typeof item.is_deleted === 'boolean' ? item.is_deleted : false,
+    }))
+    .filter((item) => item.id.length > 0 && item.name.length > 0);
+}
 
 export default function TagManagementPage() {
   const { user } = useAuth();
@@ -41,9 +68,9 @@ export default function TagManagementPage() {
     setLoading(true);
     apiGet<TagItem[]>(`/api/tags?book_id=${bookId}&include_inactive=true`)
       .then((res) => {
-        const nextTags = res ?? [];
+        const nextTags = normalizeTagItems(res);
         setTags(nextTags);
-        const activeGroupIds = buildGroups(nextTags.filter((tag) => tag.is_active !== false)).map((group) =>
+        const activeGroupIds = buildGroups<string>(nextTags.filter((tag) => tag.is_active !== false)).map((group) =>
           group.parent ? String(group.parent.id) : group.key
         );
         setExpandedGroups(new Set(activeGroupIds));
@@ -60,8 +87,8 @@ export default function TagManagementPage() {
 
   const activeTags = useMemo(() => tags.filter((tag) => tag.is_active !== false && !tag.is_deleted), [tags]);
   const deletedTags = useMemo(() => tags.filter((tag) => tag.is_active === false || tag.is_deleted), [tags]);
-  const activeGroups = useMemo(() => buildGroups(activeTags), [activeTags]);
-  const deletedGroups = useMemo(() => buildGroups(deletedTags), [deletedTags]);
+  const activeGroups = useMemo(() => buildGroups<string>(activeTags), [activeTags]);
+  const deletedGroups = useMemo(() => buildGroups<string>(deletedTags), [deletedTags]);
 
   const parentOptions = useMemo(
     () => activeTags.filter((tag) => !tag.parent_id).map((tag) => ({ id: tag.id, name: tag.name })),
@@ -147,13 +174,16 @@ export default function TagManagementPage() {
 
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>;
 
-  const renderGroups = (groups: any[], deletedView: boolean) => {
+  const renderGroups = (groups: TagGroupResult[], deletedView: boolean) => {
     if (groups.length === 0) {
-      return (
+      return deletedView ? (
+        <Empty description="回收站为空" />
+      ) : (
         <Empty
-          description={deletedView ? '回收站为空' : '暂无标签'}
-          extra={!deletedView ? <Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button> : null}
-        />
+          description="暂无标签"
+        >
+          <Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button>
+        </Empty>
       );
     }
 
@@ -161,7 +191,7 @@ export default function TagManagementPage() {
       const parent = group.parent;
       const groupId = parent ? String(parent.id) : group.key;
       const isExpanded = expandedGroups.has(groupId);
-      const childItems = parent ? group.tags.filter((tag) => String(tag.id) !== String(parent.id)) : group.tags;
+      const childItems = parent ? group.tags.filter((tag: TagItem) => String(tag.id) !== String(parent.id)) : group.tags;
       const childCount = childItems.length;
 
       return (
@@ -326,13 +356,15 @@ export default function TagManagementPage() {
             ) : (
               <div style={{ marginBottom: 16 }}>
                 <div style={{ marginBottom: 4, fontSize: 14, color: '#666' }}>所属一级标签</div>
-                <Select value={editParentId} onChange={setEditParentId} style={{ width: '100%' }}>
-                  {parentOptions.map((parent) => (
-                    <Select.Option key={parent.id} value={parent.id}>
-                      {parent.name}
-                    </Select.Option>
-                  ))}
-                </Select>
+                <Select
+                  value={editParentId}
+                  onChange={setEditParentId}
+                  style={{ width: '100%' }}
+                  options={parentOptions.map((parent) => ({
+                    value: parent.id,
+                    label: parent.name,
+                  }))}
+                />
               </div>
             )}
             {!editModal.isParent ? (

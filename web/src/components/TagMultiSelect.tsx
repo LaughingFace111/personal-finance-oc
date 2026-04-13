@@ -37,7 +37,7 @@ const DEFAULT_TAG_COLOR = '#3b82f6';
 const UNGROUPED_COLOR = '#94a3b8';
 
 export function hexToRgba(color: string | undefined, alpha: number) {
-  if (!color) return `rgba(59, 130, 246, ${alpha})`;
+  if (!color || typeof color !== 'string') return `rgba(59, 130, 246, ${alpha})`;
 
   const normalized = color.trim();
   if (normalized.startsWith('rgba(') || normalized.startsWith('rgb(')) {
@@ -71,10 +71,20 @@ export function hexToRgba(color: string | undefined, alpha: number) {
 }
 
 export function buildGroups<T extends TagId>(tags: TagItem<T>[]) {
-  const byId = new Map(tags.map((tag) => [String(tag.id), tag]));
+  const safeTags = Array.isArray(tags)
+    ? tags.filter(
+        (tag): tag is TagItem<T> =>
+          Boolean(tag) &&
+          tag.id !== undefined &&
+          tag.id !== null &&
+          typeof tag.name === 'string' &&
+          tag.name.trim().length > 0
+      )
+    : [];
+  const byId = new Map(safeTags.map((tag) => [String(tag.id), tag]));
   const childrenByParent = new Map<string, TagItem<T>[]>();
 
-  for (const tag of tags) {
+  for (const tag of safeTags) {
     if (!tag.parent_id) continue;
     const parentKey = String(tag.parent_id);
     const list = childrenByParent.get(parentKey) ?? [];
@@ -82,7 +92,7 @@ export function buildGroups<T extends TagId>(tags: TagItem<T>[]) {
     childrenByParent.set(parentKey, list);
   }
 
-  const roots = tags.filter((tag) => !tag.parent_id || !byId.has(String(tag.parent_id)));
+  const roots = safeTags.filter((tag) => !tag.parent_id || !byId.has(String(tag.parent_id)));
   const groups: TagGroup<T>[] = roots.map((root) => ({
     key: `group-${String(root.id)}`,
     label: root.name,
@@ -92,7 +102,7 @@ export function buildGroups<T extends TagId>(tags: TagItem<T>[]) {
   }));
 
   const assigned = new Set(groups.flatMap((group) => group.tags.map((tag) => String(tag.id))));
-  const ungrouped = tags.filter((tag) => !assigned.has(String(tag.id)));
+  const ungrouped = safeTags.filter((tag) => !assigned.has(String(tag.id)));
 
   if (ungrouped.length > 0) {
     groups.push({
@@ -111,10 +121,10 @@ export function buildGroups<T extends TagId>(tags: TagItem<T>[]) {
         const rightIsParent = group.parent && String(right.id) === String(group.parent.id);
         if (leftIsParent && !rightIsParent) return -1;
         if (!leftIsParent && rightIsParent) return 1;
-        return left.name.localeCompare(right.name, 'zh-CN');
+        return String(left.name).localeCompare(String(right.name), 'zh-CN');
       }),
     }))
-    .sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+    .sort((left, right) => String(left.label).localeCompare(String(right.label), 'zh-CN'));
 }
 
 type TagPillProps = {

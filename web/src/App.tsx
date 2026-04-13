@@ -340,7 +340,7 @@ return (
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/categories/new" element={<CategoryFormPage />} />
             <Route path="/categories/:id" element={<CategoryEditPage />} />
-            <Route path="/tags" element={<TagManagementPage />} />
+            <Route path="/tags" element={<Suspense fallback={<LoadingFallback />}><TagManagementPage /></Suspense>} />
             <Route path="/tags/new" element={<TagFormPage />} />
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/loans/new" element={<LoanFormPage />} />
