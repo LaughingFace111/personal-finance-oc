@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from src.common.enums import AccountType, SourceType, TransactionDirection, TransactionType
-from src.core.database import Base
+from src.core.database import Base, _ensure_legacy_installment_schema
 from src.modules.accounts.models import Account
 from src.modules.accounts.rebuild import rebuild_account_balance
 from src.modules.accounts.router import get as get_account_detail
@@ -805,6 +805,98 @@ def test_account_state_events_migration_created():
         try:
             inspector = inspect(engine)
             assert "account_state_events" in inspector.get_table_names()
+        finally:
+            engine.dispose()
+
+
+def test_legacy_installment_schema_is_backfilled():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "legacy-installment.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("PRAGMA foreign_keys=OFF"))
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE installment_plans (
+                            id VARCHAR(36) PRIMARY KEY,
+                            book_id VARCHAR(36) NOT NULL,
+                            account_id VARCHAR(36) NOT NULL,
+                            transaction_id VARCHAR(36),
+                            plan_name VARCHAR(200),
+                            total_amount NUMERIC(15, 2) NOT NULL,
+                            total_periods INTEGER NOT NULL,
+                            current_period INTEGER,
+                            principal_per_period NUMERIC(15, 2) NOT NULL,
+                            fee_per_period NUMERIC(15, 2),
+                            total_fee NUMERIC(15, 2),
+                            start_date DATE NOT NULL,
+                            first_repayment_date DATE,
+                            repayment_day INTEGER,
+                            status VARCHAR(20),
+                            early_settlement_supported BOOLEAN,
+                            created_at DATETIME,
+                            updated_at DATETIME
+                        )
+                        """
+                    )
+                )
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO installment_plans (
+                            id, book_id, account_id, plan_name, total_amount, total_periods,
+                            current_period, principal_per_period, fee_per_period, total_fee,
+                            start_date, first_repayment_date, repayment_day, status,
+                            early_settlement_supported
+                        ) VALUES (
+                            'plan-1', 'book-1', 'account-1', '老分期', 1200, 12,
+                            0, 100, 5, 60, '2026-04-01', '2026-04-05', 5, 'active', 1
+                        )
+                        """
+                    )
+                )
+
+            Base.metadata.create_all(engine)
+            _ensure_legacy_installment_schema(engine)
+
+            inspector = inspect(engine)
+            assert "account_state_events" in inspector.get_table_names()
+
+            columns = {column["name"] for column in inspector.get_columns("installment_plans")}
+            assert {
+                "category_id",
+                "installment_amount",
+                "executed_periods",
+                "handling_fee",
+                "interest",
+                "application_date",
+                "first_execution_date",
+                "first_billing_date",
+                "next_execution_date",
+                "tags",
+                "note",
+            }.issubset(columns)
+
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT installment_amount, executed_periods, handling_fee,
+                               first_execution_date, first_billing_date, next_execution_date
+                        FROM installment_plans
+                        WHERE id = 'plan-1'
+                        """
+                    )
+                ).one()
+
+            assert Decimal(str(row.installment_amount)) == Decimal("105")
+            assert row.executed_periods == 0
+            assert Decimal(str(row.handling_fee)) == Decimal("60")
+            assert row.first_execution_date == "2026-04-05"
+            assert row.first_billing_date == "2026-04-05"
+            assert row.next_execution_date == "2026-04-05"
         finally:
             engine.dispose()
 

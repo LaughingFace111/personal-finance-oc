@@ -212,6 +212,9 @@ def execute_period(
 
 
 @router.post("/periods/{period_id}/revert")
+@router.post("/{period_id}/revert")
+@router.patch("/{period_id}/revert")
+@router.delete("/{period_id}/revert")
 def revert_period(
     period_id: str,
     db: Session = Depends(get_db),
