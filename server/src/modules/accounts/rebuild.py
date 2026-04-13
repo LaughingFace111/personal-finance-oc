@@ -159,7 +159,17 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
 
     # Calculate new balance/debt
     new_balance = account.opening_balance
-    new_debt = Decimal(str(account.opening_balance or 0)) if _is_loan_account(account.account_type) else Decimal("0")
+    # Loan accounts: opening_balance holds the initial principal
+    # Credit accounts: opening_balance holds the initial debt
+    #   (create_account now sets opening_balance=initial_debt for credit accounts,
+    #    so rebuild stays consistent with get_balance_trend's opening_balance baseline)
+    # Other accounts: debt starts at 0
+    if _is_loan_account(account.account_type):
+        new_debt = Decimal(str(account.opening_balance or 0))
+    elif _is_credit_account(account.account_type):
+        new_debt = Decimal(str(account.opening_balance or 0))
+    else:
+        new_debt = Decimal("0")
 
     account_type = account.account_type
 
