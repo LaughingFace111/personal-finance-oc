@@ -311,6 +311,8 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
     elif tx_type == TransactionType.INCOME.value:
         if _is_asset_account(account_type):
             update_account_balance(db, txn.account_id, txn.amount, is_increase=True)
+        elif _is_credit_account(account_type):
+            update_account_debt(db, txn.account_id, txn.amount, is_increase=False)
 
     # === INSTALLMENT_PURCHASE ===
     elif tx_type == TransactionType.INSTALLMENT_PURCHASE.value:
@@ -1023,6 +1025,8 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
         if _is_asset_account(account_type):
             # Reverse: balance decrease
             update_account_balance(db, txn.account_id, amount, is_increase=False)
+        elif _is_credit_account(account_type):
+            update_account_debt(db, txn.account_id, amount, is_increase=True)
 
     elif tx_type == TransactionType.FEE.value:
         if _is_asset_account(account_type):

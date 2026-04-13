@@ -5,10 +5,12 @@
 from decimal import Decimal
 from typing import Dict, List
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from src.modules.accounts.models import Account
 from src.modules.transactions.models import Transaction
 from src.common.enums import AccountType, TransactionType, TransactionDirection, TransactionStatus
+from src.modules.loans.models import LoanPlan
 
 
 def _is_asset_account(account_type: str) -> bool:
@@ -24,6 +26,75 @@ def _is_credit_account(account_type: str) -> bool:
 def _is_loan_account(account_type: str) -> bool:
     """Check if account type is loan"""
     return account_type == AccountType.LOAN
+
+
+def _to_value(raw) -> str:
+    return raw.value if hasattr(raw, "value") else raw
+
+
+def _apply_rebuild_delta(
+    *,
+    account_id: str,
+    account_type: str,
+    txn: Transaction,
+    is_primary: bool,
+    balance: Decimal,
+    debt: Decimal,
+) -> tuple[Decimal, Decimal]:
+    tx_type = _to_value(txn.transaction_type)
+    direction = _to_value(txn.direction)
+    amount = Decimal(str(txn.amount or 0))
+
+    if _is_asset_account(account_type):
+        if is_primary:
+            if tx_type == TransactionType.INCOME.value and direction == TransactionDirection.IN.value:
+                balance += amount
+            elif tx_type == TransactionType.EXPENSE.value and direction == TransactionDirection.OUT.value:
+                balance -= amount
+            elif tx_type == TransactionType.TRANSFER.value:
+                balance += amount if direction == TransactionDirection.IN.value else -amount
+            elif tx_type == TransactionType.REFUND.value:
+                balance += amount if direction == TransactionDirection.IN.value else -amount
+            elif tx_type == TransactionType.FEE.value and direction == TransactionDirection.OUT.value:
+                balance -= amount
+            elif tx_type == TransactionType.DEBT_BORROW.value and direction == TransactionDirection.IN.value:
+                balance += amount
+            elif tx_type == TransactionType.DEBT_LEND.value and direction == TransactionDirection.OUT.value:
+                balance -= amount
+            elif tx_type == TransactionType.DEBT_RECEIVE_BACK.value and direction == TransactionDirection.IN.value:
+                balance += amount
+            elif tx_type == TransactionType.DEBT_PAY_BACK.value and direction == TransactionDirection.OUT.value:
+                balance -= amount
+        else:
+            if tx_type == TransactionType.TRANSFER.value and not txn.related_transaction_id:
+                balance += amount
+        return balance, debt
+
+    if _is_credit_account(account_type):
+        if is_primary:
+            if tx_type in {TransactionType.EXPENSE.value, TransactionType.INSTALLMENT_PURCHASE.value}:
+                debt += amount
+            elif tx_type in {TransactionType.REFUND.value, TransactionType.INCOME.value}:
+                debt -= amount
+            elif tx_type == TransactionType.TRANSFER.value:
+                debt += amount if direction == TransactionDirection.OUT.value else -amount
+        else:
+            if tx_type in {TransactionType.REPAYMENT_CREDIT_CARD.value, TransactionType.TRANSFER.value} and not txn.related_transaction_id:
+                debt -= amount
+        return balance, debt
+
+    if _is_loan_account(account_type):
+        if is_primary:
+            if tx_type == TransactionType.DEBT_BORROW.value:
+                debt += amount
+            elif tx_type == TransactionType.TRANSFER.value:
+                debt += amount if direction == TransactionDirection.OUT.value else -amount
+        else:
+            if tx_type in {TransactionType.REPAYMENT_LOAN.value, TransactionType.TRANSFER.value} and not txn.related_transaction_id:
+                debt -= amount
+        return balance, debt
+
+    return balance, debt
 
 
 def rebuild_account_balance(db: Session, account_id: str) -> Dict:
@@ -74,11 +145,15 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
     old_balance = account.current_balance
     old_debt = account.debt_amount
 
-    # Get all confirmed transactions for this account
+    # Get all confirmed transactions that affect this account either directly
+    # or via counterparty linkage (credit-card repayment / loan repayment / transfer).
     txns = db.query(Transaction).filter(
-        Transaction.account_id == account_id,
+        or_(
+            Transaction.account_id == account_id,
+            Transaction.counterparty_account_id == account_id,
+        ),
         Transaction.status == TransactionStatus.CONFIRMED.value
-    ).all()
+    ).order_by(Transaction.occurred_at.asc(), Transaction.created_at.asc()).all()
 
     # Calculate new balance/debt
     new_balance = account.opening_balance
@@ -87,109 +162,22 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
     account_type = account.account_type
 
     for txn in txns:
-        tx_type = txn.transaction_type
-        direction = txn.direction
-        amount = txn.amount
+        is_primary = txn.account_id == account_id
+        new_balance, new_debt = _apply_rebuild_delta(
+            account_id=account_id,
+            account_type=account_type,
+            txn=txn,
+            is_primary=is_primary,
+            balance=new_balance,
+            debt=new_debt,
+        )
 
-        if _is_asset_account(account_type):
-            # Asset account balance calculation
-            if tx_type == TransactionType.INCOME.value:
-                if direction == TransactionDirection.IN.value:
-                    new_balance += amount
-
-            elif tx_type == TransactionType.EXPENSE.value:
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-
-            elif tx_type == TransactionType.TRANSFER.value:
-                # Transfer: handle both directions
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-                else:
-                    new_balance += amount
-
-            elif tx_type == TransactionType.INSTALLMENT_PURCHASE.value:
-                # Installment purchase: affects cash flow only (not balance)
-                pass
-
-            elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
-                # Credit card repayment: reduces debt
-                pass
-
-            elif tx_type == TransactionType.REPAYMENT_LOAN.value:
-                # Loan repayment: reduces debt
-                pass
-
-            elif tx_type == TransactionType.REFUND.value:
-                # Refund: if direction=in, add to balance
-                if direction == TransactionDirection.IN.value:
-                    new_balance += amount
-                else:
-                    new_balance -= amount
-
-            elif tx_type == TransactionType.FEE.value:
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-
-            elif tx_type == TransactionType.DEBT_BORROW.value:
-                if direction == TransactionDirection.IN.value:
-                    new_balance += amount
-
-            elif tx_type == TransactionType.DEBT_LEND.value:
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-
-            elif tx_type == TransactionType.DEBT_RECEIVE_BACK.value:
-                if direction == TransactionDirection.IN.value:
-                    new_balance += amount
-
-            elif tx_type == TransactionType.DEBT_PAY_BACK.value:
-                if direction == TransactionDirection.OUT.value:
-                    new_balance -= amount
-
-        elif _is_credit_account(account_type):
-            # Credit account debt calculation
-            if tx_type == TransactionType.EXPENSE.value:
-                # Credit spending increases debt
-                new_debt += amount
-
-            elif tx_type == TransactionType.INSTALLMENT_PURCHASE.value:
-                new_debt += amount
-
-            elif tx_type == TransactionType.TRANSFER.value:
-                # Split-transfer polarity must match _apply_split_transfer_account_effect:
-                # OUT increases debt, IN decreases debt.
-                if direction == TransactionDirection.OUT.value:
-                    new_debt += amount
-                else:
-                    new_debt -= amount
-
-            elif tx_type == TransactionType.REFUND.value:
-                # Refund to credit card reduces debt
-                new_debt -= amount
-
-            elif tx_type == TransactionType.REPAYMENT_CREDIT_CARD.value:
-                # Repayment reduces debt
-                new_debt -= amount
-
-        elif _is_loan_account(account_type):
-            # Loan account debt calculation
-            if tx_type == TransactionType.DEBT_BORROW.value:
-                # New borrowing increases loan principal
-                new_debt += amount
-
-            elif tx_type == TransactionType.TRANSFER.value:
-                # Split-transfer polarity must match _apply_split_transfer_account_effect:
-                # OUT increases debt, IN decreases debt.
-                if direction == TransactionDirection.OUT.value:
-                    new_debt += amount
-                else:
-                    new_debt -= amount
-
-            elif tx_type == TransactionType.REPAYMENT_LOAN.value:
-                # Principal repayment reduces debt
-                # (fee/interest is handled separately as fee type)
-                new_debt -= amount
+    if _is_loan_account(account_type):
+        principal_remaining = db.query(LoanPlan).filter(
+            LoanPlan.account_id == account_id
+        ).with_entities(LoanPlan.principal_remaining).all()
+        if principal_remaining:
+            new_debt = sum((Decimal(str(item[0] or 0)) for item in principal_remaining), Decimal("0"))
 
     # Update account
     account.current_balance = new_balance

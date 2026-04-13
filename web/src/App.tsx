@@ -1447,6 +1447,26 @@ const AccountDetailPage = () => {
   })
 
   const typeLabels: Record<string, string> = { cash: '现金', debit_card: '借记卡', credit_card: '信用卡', loan: '贷款', ewallet: '电子钱包', credit_line: '信用账户' }
+  const availableCredit = Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)
+
+  const getMonthRange = (selectedMonth: string) => {
+    const [year, mon] = selectedMonth.split('-').map(Number)
+    const monthStart = new Date(year, mon - 1, 1)
+    const monthEnd = new Date(year, mon, 0)
+    const now = new Date()
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+
+    if (selectedMonth > currentMonth) {
+      return null
+    }
+
+    return {
+      startDate: formatLocalDate(monthStart),
+      endDate: selectedMonth === currentMonth ? formatLocalDate(now) : formatLocalDate(monthEnd),
+      dateFrom: monthStart.toISOString(),
+      dateTo: monthEnd.toISOString(),
+    }
+  }
 
   const loadAccount = async () => {
     if (!bookId || !accountId) return
@@ -1460,20 +1480,49 @@ const AccountDetailPage = () => {
     }
   }
 
-  const loadBalanceTrend = async () => {
+  const loadBalanceTrend = async (selectedMonth = month) => {
     if (!accountId) return
 
-    const endDate = formatLocalDate(new Date())
-    const startDateValue = new Date()
-    startDateValue.setDate(startDateValue.getDate() - 90)
-    const startDate = formatLocalDate(startDateValue)
+    const range = getMonthRange(selectedMonth)
+    if (!range) {
+      setBalanceTrendData([])
+      return
+    }
 
     try {
-      const data = await apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${startDate}&end_date=${endDate}`)
+      const data = await apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${range.startDate}&end_date=${range.endDate}`)
       setBalanceTrendData(data || [])
     } catch (error) {
       console.error("Request failed:", error)
       setBalanceTrendData([])
+    }
+  }
+
+  const loadTransactions = async (selectedMonth = month) => {
+    if (!bookId || !accountId || !selectedMonth) return
+
+    const range = getMonthRange(selectedMonth)
+    const [year, mon] = selectedMonth.split('-')
+    const dateFrom = range?.dateFrom || new Date(Number(year), Number(mon) - 1, 1).toISOString()
+    const dateTo = range?.dateTo || new Date(Number(year), Number(mon), 0).toISOString()
+
+    setLoading(true)
+    try {
+      const res = await apiGet(`/api/transactions?book_id=${bookId}&account_id=${accountId}&date_from=${dateFrom}&date_to=${dateTo}&page=1&page_size=50`)
+      setTransactions(res.items || [])
+    } catch (error) {
+      console.error("Request failed:", error)
+      setTransactions([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const refreshAccountDetail = async (options?: { includeTransactions?: boolean }) => {
+    await loadAccount()
+    await loadBalanceTrend()
+    if (options?.includeTransactions) {
+      await loadTransactions()
     }
   }
 
@@ -1483,23 +1532,10 @@ const AccountDetailPage = () => {
 
   useEffect(() => {
     loadBalanceTrend()
-  }, [accountId])
+  }, [accountId, month])
 
   useEffect(() => {
-    if (!bookId || !accountId || !month) return
-    
-    setLoading(true)
-    // 按月份筛选流水
-    const [year, mon] = month.split('-')
-    const dateFrom = new Date(Number(year), Number(mon) - 1, 1).toISOString()
-    const dateTo = new Date(Number(year), Number(mon), 0).toISOString()
-    
-    apiGet(`/api/transactions?book_id=${bookId}&account_id=${accountId}&date_from=${dateFrom}&date_to=${dateTo}&page=1&page_size=50`)
-      .then(res => setTransactions(res.items || []))
-      .catch((error) => {
-        console.error("Request failed:", error)
-      })
-      .finally(() => setLoading(false))
+    loadTransactions()
   }, [bookId, accountId, month])
 
   // 判断账户类型
@@ -1552,8 +1588,7 @@ const AccountDetailPage = () => {
       message.success('调整成功')
       setAdjustModalVisible(false)
       adjustForm.resetFields()
-      await loadAccount()
-      await loadBalanceTrend()
+      await refreshAccountDetail({ includeTransactions: true })
     } catch {
       message.error('调整失败')
     } finally {
@@ -1622,7 +1657,7 @@ const AccountDetailPage = () => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontWeight: 600 }}>
               <span style={{ color: 'var(--text-secondary)' }}>可用额度:</span>
-              <span style={{ color: 'var(--accent-green)' }}>¥{(Number(account.credit_limit || 0) - Number(account.debt_amount || 0) - Number(account.frozen_amount || 0)).toFixed(2)}</span>
+              <span style={{ color: 'var(--accent-green)' }}>¥{availableCredit.toFixed(2)}</span>
             </div>
             {account.billing_day && (
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
@@ -1680,14 +1715,24 @@ const AccountDetailPage = () => {
       </Card>
 
       {/* 余额趋势图 */}
-      {balanceTrendData && balanceTrendData.length > 0 && (
+      {balanceTrendData && balanceTrendData.length > 0 ? (
         <Card style={{ marginBottom: 16 }} title={trendTitle}>
           <ReactECharts
             option={{
               tooltip: { 
                 trigger: 'axis', 
                 formatter: (params: any) => {
-                  const value = params[0].value
+                  const point = balanceTrendData[params[0].dataIndex]
+                  const value = Number(params[0].value || 0)
+                  if (isCreditAccount) {
+                    return [
+                      `${params[0].name}`,
+                      `可用额度: ¥${value.toFixed(2)}`,
+                      `已用额度: ¥${Number(point?.debt_amount || 0).toFixed(2)}`,
+                      `冻结额度: ¥${Number(point?.frozen_amount || 0).toFixed(2)}`,
+                      `总额度: ¥${Number(point?.credit_limit || 0).toFixed(2)}`,
+                    ].join('<br/>')
+                  }
                   return `${params[0].name}<br/>${trendValueLabel}: ¥${value.toFixed(2)}`
                 }
               },
@@ -1696,7 +1741,16 @@ const AccountDetailPage = () => {
               yAxis: { 
                 type: 'value', 
                 axisLabel: { formatter: (v: number) => `¥${Math.abs(v).toFixed(0)}` },
-                ...(isCreditAccount ? { min: (value: any) => Math.min(value.min, 0) } : {}),
+                min: (value: any) => {
+                  const span = value.max - value.min
+                  const padding = Math.max(Math.abs(span) * 0.08, Math.abs(value.min || 0) * 0.05, 1)
+                  return value.min - padding
+                },
+                max: (value: any) => {
+                  const span = value.max - value.min
+                  const padding = Math.max(Math.abs(span) * 0.08, Math.abs(value.max || 0) * 0.05, 1)
+                  return value.max + padding
+                },
               },
               series: [{
                 type: 'line',
@@ -1710,6 +1764,10 @@ const AccountDetailPage = () => {
             style={{ height: 220 }}
             opts={{ renderer: 'canvas' }}
           />
+        </Card>
+      ) : (
+        <Card style={{ marginBottom: 16 }} title={trendTitle}>
+          <Empty description="所选月份暂无趋势数据" />
         </Card>
       )}
 
@@ -1735,8 +1793,11 @@ const AccountDetailPage = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
               </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>冻结额度</span><span>¥{Number(account?.frozen_amount || 0).toFixed(2)}</span>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}</span>
+                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{availableCredit.toFixed(2)}</span>
               </div>
             </div>
           )}
@@ -1756,7 +1817,7 @@ const AccountDetailPage = () => {
                     style={{ width: '100%' }} 
                     min={0} 
                     precision={2} 
-                    placeholder={isCreditAccount ? `当前: ¥${(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}` : `当前: ¥${Number(account?.current_balance || 0).toFixed(2)}`}
+                    placeholder={isCreditAccount ? `当前: ¥${availableCredit.toFixed(2)}` : `当前: ¥${Number(account?.current_balance || 0).toFixed(2)}`}
                   />
                 </Form.Item>
               ) : (
@@ -1810,8 +1871,7 @@ const AccountDetailPage = () => {
               message.success('额度调整成功')
               setLimitModalVisible(false)
               limitForm.resetFields()
-              await loadAccount()
-              await loadBalanceTrend()
+              await refreshAccountDetail()
             } catch { message.error('调整失败') } finally {
               setLimitSubmitting(false)
             }
@@ -1819,16 +1879,19 @@ const AccountDetailPage = () => {
         >
           <div style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 8, marginBottom: 16 }}>
             <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>当前状态</div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>总额度</span><span>¥{Number(account?.credit_limit || 0).toFixed(2)}</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>总额度</span><span>¥{Number(account?.credit_limit || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>冻结额度</span><span>¥{Number(account?.frozen_amount || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{availableCredit.toFixed(2)}</span>
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>已用额度</span><span style={{ color: '#ff4d4f' }}>¥{Number(account?.debt_amount || 0).toFixed(2)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-              <span>可用额度</span><span style={{ color: '#52c41a' }}>¥{(Number(account?.credit_limit || 0) - Number(account?.debt_amount || 0) - Number(account?.frozen_amount || 0)).toFixed(2)}</span>
-            </div>
-          </div>
           
           <Form.Item name="new_limit" label="新总额度" rules={[{ required: true, message: '请输入新总额度' }]}>
             <InputNumber 

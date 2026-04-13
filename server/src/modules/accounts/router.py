@@ -218,27 +218,25 @@ def get_balance_trend(
 
     返回区间内每一天的数据；无交易日沿用上一日收盘值。
     """
-    from datetime import datetime, time, timedelta
+    from datetime import date, datetime, time, timedelta
     from src.modules.accounts.service import get_account
+    from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
 
-    def _parse_boundary(raw_value: str | None, *, is_end: bool) -> datetime:
+    def _parse_day(raw_value: str | None) -> date:
         if not raw_value:
-            return datetime.now(timezone.utc)
-
+            return datetime.now(timezone.utc).date()
         normalized = raw_value.replace('Z', '+00:00')
-        parsed = datetime.fromisoformat(normalized)
-        is_date_only = 'T' not in raw_value and ' ' not in raw_value
-        if not is_date_only:
-            return parsed
+        return datetime.fromisoformat(normalized).date()
 
-        boundary_time = time.max if is_end else time.min
-        return datetime.combine(parsed.date(), boundary_time, tzinfo=parsed.tzinfo)
-
-    def _load_daily_changes(change_case_sql: str, start_dt: datetime, end_dt: datetime) -> tuple[Decimal, dict[str, Decimal]]:
+    def _load_daily_changes(
+        change_case_sql: str,
+        start_dt: datetime,
+        end_exclusive_dt: datetime,
+    ) -> tuple[Decimal, dict[str, Decimal]]:
         params = {
             'account_id': account_id,
             'start_dt': start_dt,
-            'end_dt': end_dt,
+            'end_exclusive_dt': end_exclusive_dt,
         }
 
         change_after_end = Decimal(str(
@@ -247,7 +245,7 @@ def get_balance_trend(
                     SELECT COALESCE(SUM({change_case_sql}), 0)
                     FROM transactions
                     WHERE status = 'confirmed'
-                      AND occurred_at > :end_dt
+                      AND occurred_at >= :end_exclusive_dt
                       AND (
                             account_id = :account_id
                          OR counterparty_account_id = :account_id
@@ -265,7 +263,7 @@ def get_balance_trend(
                 FROM transactions
                 WHERE status = 'confirmed'
                   AND occurred_at >= :start_dt
-                  AND occurred_at <= :end_dt
+                  AND occurred_at < :end_exclusive_dt
                   AND (
                         account_id = :account_id
                      OR counterparty_account_id = :account_id
@@ -282,6 +280,55 @@ def get_balance_trend(
             changes_by_day[key] = Decimal(str(daily_change or 0))
 
         return change_after_end, changes_by_day
+
+    def _load_credit_frozen_changes(
+        start_day: date,
+        end_day: date,
+    ) -> tuple[Decimal, dict[str, Decimal]]:
+        creation_rows = db.query(
+            InstallmentPlan.application_date,
+            InstallmentPlan.total_amount,
+        ).filter(
+            InstallmentPlan.account_id == account_id,
+            InstallmentPlan.application_date.isnot(None),
+        ).all()
+
+        execution_rows = db.query(
+            InstallmentSchedule.due_date,
+            InstallmentSchedule.principal_amount,
+        ).join(
+            InstallmentPlan,
+            InstallmentPlan.id == InstallmentSchedule.installment_plan_id,
+        ).filter(
+            InstallmentPlan.account_id == account_id,
+            InstallmentSchedule.status.in_(["executed", "settled", "paid"]),
+        ).all()
+
+        frozen_after_end = Decimal("0")
+        changes_by_day: dict[str, Decimal] = {}
+
+        for application_dt, total_amount in creation_rows:
+            if application_dt is None:
+                continue
+            event_day = application_dt.date()
+            amount = Decimal(str(total_amount or 0))
+            if event_day > end_day:
+                frozen_after_end += amount
+            elif start_day <= event_day <= end_day:
+                key = event_day.isoformat()
+                changes_by_day[key] = changes_by_day.get(key, Decimal("0")) + amount
+
+        for due_date, principal_amount in execution_rows:
+            if due_date is None:
+                continue
+            amount = Decimal(str(principal_amount or 0))
+            if due_date > end_day:
+                frozen_after_end -= amount
+            elif start_day <= due_date <= end_day:
+                key = due_date.isoformat()
+                changes_by_day[key] = changes_by_day.get(key, Decimal("0")) - amount
+
+        return frozen_after_end, changes_by_day
     
     # 获取账本
     bid = get_current_book_id(current_user, db, book_id)
@@ -293,13 +340,16 @@ def get_balance_trend(
         raise HTTPException(status_code=404, detail="Account not found")
     
     # 确定日期范围
-    end_dt = _parse_boundary(end_date, is_end=True)
+    end_day = _parse_day(end_date)
     if start_date:
-        start_dt = _parse_boundary(start_date, is_end=False)
+        start_day = _parse_day(start_date)
     else:
-        start_dt = datetime.combine((end_dt - timedelta(days=90)).date(), time.min, tzinfo=end_dt.tzinfo)
+        start_day = end_day - timedelta(days=90)
 
-    if start_dt > end_dt:
+    start_dt = datetime.combine(start_day, time.min)
+    end_exclusive_dt = datetime.combine(end_day + timedelta(days=1), time.min)
+
+    if start_day > end_day:
         raise AppException(
             status_code=400,
             code=ErrorCode.INVALID_PARAMS,
@@ -326,7 +376,7 @@ def get_balance_trend(
             {'account_id': account_id},
         ).scalar()
         current_debt = Decimal(str(
-            loan_principal_remaining if loan_principal_remaining is not None else account.debt_amount or 0
+            loan_principal_remaining if loan_principal_remaining is not None else (account.debt_amount or 0)
         ))
 
     if is_credit:
@@ -337,6 +387,9 @@ def get_balance_trend(
                   THEN amount
                 WHEN account_id = :account_id
                   AND transaction_type = 'refund'
+                  THEN -amount
+                WHEN account_id = :account_id
+                  AND transaction_type = 'income'
                   THEN -amount
                 WHEN account_id = :account_id
                   AND transaction_type = 'transfer'
@@ -357,9 +410,12 @@ def get_balance_trend(
             END
         """
 
-        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_dt)
+        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
         metric_at_end = current_debt - change_after_end
         opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
+        frozen_change_after_end, frozen_changes_by_day = _load_credit_frozen_changes(start_day, end_day)
+        frozen_at_end = frozen_amount - frozen_change_after_end
+        opening_frozen = frozen_at_end - sum(frozen_changes_by_day.values(), Decimal("0"))
     else:
         if is_loan:
             metric_change_case = """
@@ -423,28 +479,37 @@ def get_balance_trend(
             """
             current_metric = Decimal(str(account.current_balance or opening_balance or 0))
 
-        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_dt)
+        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
         metric_at_end = current_metric - change_after_end
         opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
 
     data_points = []
     running_metric = opening_metric
-    current_day = start_dt.date()
-    end_day = end_dt.date()
+    running_frozen = opening_frozen if is_credit else Decimal("0")
+    current_day = start_day
 
     while current_day <= end_day:
         day_key = current_day.isoformat()
         running_metric += changes_by_day.get(day_key, Decimal("0"))
 
         if is_credit:
-            display_value = credit_limit - running_metric - frozen_amount
+            running_frozen += frozen_changes_by_day.get(day_key, Decimal("0"))
+            display_value = credit_limit - running_metric - running_frozen
         else:
             display_value = running_metric
 
-        data_points.append({
+        point = {
             'date': day_key,
             'balance': float(display_value),
-        })
+        }
+        if is_credit:
+            point.update({
+                'debt_amount': float(running_metric),
+                'frozen_amount': float(running_frozen),
+                'credit_limit': float(credit_limit),
+            })
+
+        data_points.append(point)
         current_day += timedelta(days=1)
 
     return data_points

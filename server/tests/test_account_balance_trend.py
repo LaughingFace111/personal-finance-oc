@@ -10,9 +10,11 @@ from src.core.database import Base
 from src.modules.accounts.models import Account
 from src.modules.accounts.router import get_balance_trend
 from src.modules.books.models import Book
+from src.modules.installments.schemas import CreateInstallmentRequest
+from src.modules.installments.service import create_installment_with_transaction, execute_installment_period
 from src.modules.loans.models import LoanPlan
 from src.modules.transactions.schemas import TransactionCreate, TransferCreate
-from src.modules.transactions.service import create_transaction, create_transfer
+from src.modules.transactions.service import adjust_account_balance, create_transaction, create_transfer
 
 
 @pytest.fixture
@@ -97,11 +99,8 @@ def test_asset_balance_trend_uses_pre_window_anchor_and_fills_missing_days(db_se
         book_id=test_book.id,
     )
 
-    assert trend == [
-        {"date": "2026-01-02", "balance": 110.0},
-        {"date": "2026-01-03", "balance": 110.0},
-        {"date": "2026-01-04", "balance": 115.0},
-    ]
+    assert [point["balance"] for point in trend] == [110.0, 110.0, 115.0]
+    assert [point["date"] for point in trend] == ["2026-01-02", "2026-01-03", "2026-01-04"]
 
 
 def test_credit_balance_trend_matches_split_transfer_polarity(db_session, test_book):
@@ -149,7 +148,8 @@ def test_credit_balance_trend_matches_split_transfer_polarity(db_session, test_b
         book_id=test_book.id,
     )
 
-    assert trend == [{"date": "2026-02-03", "balance": 900.0}]
+    assert trend[0]["date"] == "2026-02-03"
+    assert trend[0]["balance"] == 900.0
 
 
 def test_loan_balance_trend_returns_remaining_principal(db_session, test_book):
@@ -216,8 +216,122 @@ def test_loan_balance_trend_returns_remaining_principal(db_session, test_book):
         book_id=test_book.id,
     )
 
-    assert trend == [
-        {"date": "2026-03-02", "balance": 1000.0},
-        {"date": "2026-03-03", "balance": 900.0},
-        {"date": "2026-03-04", "balance": 900.0},
-    ]
+    assert [point["balance"] for point in trend] == [1000.0, 900.0, 900.0]
+    assert [point["date"] for point in trend] == ["2026-03-02", "2026-03-03", "2026-03-04"]
+
+
+def test_credit_balance_trend_freezes_from_application_day_and_execution_only_changes_fee(db_session, test_book):
+    credit = Account(
+        id="credit-002",
+        book_id=test_book.id,
+        name="招商信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    plan, _ = create_installment_with_transaction(
+        db_session,
+        test_book.id,
+        CreateInstallmentRequest(
+            occurred_at=datetime(2026, 4, 15, 10, 0, 0),
+            account_id=credit.id,
+            merchant="手机",
+            total_amount=Decimal("100"),
+            total_periods=1,
+            principal_per_period=Decimal("100"),
+            fee_per_period=Decimal("5"),
+            installment_amount=Decimal("105"),
+            start_date=datetime(2026, 4, 15).date(),
+            first_execution_date=datetime(2026, 4, 20).date(),
+            first_billing_date=datetime(2026, 4, 20).date(),
+        ),
+    )
+    execute_installment_period(db_session, plan.id, test_book.id)
+    assert plan.application_date == datetime(2026, 4, 15, 10, 0, 0)
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-14",
+        end_date="2026-04-20",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    balances = {point["date"]: point["balance"] for point in trend}
+    assert balances["2026-04-14"] == 1000.0
+    assert balances["2026-04-15"] == 900.0
+    assert balances["2026-04-19"] == 900.0
+    assert balances["2026-04-20"] == 895.0
+
+
+def test_balance_trend_includes_transactions_on_end_date(db_session, test_book):
+    asset = Account(
+        id="asset-002",
+        book_id=test_book.id,
+        name="储蓄卡",
+        account_type=AccountType.DEBIT_CARD.value,
+        opening_balance=Decimal("100"),
+        current_balance=Decimal("100"),
+        is_active=True,
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=asset.id,
+            occurred_at=datetime(2026, 5, 31, 23, 59, 59),
+            transaction_type=TransactionType.INCOME,
+            direction=TransactionDirection.IN,
+            amount=Decimal("10"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+
+    trend = get_balance_trend(
+        asset.id,
+        start_date="2026-05-31",
+        end_date="2026-05-31",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert trend[0]["balance"] == 110.0
+
+
+def test_adjust_available_credit_generates_income_that_reduces_credit_debt(db_session, test_book):
+    credit = Account(
+        id="credit-003",
+        book_id=test_book.id,
+        name="广发信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("300"),
+        frozen_amount=Decimal("100"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    adjust_account_balance(
+        db_session,
+        test_book.id,
+        credit.id,
+        target_value=Decimal("700"),
+        adjust_mode="available_credit",
+        note="修正可用额度",
+    )
+    db_session.refresh(credit)
+
+    assert credit.debt_amount == Decimal("200")

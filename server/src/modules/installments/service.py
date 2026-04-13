@@ -362,7 +362,7 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
             total_fee=data.fee_per_period * data.total_periods,
             interest=Decimal("0"),  # 🛡️ L: 利息（可扩展）
             start_date=data.start_date,
-            application_date=datetime.utcnow(),  # 🛡️ L: 申请日期
+            application_date=data.occurred_at,  # 🛡️ L: 申请日期必须等于前端传入的 occurred_at
             first_execution_date=first_execution_date,
             first_billing_date=first_billing_date,
             first_repayment_date=first_schedule_date,
