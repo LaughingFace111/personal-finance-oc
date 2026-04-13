@@ -111,6 +111,51 @@ def test_asset_balance_trend_uses_pre_window_anchor_and_fills_missing_days(db_se
     assert [point["date"] for point in trend] == ["2026-01-02", "2026-01-03", "2026-01-04"]
 
 
+def test_asset_balance_trend_anchors_to_opening_balance_when_query_starts_after_created_day(db_session, test_book):
+    asset = Account(
+        id="asset-anchor-001",
+        book_id=test_book.id,
+        name="备用金",
+        account_type=AccountType.CASH.value,
+        opening_balance=Decimal("100"),
+        current_balance=Decimal("100"),
+        created_at=datetime(2026, 1, 1, 8, 0, 0),
+        is_active=True,
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=asset.id,
+            occurred_at=datetime(2026, 1, 2, 9, 0, 0),
+            transaction_type=TransactionType.INCOME,
+            direction=TransactionDirection.IN,
+            amount=Decimal("20"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+
+    # Simulate a stale denormalized balance. Historical trend should still be
+    # rebuilt from opening_balance + transactions anchored at created_at.
+    asset.current_balance = Decimal("999")
+    db_session.commit()
+
+    trend = get_balance_trend(
+        asset.id,
+        start_date="2026-01-03",
+        end_date="2026-01-04",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert [point["balance"] for point in trend] == [120.0, 120.0]
+    assert [point["date"] for point in trend] == ["2026-01-03", "2026-01-04"]
+
+
 def test_credit_balance_trend_matches_split_transfer_polarity(db_session, test_book):
     credit = Account(
         id="credit-001",

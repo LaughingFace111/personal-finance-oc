@@ -282,6 +282,37 @@ def get_balance_trend(
 
         return change_after_end, changes_by_day
 
+    def _sum_changes(
+        change_case_sql: str,
+        start_dt: datetime,
+        end_exclusive_dt: datetime,
+    ) -> Decimal:
+        if start_dt >= end_exclusive_dt:
+            return Decimal("0")
+
+        params = {
+            'account_id': account_id,
+            'start_dt': start_dt,
+            'end_exclusive_dt': end_exclusive_dt,
+        }
+
+        return Decimal(str(
+            db.execute(
+                text(f"""
+                    SELECT COALESCE(SUM({change_case_sql}), 0)
+                    FROM transactions
+                    WHERE status = 'confirmed'
+                      AND occurred_at >= :start_dt
+                      AND occurred_at < :end_exclusive_dt
+                      AND (
+                            account_id = :account_id
+                         OR counterparty_account_id = :account_id
+                      )
+                """),
+                params,
+            ).scalar() or 0
+        ))
+
     def _load_credit_state_event_changes(
         delta_column: str,
         start_day: date,
@@ -472,11 +503,30 @@ def get_balance_trend(
                     ELSE 0
                 END
             """
-            current_metric = Decimal(str(account.current_balance or opening_balance or 0))
 
-        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
-        metric_at_end = current_metric - change_after_end
-        opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
+        if is_loan:
+            change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
+            metric_at_end = current_metric - change_after_end
+            opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
+        else:
+            account_created_at = account.created_at or datetime.combine(start_day, time.min)
+            anchor_day = account_created_at.date()
+            anchor_dt = datetime.combine(anchor_day, time.min)
+            effective_start_dt = max(start_dt, anchor_dt)
+            changes_by_day = _load_daily_changes(
+                metric_change_case,
+                effective_start_dt,
+                end_exclusive_dt,
+            )[1]
+
+            if start_day > anchor_day:
+                opening_metric = opening_balance + _sum_changes(
+                    metric_change_case,
+                    anchor_dt,
+                    start_dt,
+                )
+            else:
+                opening_metric = Decimal("0")
 
     data_points = []
     running_metric = opening_metric
@@ -486,6 +536,10 @@ def get_balance_trend(
 
     while current_day <= end_day:
         day_key = current_day.isoformat()
+
+        if not is_credit and not is_loan and current_day == anchor_day:
+            running_metric += opening_balance
+
         running_metric += changes_by_day.get(day_key, Decimal("0"))
 
         if is_credit:
