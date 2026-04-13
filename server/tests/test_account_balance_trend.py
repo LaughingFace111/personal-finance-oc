@@ -48,7 +48,7 @@ def test_book(db_session):
     return book
 
 
-def test_asset_balance_trend_uses_pre_window_anchor_and_fills_missing_days(db_session, test_book):
+def test_asset_balance_trend_uses_2025_12_31_as_initial_baseline(db_session, test_book):
     asset = Account(
         id="asset-001",
         book_id=test_book.id,
@@ -111,15 +111,15 @@ def test_asset_balance_trend_uses_pre_window_anchor_and_fills_missing_days(db_se
     assert [point["date"] for point in trend] == ["2026-01-02", "2026-01-03", "2026-01-04"]
 
 
-def test_asset_balance_trend_anchors_to_opening_balance_when_query_starts_after_created_day(db_session, test_book):
+def test_asset_balance_trend_april_continues_from_backfilled_march_history(db_session, test_book):
     asset = Account(
-        id="asset-anchor-001",
+        id="asset-april-001",
         book_id=test_book.id,
         name="备用金",
         account_type=AccountType.CASH.value,
         opening_balance=Decimal("100"),
         current_balance=Decimal("100"),
-        created_at=datetime(2026, 1, 1, 8, 0, 0),
+        created_at=datetime(2026, 4, 10, 8, 0, 0),
         is_active=True,
     )
     db_session.add(asset)
@@ -130,7 +130,62 @@ def test_asset_balance_trend_anchors_to_opening_balance_when_query_starts_after_
         test_book.id,
         TransactionCreate(
             account_id=asset.id,
-            occurred_at=datetime(2026, 1, 2, 9, 0, 0),
+            occurred_at=datetime(2026, 3, 15, 9, 0, 0),
+            transaction_type=TransactionType.INCOME,
+            direction=TransactionDirection.IN,
+            amount=Decimal("20"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=asset.id,
+            occurred_at=datetime(2026, 4, 2, 9, 0, 0),
+            transaction_type=TransactionType.EXPENSE,
+            direction=TransactionDirection.OUT,
+            amount=Decimal("10"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+
+    asset.current_balance = Decimal("999")
+    db_session.commit()
+
+    trend = get_balance_trend(
+        asset.id,
+        start_date="2026-04-01",
+        end_date="2026-04-03",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert [point["balance"] for point in trend] == [120.0, 110.0, 110.0]
+    assert [point["date"] for point in trend] == ["2026-04-01", "2026-04-02", "2026-04-03"]
+
+
+def test_balance_trend_not_cut_off_by_account_created_at(db_session, test_book):
+    asset = Account(
+        id="asset-created-at-001",
+        book_id=test_book.id,
+        name="历史资产",
+        account_type=AccountType.CASH.value,
+        opening_balance=Decimal("100"),
+        current_balance=Decimal("100"),
+        created_at=datetime(2026, 4, 1, 8, 0, 0),
+        is_active=True,
+    )
+    db_session.add(asset)
+    db_session.commit()
+
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=asset.id,
+            occurred_at=datetime(2026, 3, 5, 9, 0, 0),
             transaction_type=TransactionType.INCOME,
             direction=TransactionDirection.IN,
             amount=Decimal("20"),
@@ -138,22 +193,78 @@ def test_asset_balance_trend_anchors_to_opening_balance_when_query_starts_after_
         ),
     )
 
-    # Simulate a stale denormalized balance. Historical trend should still be
-    # rebuilt from opening_balance + transactions anchored at created_at.
-    asset.current_balance = Decimal("999")
-    db_session.commit()
-
     trend = get_balance_trend(
         asset.id,
-        start_date="2026-01-03",
-        end_date="2026-01-04",
+        start_date="2026-03-05",
+        end_date="2026-03-06",
         current_user=None,
         db=db_session,
         book_id=test_book.id,
     )
 
     assert [point["balance"] for point in trend] == [120.0, 120.0]
-    assert [point["date"] for point in trend] == ["2026-01-03", "2026-01-04"]
+    assert [point["date"] for point in trend] == ["2026-03-05", "2026-03-06"]
+
+
+def test_credit_account_initial_debt_uses_2025_12_31_baseline(db_session, test_book):
+    credit = Account(
+        id="credit-baseline-001",
+        book_id=test_book.id,
+        name="基线信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        opening_balance=Decimal("300"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("999"),
+        frozen_amount=Decimal("0"),
+        created_at=datetime(2026, 4, 1, 8, 0, 0),
+        is_active=True,
+    )
+    cash = Account(
+        id="credit-baseline-cash-001",
+        book_id=test_book.id,
+        name="还款卡",
+        account_type=AccountType.DEBIT_CARD.value,
+        opening_balance=Decimal("1000"),
+        current_balance=Decimal("1000"),
+        is_active=True,
+    )
+    db_session.add_all([credit, cash])
+    db_session.commit()
+
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=cash.id,
+            counterparty_account_id=credit.id,
+            occurred_at=datetime(2026, 2, 1, 9, 0, 0),
+            transaction_type=TransactionType.REPAYMENT_CREDIT_CARD,
+            direction=TransactionDirection.INTERNAL,
+            amount=Decimal("50"),
+            source_type=SourceType.MANUAL,
+            include_in_expense=False,
+            include_in_income=False,
+            include_in_cashflow=False,
+        ),
+    )
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-02-02",
+        end_date="2026-02-02",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert trend == [{
+        "date": "2026-02-02",
+        "balance": 750.0,
+        "debt_amount": 250.0,
+        "frozen_amount": 0.0,
+        "credit_limit": 1000.0,
+    }]
 
 
 def test_credit_balance_trend_matches_split_transfer_polarity(db_session, test_book):

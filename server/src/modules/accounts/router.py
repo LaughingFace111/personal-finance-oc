@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from src.common.constants import ACCOUNT_INITIAL_BASELINE_DATE
 from src.common.dates import get_local_business_date
 from src.core import get_db
 from src.core.auth import get_current_user
@@ -360,6 +361,8 @@ def get_balance_trend(
 
     start_dt = datetime.combine(start_day, time.min)
     end_exclusive_dt = datetime.combine(end_day + timedelta(days=1), time.min)
+    baseline_start_dt = datetime.combine(ACCOUNT_INITIAL_BASELINE_DATE, time.min)
+    first_replay_dt = datetime.combine(ACCOUNT_INITIAL_BASELINE_DATE + timedelta(days=1), time.min)
 
     if start_day > end_day:
         raise AppException(
@@ -425,9 +428,22 @@ def get_balance_trend(
             END
         """
 
-        change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
-        metric_at_end = current_debt - change_after_end
-        opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
+        if opening_balance != 0:
+            effective_start_dt = max(start_dt, first_replay_dt)
+            changes_by_day = _load_daily_changes(
+                metric_change_case,
+                effective_start_dt,
+                end_exclusive_dt,
+            )[1]
+            opening_metric = opening_balance + _sum_changes(
+                metric_change_case,
+                baseline_start_dt,
+                start_dt,
+            )
+        else:
+            change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
+            metric_at_end = current_debt - change_after_end
+            opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
         frozen_change_after_end, frozen_changes_by_day = _load_credit_state_event_changes(
             "delta_frozen_amount",
             start_day,
@@ -464,7 +480,6 @@ def get_balance_trend(
                     ELSE 0
                 END
             """
-            current_metric = current_debt
         else:
             metric_change_case = """
                 CASE
@@ -504,29 +519,17 @@ def get_balance_trend(
                 END
             """
 
-        if is_loan:
-            change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
-            metric_at_end = current_metric - change_after_end
-            opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
-        else:
-            account_created_at = account.created_at or datetime.combine(start_day, time.min)
-            anchor_day = account_created_at.date()
-            anchor_dt = datetime.combine(anchor_day, time.min)
-            effective_start_dt = max(start_dt, anchor_dt)
-            changes_by_day = _load_daily_changes(
-                metric_change_case,
-                effective_start_dt,
-                end_exclusive_dt,
-            )[1]
-
-            if start_day > anchor_day:
-                opening_metric = opening_balance + _sum_changes(
-                    metric_change_case,
-                    anchor_dt,
-                    start_dt,
-                )
-            else:
-                opening_metric = Decimal("0")
+        effective_start_dt = max(start_dt, first_replay_dt)
+        changes_by_day = _load_daily_changes(
+            metric_change_case,
+            effective_start_dt,
+            end_exclusive_dt,
+        )[1]
+        opening_metric = opening_balance + _sum_changes(
+            metric_change_case,
+            baseline_start_dt,
+            start_dt,
+        )
 
     data_points = []
     running_metric = opening_metric
@@ -536,9 +539,6 @@ def get_balance_trend(
 
     while current_day <= end_day:
         day_key = current_day.isoformat()
-
-        if not is_credit and not is_loan and current_day == anchor_day:
-            running_metric += opening_balance
 
         running_metric += changes_by_day.get(day_key, Decimal("0"))
 
