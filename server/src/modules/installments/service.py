@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.common.enums import PlanStatus, TransactionType, TransactionDirection, SourceType
+from src.common.dates import get_local_business_date
 from src.core import generate_uuid, NotFoundException
 
 from .models import InstallmentPlan, InstallmentSchedule, InstallmentStateEvent
@@ -765,7 +766,7 @@ def delete_installment_plan(db: Session, plan_id: str, book_id: str) -> None:
         CreateInstallmentStateEventRequest(
             account_id=plan.account_id,
             event_type=INSTALLMENT_EVENT_DELETED,
-            event_date=date.today(),
+            event_date=get_local_business_date(),
             delta_frozen_amount=-Decimal(str(plan.total_amount or 0)),
             source_plan_id=plan.id,
         ),

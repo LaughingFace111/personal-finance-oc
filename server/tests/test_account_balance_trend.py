@@ -1,9 +1,10 @@
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+import tempfile
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
 from src.common.enums import AccountType, SourceType, TransactionDirection, TransactionType
@@ -399,7 +400,7 @@ def test_credit_fee_reduces_available_credit_and_rebuild_consistent(db_session, 
     }]
 
 
-def test_installment_delete_removes_freeze_after_delete_date_only(db_session, test_book, monkeypatch):
+def test_installment_delete_releases_freeze_from_delete_effective_date_only(db_session, test_book, monkeypatch):
     credit = Account(
         id="credit-delete-001",
         book_id=test_book.id,
@@ -432,12 +433,12 @@ def test_installment_delete_removes_freeze_after_delete_date_only(db_session, te
         ),
     )
 
-    class FakeDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 4, 18)
-
-    monkeypatch.setattr("src.modules.installments.service.date", FakeDate)
+    # Verify deleting an unexecuted installment only releases the freeze starting
+    # from the delete effective date, without changing prior daily balances.
+    monkeypatch.setattr(
+        "src.modules.installments.service.get_local_business_date",
+        lambda: date(2026, 4, 18),
+    )
     delete_installment_plan(db_session, plan.id, test_book.id)
 
     trend = get_balance_trend(
@@ -451,6 +452,80 @@ def test_installment_delete_removes_freeze_after_delete_date_only(db_session, te
 
     assert [point["balance"] for point in trend] == [1000.0, 900.0, 900.0, 900.0, 1000.0, 1000.0]
     assert [point["frozen_amount"] for point in trend] == [0.0, 100.0, 100.0, 100.0, 0.0, 0.0]
+
+
+def test_delete_installment_uses_business_date(db_session, test_book, monkeypatch):
+    credit = Account(
+        id="credit-delete-date-001",
+        book_id=test_book.id,
+        name="业务日删除信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    plan, _ = create_installment_with_transaction(
+        db_session,
+        test_book.id,
+        CreateInstallmentRequest(
+            occurred_at=datetime(2026, 4, 15, 10, 0, 0),
+            account_id=credit.id,
+            merchant="音箱",
+            total_amount=Decimal("100"),
+            total_periods=1,
+            principal_per_period=Decimal("100"),
+            fee_per_period=Decimal("0"),
+            installment_amount=Decimal("100"),
+            start_date=date(2026, 4, 15),
+            first_execution_date=date(2026, 4, 20),
+            first_billing_date=date(2026, 4, 20),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "src.modules.installments.service.get_local_business_date",
+        lambda: date(2026, 4, 18),
+    )
+
+    delete_installment_plan(db_session, plan.id, test_book.id)
+
+    from src.modules.installments.models import InstallmentStateEvent
+
+    delete_event = db_session.query(InstallmentStateEvent).filter(
+        InstallmentStateEvent.source_plan_id == plan.id,
+        InstallmentStateEvent.event_type == "installment_deleted",
+    ).one()
+
+    assert delete_event.event_date == date(2026, 4, 18)
+
+
+def test_account_state_events_migration_created():
+    pytest.importorskip("alembic")
+    from alembic import command
+    from alembic.config import Config
+
+    project_root = Path(__file__).resolve().parents[1]
+    alembic_ini = project_root / "alembic.ini"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "migration-test.db"
+        config = Config(str(alembic_ini))
+        config.set_main_option("script_location", str(project_root / "migrations"))
+        config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+
+        command.upgrade(config, "head")
+
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            inspector = inspect(engine)
+            assert "account_state_events" in inspector.get_table_names()
+        finally:
+            engine.dispose()
 
 
 def test_installment_execute_then_revert_trend_consistent(db_session, test_book):

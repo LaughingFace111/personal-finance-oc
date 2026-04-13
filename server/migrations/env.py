@@ -13,7 +13,7 @@ from src.modules.books.models import Book
 from src.modules.accounts.models import Account
 from src.modules.categories.models import Category
 from src.modules.transactions.models import Transaction
-from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
+from src.modules.installments.models import InstallmentPlan, InstallmentSchedule, InstallmentStateEvent
 from src.modules.loans.models import LoanPlan, LoanSchedule
 from src.modules.imports.models import ImportBatch, ImportRow
 from src.modules.rules.models import CategoryRule
@@ -28,6 +28,9 @@ if config.config_file_name is not None:
 
 # Set target metadata for autogenerate
 target_metadata = Base.metadata
+for table_name, table in InstallmentStateEvent.metadata.tables.items():
+    if table_name not in target_metadata.tables:
+        table.to_metadata(target_metadata)
 
 
 def run_migrations_offline() -> None:

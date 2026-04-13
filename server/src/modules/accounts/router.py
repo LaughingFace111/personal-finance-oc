@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from src.common.dates import get_local_business_date
 from src.core import get_db
 from src.core.auth import get_current_user
 from src.modules.auth.models import User
@@ -560,7 +561,7 @@ def adjust_credit_limit(
             CreateInstallmentStateEventRequest(
                 account_id=account.id,
                 event_type=INSTALLMENT_EVENT_CREDIT_LIMIT_CHANGED,
-                event_date=datetime.now(timezone.utc).date(),
+                event_date=get_local_business_date(),
                 delta_credit_limit=delta_credit_limit,
             ),
         )
