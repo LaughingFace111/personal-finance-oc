@@ -11,6 +11,7 @@ from src.common.enums import AccountType, SourceType, TransactionDirection, Tran
 from src.core.database import Base
 from src.modules.accounts.models import Account
 from src.modules.accounts.rebuild import rebuild_account_balance
+from src.modules.accounts.router import get as get_account_detail
 from src.modules.accounts.router import get_balance_trend
 from src.modules.books.models import Book
 from src.modules.installments.schemas import CreateInstallmentRequest
@@ -265,6 +266,91 @@ def test_credit_account_initial_debt_uses_2025_12_31_baseline(db_session, test_b
         "frozen_amount": 0.0,
         "credit_limit": 1000.0,
     }]
+
+
+def test_get_credit_account_detail_no_transactions_does_not_500(db_session, test_book):
+    credit = Account(
+        id="credit-detail-no-txn-001",
+        book_id=test_book.id,
+        name="无流水信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=None,
+        billing_day="5",
+        repayment_day="20",
+        opening_balance=None,
+        current_balance=None,
+        debt_amount=None,
+        frozen_amount=None,
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    detail = get_account_detail(
+        credit.id,
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert detail["id"] == credit.id
+    assert detail["current_statement_balance"] == Decimal("0")
+    assert detail["is_overdue"] is False
+    assert detail["credit_limit"] == Decimal("0")
+    assert detail["debt_amount"] == Decimal("0")
+    assert detail["frozen_amount"] == Decimal("0")
+
+
+def test_get_credit_account_balance_trend_no_transactions_does_not_500(db_session, test_book):
+    credit = Account(
+        id="credit-trend-no-txn-001",
+        book_id=test_book.id,
+        name="无流水信用账户",
+        account_type=AccountType.CREDIT_LINE.value,
+        credit_limit=None,
+        billing_day="8",
+        repayment_day="18",
+        opening_balance=None,
+        current_balance=None,
+        debt_amount=None,
+        frozen_amount=None,
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-10",
+        end_date="2026-04-12",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert trend == [
+        {
+            "date": "2026-04-10",
+            "balance": 0.0,
+            "debt_amount": 0.0,
+            "frozen_amount": 0.0,
+            "credit_limit": 0.0,
+        },
+        {
+            "date": "2026-04-11",
+            "balance": 0.0,
+            "debt_amount": 0.0,
+            "frozen_amount": 0.0,
+            "credit_limit": 0.0,
+        },
+        {
+            "date": "2026-04-12",
+            "balance": 0.0,
+            "debt_amount": 0.0,
+            "frozen_amount": 0.0,
+            "credit_limit": 0.0,
+        },
+    ]
 
 
 def test_credit_balance_trend_matches_split_transfer_polarity(db_session, test_book):

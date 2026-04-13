@@ -1,5 +1,5 @@
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import date, datetime, timedelta
 from calendar import monthrange
@@ -12,6 +12,18 @@ from src.core import ErrorCode, AppException, generate_uuid, NotFoundException
 
 from .models import Account
 from .schemas import AccountCreate, AccountUpdate
+
+
+def _to_decimal_or_zero(value: Any) -> Decimal:
+    """Normalize nullable numeric values from ORM/SQL aggregates to Decimal(0)."""
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
 
 
 def _safe_date(year: int, month: int, day: int) -> date:
@@ -284,7 +296,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
     today = date.today()
     billing_day_rule = account.billing_day_rule or "current_cycle"
     last_bill_date, next_bill_date = _get_adjacent_bill_dates(today, billing_day)
-    current_debt = account.debt_amount or Decimal("0")
+    current_debt = _to_decimal_or_zero(account.debt_amount)
 
     if last_bill_date.month == 1:
         prev_bill_date = _safe_date(last_bill_date.year - 1, 12, billing_day)
@@ -324,7 +336,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
             expense_total = expense_total.filter(TxnModel.occurred_at >= start_dt)
         if end_dt is not None:
             expense_total = expense_total.filter(TxnModel.occurred_at < end_dt)
-        return expense_total.scalar() or Decimal("0")
+        return _to_decimal_or_zero(expense_total.scalar())
 
     def _sum_refunds(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
         linked_refunds = db.query(func.sum(RefundTxn.c.amount)).join(
@@ -351,7 +363,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
         if end_dt is not None:
             unlinked_refunds = unlinked_refunds.filter(TxnModel.occurred_at < end_dt)
 
-        return (linked_refunds.scalar() or Decimal("0")) + (unlinked_refunds.scalar() or Decimal("0"))
+        return _to_decimal_or_zero(linked_refunds.scalar()) + _to_decimal_or_zero(unlinked_refunds.scalar())
 
     def _sum_repayments(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
         repayments = db.query(func.sum(TxnModel.amount)).filter(
@@ -363,7 +375,7 @@ def calculate_credit_statement_info(db: Session, account: Account) -> Dict[str, 
             repayments = repayments.filter(TxnModel.occurred_at >= start_dt)
         if end_dt is not None:
             repayments = repayments.filter(TxnModel.occurred_at < end_dt)
-        return repayments.scalar() or Decimal("0")
+        return _to_decimal_or_zero(repayments.scalar())
 
     def _calculate_raw_window_charges(start_dt: Optional[datetime], end_dt: Optional[datetime]) -> Decimal:
         return _sum_expenses(start_dt, end_dt) - _sum_refunds(start_dt, end_dt)

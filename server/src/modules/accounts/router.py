@@ -1,10 +1,11 @@
 from typing import List
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
 from src.common.constants import ACCOUNT_INITIAL_BASELINE_DATE
 from src.common.dates import get_local_business_date
@@ -19,6 +20,18 @@ from .rebuild import rebuild_account_balance, rebuild_book_accounts
 from src.modules.books.service import get_default_book
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
+
+
+def _to_decimal_or_zero(value) -> Decimal:
+    """Normalize nullable numerics from ORM fields and SQL aggregates."""
+    if value is None:
+        return Decimal("0")
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
 
 
 def get_current_book_id(
@@ -334,7 +347,7 @@ def get_balance_trend(
             if event_date is None:
                 continue
             event_day = event_date
-            amount = Decimal(str(delta_amount or 0))
+            amount = _to_decimal_or_zero(delta_amount)
             if event_day > end_day:
                 delta_after_end += amount
             elif start_day <= event_day <= end_day:
@@ -376,10 +389,10 @@ def get_balance_trend(
     is_loan = account.account_type == 'loan'
     
     # 获取账户基础数据
-    credit_limit = Decimal(str(account.credit_limit or 0))
-    opening_balance = Decimal(str(account.opening_balance or 0))
-    current_debt = Decimal(str(account.debt_amount or 0))
-    frozen_amount = Decimal(str(account.frozen_amount or 0))
+    credit_limit = _to_decimal_or_zero(account.credit_limit)
+    opening_balance = _to_decimal_or_zero(account.opening_balance)
+    current_debt = _to_decimal_or_zero(account.debt_amount)
+    frozen_amount = _to_decimal_or_zero(account.frozen_amount)
 
     if is_loan:
         loan_principal_remaining = db.execute(
@@ -390,9 +403,9 @@ def get_balance_trend(
             """),
             {'account_id': account_id},
         ).scalar()
-        current_debt = Decimal(str(
-            loan_principal_remaining if loan_principal_remaining is not None else (account.debt_amount or 0)
-        ))
+        current_debt = _to_decimal_or_zero(
+            loan_principal_remaining if loan_principal_remaining is not None else account.debt_amount
+        )
 
     if is_credit:
         metric_change_case = """
@@ -444,18 +457,28 @@ def get_balance_trend(
             change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
             metric_at_end = current_debt - change_after_end
             opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
-        frozen_change_after_end, frozen_changes_by_day = _load_credit_state_event_changes(
-            "delta_frozen_amount",
-            start_day,
-            end_day,
-        )
+        try:
+            frozen_change_after_end, frozen_changes_by_day = _load_credit_state_event_changes(
+                "delta_frozen_amount",
+                start_day,
+                end_day,
+            )
+            credit_limit_change_after_end, credit_limit_changes_by_day = _load_credit_state_event_changes(
+                "delta_credit_limit",
+                start_day,
+                end_day,
+            )
+        except OperationalError as exc:
+            # Older databases may not have the account_state_events table yet.
+            if "no such table: account_state_events" not in str(exc):
+                raise
+            frozen_change_after_end = Decimal("0")
+            frozen_changes_by_day = {}
+            credit_limit_change_after_end = Decimal("0")
+            credit_limit_changes_by_day = {}
+
         frozen_at_end = frozen_amount - frozen_change_after_end
         opening_frozen = frozen_at_end - sum(frozen_changes_by_day.values(), Decimal("0"))
-        credit_limit_change_after_end, credit_limit_changes_by_day = _load_credit_state_event_changes(
-            "delta_credit_limit",
-            start_day,
-            end_day,
-        )
         credit_limit_at_end = credit_limit - credit_limit_change_after_end
         opening_credit_limit = credit_limit_at_end - sum(credit_limit_changes_by_day.values(), Decimal("0"))
     else:
