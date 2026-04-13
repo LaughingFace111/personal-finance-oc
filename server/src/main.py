@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core import init_db
 from src.core.config import settings as app_settings
 
-from src.modules.auth import router as auth_router
+from src.modules.auth.router import router as auth_router
 from src.modules.books import router as books_router
-from src.modules.accounts import router as accounts_router
+from src.modules.accounts.router import router as accounts_router
 from src.modules.categories import router as categories_router
 from src.modules.transactions import router as transactions_router
 from src.modules.installments import router as installments_router
