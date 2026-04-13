@@ -1463,8 +1463,8 @@ const AccountDetailPage = () => {
     return {
       startDate: formatLocalDate(monthStart),
       endDate: selectedMonth === currentMonth ? formatLocalDate(now) : formatLocalDate(monthEnd),
-      dateFrom: monthStart.toISOString(),
-      dateTo: monthEnd.toISOString(),
+      dateFrom: formatLocalDate(monthStart),
+      dateTo: formatLocalDate(monthEnd),
     }
   }
 
@@ -1503,8 +1503,8 @@ const AccountDetailPage = () => {
 
     const range = getMonthRange(selectedMonth)
     const [year, mon] = selectedMonth.split('-')
-    const dateFrom = range?.dateFrom || new Date(Number(year), Number(mon) - 1, 1).toISOString()
-    const dateTo = range?.dateTo || new Date(Number(year), Number(mon), 0).toISOString()
+    const dateFrom = range?.dateFrom || formatLocalDate(new Date(Number(year), Number(mon) - 1, 1))
+    const dateTo = range?.dateTo || formatLocalDate(new Date(Number(year), Number(mon), 0))
 
     setLoading(true)
     try {

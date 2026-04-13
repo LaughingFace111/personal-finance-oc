@@ -325,6 +325,8 @@ def _apply_transaction_effects(db: Session, txn: Transaction, is_new: bool = Tru
     elif tx_type == TransactionType.FEE.value:
         if _is_asset_account(account_type):
             update_account_balance(db, txn.account_id, txn.amount, is_increase=False)
+        elif _is_credit_account(account_type):
+            update_account_debt(db, txn.account_id, txn.amount, is_increase=True)
 
     # === TRANSFER ===
     elif tx_type == TransactionType.TRANSFER.value:
@@ -1032,6 +1034,8 @@ def _reverse_transaction_effects(db: Session, txn: Transaction):
         if _is_asset_account(account_type):
             # Reverse: balance increase
             update_account_balance(db, txn.account_id, amount, is_increase=True)
+        elif _is_credit_account(account_type):
+            update_account_debt(db, txn.account_id, amount, is_increase=False)
 
     elif tx_type == TransactionType.TRANSFER.value:
         is_split_transfer = bool(txn.related_transaction_id)

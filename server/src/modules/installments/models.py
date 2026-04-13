@@ -69,3 +69,22 @@ class InstallmentSchedule(Base):
         UniqueConstraint("installment_plan_id", "period_no", name="uix_installment_period"),
         Index("ix_installment_schedules_due_date", "due_date"),
     )
+
+
+class InstallmentStateEvent(Base):
+    __tablename__ = "account_state_events"
+
+    id = Column(String(36), primary_key=True)
+    account_id = Column(String(36), ForeignKey("accounts.id"), nullable=False, index=True)
+    event_type = Column(String(40), nullable=False, index=True)
+    event_date = Column(Date, nullable=False, index=True)
+    delta_frozen_amount = Column(Numeric(15, 2), default=Decimal("0"))
+    delta_debt_amount = Column(Numeric(15, 2), default=Decimal("0"))
+    delta_credit_limit = Column(Numeric(15, 2), default=Decimal("0"))
+    source_plan_id = Column(String(36), ForeignKey("installment_plans.id"), index=True)
+    source_transaction_id = Column(String(36), ForeignKey("transactions.id"), index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_account_state_events_account_date", "account_id", "event_date"),
+    )

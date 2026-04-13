@@ -74,6 +74,8 @@ def _apply_rebuild_delta(
         if is_primary:
             if tx_type in {TransactionType.EXPENSE.value, TransactionType.INSTALLMENT_PURCHASE.value}:
                 debt += amount
+            elif tx_type == TransactionType.FEE.value:
+                debt += amount
             elif tx_type in {TransactionType.REFUND.value, TransactionType.INCOME.value}:
                 debt -= amount
             elif tx_type == TransactionType.TRANSFER.value:
@@ -157,7 +159,7 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
 
     # Calculate new balance/debt
     new_balance = account.opening_balance
-    new_debt = account.opening_balance if _is_loan_account(account.account_type) else Decimal("0")
+    new_debt = Decimal(str(account.opening_balance or 0)) if _is_loan_account(account.account_type) else Decimal("0")
 
     account_type = account.account_type
 

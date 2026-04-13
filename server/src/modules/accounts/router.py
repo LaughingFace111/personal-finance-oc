@@ -220,7 +220,7 @@ def get_balance_trend(
     """
     from datetime import date, datetime, time, timedelta
     from src.modules.accounts.service import get_account
-    from src.modules.installments.models import InstallmentPlan, InstallmentSchedule
+    from src.modules.installments.models import InstallmentStateEvent
 
     def _parse_day(raw_value: str | None) -> date:
         if not raw_value:
@@ -281,54 +281,34 @@ def get_balance_trend(
 
         return change_after_end, changes_by_day
 
-    def _load_credit_frozen_changes(
+    def _load_credit_state_event_changes(
+        delta_column: str,
         start_day: date,
         end_day: date,
     ) -> tuple[Decimal, dict[str, Decimal]]:
-        creation_rows = db.query(
-            InstallmentPlan.application_date,
-            InstallmentPlan.total_amount,
+        rows = db.query(
+            InstallmentStateEvent.event_date,
+            getattr(InstallmentStateEvent, delta_column),
         ).filter(
-            InstallmentPlan.account_id == account_id,
-            InstallmentPlan.application_date.isnot(None),
+            InstallmentStateEvent.account_id == account_id,
+            getattr(InstallmentStateEvent, delta_column) != 0,
         ).all()
 
-        execution_rows = db.query(
-            InstallmentSchedule.due_date,
-            InstallmentSchedule.principal_amount,
-        ).join(
-            InstallmentPlan,
-            InstallmentPlan.id == InstallmentSchedule.installment_plan_id,
-        ).filter(
-            InstallmentPlan.account_id == account_id,
-            InstallmentSchedule.status.in_(["executed", "settled", "paid"]),
-        ).all()
-
-        frozen_after_end = Decimal("0")
+        delta_after_end = Decimal("0")
         changes_by_day: dict[str, Decimal] = {}
 
-        for application_dt, total_amount in creation_rows:
-            if application_dt is None:
+        for event_date, delta_amount in rows:
+            if event_date is None:
                 continue
-            event_day = application_dt.date()
-            amount = Decimal(str(total_amount or 0))
+            event_day = event_date
+            amount = Decimal(str(delta_amount or 0))
             if event_day > end_day:
-                frozen_after_end += amount
+                delta_after_end += amount
             elif start_day <= event_day <= end_day:
                 key = event_day.isoformat()
                 changes_by_day[key] = changes_by_day.get(key, Decimal("0")) + amount
 
-        for due_date, principal_amount in execution_rows:
-            if due_date is None:
-                continue
-            amount = Decimal(str(principal_amount or 0))
-            if due_date > end_day:
-                frozen_after_end -= amount
-            elif start_day <= due_date <= end_day:
-                key = due_date.isoformat()
-                changes_by_day[key] = changes_by_day.get(key, Decimal("0")) - amount
-
-        return frozen_after_end, changes_by_day
+        return delta_after_end, changes_by_day
     
     # 获取账本
     bid = get_current_book_id(current_user, db, book_id)
@@ -386,6 +366,9 @@ def get_balance_trend(
                   AND transaction_type IN ('expense', 'installment_purchase')
                   THEN amount
                 WHEN account_id = :account_id
+                  AND transaction_type = 'fee'
+                  THEN amount
+                WHEN account_id = :account_id
                   AND transaction_type = 'refund'
                   THEN -amount
                 WHEN account_id = :account_id
@@ -413,14 +396,25 @@ def get_balance_trend(
         change_after_end, changes_by_day = _load_daily_changes(metric_change_case, start_dt, end_exclusive_dt)
         metric_at_end = current_debt - change_after_end
         opening_metric = metric_at_end - sum(changes_by_day.values(), Decimal("0"))
-        frozen_change_after_end, frozen_changes_by_day = _load_credit_frozen_changes(start_day, end_day)
+        frozen_change_after_end, frozen_changes_by_day = _load_credit_state_event_changes(
+            "delta_frozen_amount",
+            start_day,
+            end_day,
+        )
         frozen_at_end = frozen_amount - frozen_change_after_end
         opening_frozen = frozen_at_end - sum(frozen_changes_by_day.values(), Decimal("0"))
+        credit_limit_change_after_end, credit_limit_changes_by_day = _load_credit_state_event_changes(
+            "delta_credit_limit",
+            start_day,
+            end_day,
+        )
+        credit_limit_at_end = credit_limit - credit_limit_change_after_end
+        opening_credit_limit = credit_limit_at_end - sum(credit_limit_changes_by_day.values(), Decimal("0"))
     else:
         if is_loan:
             metric_change_case = """
                 CASE
-                    WHEN account_id = :account_id
+                WHEN account_id = :account_id
                       AND transaction_type = 'transfer'
                       AND direction = 'out'
                       THEN amount
@@ -486,6 +480,7 @@ def get_balance_trend(
     data_points = []
     running_metric = opening_metric
     running_frozen = opening_frozen if is_credit else Decimal("0")
+    running_credit_limit = opening_credit_limit if is_credit else Decimal("0")
     current_day = start_day
 
     while current_day <= end_day:
@@ -493,8 +488,9 @@ def get_balance_trend(
         running_metric += changes_by_day.get(day_key, Decimal("0"))
 
         if is_credit:
+            running_credit_limit += credit_limit_changes_by_day.get(day_key, Decimal("0"))
             running_frozen += frozen_changes_by_day.get(day_key, Decimal("0"))
-            display_value = credit_limit - running_metric - running_frozen
+            display_value = running_credit_limit - running_metric - running_frozen
         else:
             display_value = running_metric
 
@@ -506,7 +502,7 @@ def get_balance_trend(
             point.update({
                 'debt_amount': float(running_metric),
                 'frozen_amount': float(running_frozen),
-                'credit_limit': float(credit_limit),
+                'credit_limit': float(running_credit_limit),
             })
 
         data_points.append(point)
@@ -532,6 +528,11 @@ def adjust_credit_limit(
     """
     from decimal import Decimal
     from src.modules.accounts.service import get_account
+    from src.modules.installments.schemas import CreateInstallmentStateEventRequest
+    from src.modules.installments.service import (
+        INSTALLMENT_EVENT_CREDIT_LIMIT_CHANGED,
+        create_installment_state_event,
+    )
     
     new_limit = data.get("new_limit")
     if not new_limit:
@@ -549,7 +550,20 @@ def adjust_credit_limit(
                           message="只有信用卡/信用账户才能调整额度")
     
     # 纯粹的额度修改 - 不生成任何交易流水
-    account.credit_limit = Decimal(str(new_limit))
+    previous_limit = Decimal(str(account.credit_limit or 0))
+    updated_limit = Decimal(str(new_limit))
+    account.credit_limit = updated_limit
+    delta_credit_limit = updated_limit - previous_limit
+    if delta_credit_limit != 0:
+        create_installment_state_event(
+            db,
+            CreateInstallmentStateEventRequest(
+                account_id=account.id,
+                event_type=INSTALLMENT_EVENT_CREDIT_LIMIT_CHANGED,
+                event_date=datetime.now(timezone.utc).date(),
+                delta_credit_limit=delta_credit_limit,
+            ),
+        )
     db.commit()
     db.refresh(account)
     

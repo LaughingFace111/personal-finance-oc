@@ -26,6 +26,7 @@ from src.modules.wishlists.models import WishlistItem  # noqa: F401
 from src.modules.durable_assets import router as durable_assets_router
 from src.modules.durable_assets.models import DurableAsset  # noqa: F401
 from src.modules.account_balance_snapshots import AccountBalanceSnapshot  # noqa: F401
+from src.modules.installments.models import InstallmentStateEvent  # noqa: F401
 from src.modules.import_templates import ImportTemplate  # noqa: F401
 from src.modules.recurring_rules import RecurringRule  # noqa: F401
 from src.modules.recurring_pending import PendingItem  # noqa: F401

@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -8,10 +9,16 @@ from sqlalchemy.orm import sessionmaker
 from src.common.enums import AccountType, SourceType, TransactionDirection, TransactionType
 from src.core.database import Base
 from src.modules.accounts.models import Account
+from src.modules.accounts.rebuild import rebuild_account_balance
 from src.modules.accounts.router import get_balance_trend
 from src.modules.books.models import Book
 from src.modules.installments.schemas import CreateInstallmentRequest
-from src.modules.installments.service import create_installment_with_transaction, execute_installment_period
+from src.modules.installments.service import (
+    create_installment_with_transaction,
+    delete_installment_plan,
+    execute_installment_period,
+    revert_installment_period,
+)
 from src.modules.loans.models import LoanPlan
 from src.modules.transactions.schemas import TransactionCreate, TransferCreate
 from src.modules.transactions.service import adjust_account_balance, create_transaction, create_transfer
@@ -335,3 +342,324 @@ def test_adjust_available_credit_generates_income_that_reduces_credit_debt(db_se
     db_session.refresh(credit)
 
     assert credit.debt_amount == Decimal("200")
+
+
+def test_credit_fee_reduces_available_credit_and_rebuild_consistent(db_session, test_book):
+    credit = Account(
+        id="credit-fee-001",
+        book_id=test_book.id,
+        name="信用账户",
+        account_type=AccountType.CREDIT_LINE.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=credit.id,
+            occurred_at=datetime(2026, 4, 1, 9, 0, 0),
+            transaction_type=TransactionType.FEE,
+            direction=TransactionDirection.OUT,
+            amount=Decimal("10"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+    db_session.refresh(credit)
+    assert credit.debt_amount == Decimal("10")
+
+    credit.debt_amount = Decimal("999")
+    db_session.commit()
+
+    rebuild_account_balance(db_session, credit.id)
+    db_session.refresh(credit)
+    assert credit.debt_amount == Decimal("10")
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-01",
+        end_date="2026-04-01",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert trend == [{
+        "date": "2026-04-01",
+        "balance": 990.0,
+        "debt_amount": 10.0,
+        "frozen_amount": 0.0,
+        "credit_limit": 1000.0,
+    }]
+
+
+def test_installment_delete_removes_freeze_after_delete_date_only(db_session, test_book, monkeypatch):
+    credit = Account(
+        id="credit-delete-001",
+        book_id=test_book.id,
+        name="删除分期信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    plan, _ = create_installment_with_transaction(
+        db_session,
+        test_book.id,
+        CreateInstallmentRequest(
+            occurred_at=datetime(2026, 4, 15, 10, 0, 0),
+            account_id=credit.id,
+            merchant="耳机",
+            total_amount=Decimal("100"),
+            total_periods=1,
+            principal_per_period=Decimal("100"),
+            fee_per_period=Decimal("0"),
+            installment_amount=Decimal("100"),
+            start_date=date(2026, 4, 15),
+            first_execution_date=date(2026, 4, 20),
+            first_billing_date=date(2026, 4, 20),
+        ),
+    )
+
+    class FakeDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 4, 18)
+
+    monkeypatch.setattr("src.modules.installments.service.date", FakeDate)
+    delete_installment_plan(db_session, plan.id, test_book.id)
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-14",
+        end_date="2026-04-19",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert [point["balance"] for point in trend] == [1000.0, 900.0, 900.0, 900.0, 1000.0, 1000.0]
+    assert [point["frozen_amount"] for point in trend] == [0.0, 100.0, 100.0, 100.0, 0.0, 0.0]
+
+
+def test_installment_execute_then_revert_trend_consistent(db_session, test_book):
+    credit = Account(
+        id="credit-revert-001",
+        book_id=test_book.id,
+        name="回退分期信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    plan, _ = create_installment_with_transaction(
+        db_session,
+        test_book.id,
+        CreateInstallmentRequest(
+            occurred_at=datetime(2026, 4, 15, 10, 0, 0),
+            account_id=credit.id,
+            merchant="电脑",
+            total_amount=Decimal("100"),
+            total_periods=1,
+            principal_per_period=Decimal("100"),
+            fee_per_period=Decimal("5"),
+            installment_amount=Decimal("105"),
+            start_date=date(2026, 4, 15),
+            first_execution_date=date(2026, 4, 16),
+            first_billing_date=date(2026, 4, 16),
+        ),
+    )
+    result = execute_installment_period(db_session, plan.id, test_book.id)
+    revert_installment_period(db_session, result["schedule"].id, test_book.id)
+    db_session.refresh(credit)
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-15",
+        end_date="2026-04-16",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert [point["balance"] for point in trend] == [900.0, 900.0]
+    assert [point["debt_amount"] for point in trend] == [0.0, 0.0]
+    assert [point["frozen_amount"] for point in trend] == [100.0, 100.0]
+    assert credit.debt_amount == Decimal("0")
+    assert credit.frozen_amount == Decimal("100")
+
+
+def test_loan_trend_remaining_principal_full_flow(db_session, test_book):
+    loan = Account(
+        id="loan-full-001",
+        book_id=test_book.id,
+        name="经营贷",
+        account_type=AccountType.LOAN.value,
+        opening_balance=Decimal("0"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        is_active=True,
+    )
+    cash = Account(
+        id="loan-full-cash-001",
+        book_id=test_book.id,
+        name="收款卡",
+        account_type=AccountType.DEBIT_CARD.value,
+        opening_balance=Decimal("5000"),
+        current_balance=Decimal("5000"),
+        is_active=True,
+    )
+    plan = LoanPlan(
+        id="loan-full-plan-001",
+        account_id=loan.id,
+        loan_name="经营贷",
+        principal_total=Decimal("1000"),
+        principal_remaining=Decimal("750"),
+        annual_interest_rate=Decimal("0.05"),
+        repayment_method="equal_principal_interest",
+        total_periods=12,
+        current_period=1,
+        monthly_payment_estimated=Decimal("100"),
+        first_due_date=date(2026, 3, 15),
+        repayment_day=15,
+        status="active",
+    )
+    db_session.add_all([loan, cash, plan])
+    db_session.commit()
+
+    create_transfer(
+        db_session,
+        test_book.id,
+        TransferCreate(
+            from_account_id=loan.id,
+            to_account_id=cash.id,
+            amount=Decimal("1000"),
+            occurred_at=datetime(2026, 3, 1, 9, 0, 0),
+            currency="CNY",
+        ),
+    )
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=cash.id,
+            counterparty_account_id=loan.id,
+            occurred_at=datetime(2026, 3, 5, 9, 0, 0),
+            transaction_type=TransactionType.REPAYMENT_LOAN,
+            direction=TransactionDirection.INTERNAL,
+            amount=Decimal("250"),
+            source_type=SourceType.MANUAL,
+            include_in_expense=False,
+            include_in_income=False,
+            include_in_cashflow=False,
+        ),
+    )
+    create_transaction(
+        db_session,
+        test_book.id,
+        TransactionCreate(
+            account_id=loan.id,
+            occurred_at=datetime(2026, 3, 6, 9, 0, 0),
+            transaction_type=TransactionType.FEE,
+            direction=TransactionDirection.OUT,
+            amount=Decimal("30"),
+            source_type=SourceType.MANUAL,
+        ),
+    )
+
+    rebuild_account_balance(db_session, loan.id)
+    db_session.refresh(loan)
+
+    trend = get_balance_trend(
+        loan.id,
+        start_date="2026-03-01",
+        end_date="2026-03-06",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert [point["balance"] for point in trend] == [1000.0, 1000.0, 1000.0, 1000.0, 750.0, 750.0]
+    assert loan.debt_amount == Decimal("750")
+
+
+def test_month_selector_local_date_boundary():
+    app_source = Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx"
+    content = app_source.read_text(encoding="utf-8")
+    month_range_start = content.index("const getMonthRange = (selectedMonth: string) => {")
+    month_range_end = content.index("  const loadAccount = async () => {", month_range_start)
+    month_range_block = content[month_range_start:month_range_end]
+
+    assert "dateFrom: formatLocalDate(monthStart)" in month_range_block
+    assert "dateTo: formatLocalDate(monthEnd)" in month_range_block
+    assert "toISOString()" not in month_range_block
+
+
+def test_rebuild_after_installment_events(db_session, test_book):
+    credit = Account(
+        id="credit-rebuild-events-001",
+        book_id=test_book.id,
+        name="事件重建信用卡",
+        account_type=AccountType.CREDIT_CARD.value,
+        credit_limit=Decimal("1000"),
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("0"),
+        frozen_amount=Decimal("0"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    plan, _ = create_installment_with_transaction(
+        db_session,
+        test_book.id,
+        CreateInstallmentRequest(
+            occurred_at=datetime(2026, 4, 15, 10, 0, 0),
+            account_id=credit.id,
+            merchant="平板",
+            total_amount=Decimal("100"),
+            total_periods=1,
+            principal_per_period=Decimal("100"),
+            fee_per_period=Decimal("5"),
+            installment_amount=Decimal("105"),
+            start_date=date(2026, 4, 15),
+            first_execution_date=date(2026, 4, 16),
+            first_billing_date=date(2026, 4, 16),
+        ),
+    )
+    result = execute_installment_period(db_session, plan.id, test_book.id)
+    revert_installment_period(db_session, result["schedule"].id, test_book.id)
+
+    credit.debt_amount = Decimal("321")
+    db_session.commit()
+    rebuild_account_balance(db_session, credit.id)
+    db_session.refresh(credit)
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-15",
+        end_date="2026-04-16",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert credit.debt_amount == Decimal("0")
+    assert credit.frozen_amount == Decimal("100")
+    assert [point["balance"] for point in trend] == [900.0, 900.0]

@@ -124,3 +124,14 @@ class CreateInstallmentRequest(BaseModel):
             except json.JSONDecodeError:
                 return None
         return value
+
+
+class CreateInstallmentStateEventRequest(BaseModel):
+    account_id: str
+    event_type: str
+    event_date: date
+    delta_frozen_amount: Decimal = Field(default=Decimal("0"))
+    delta_debt_amount: Decimal = Field(default=Decimal("0"))
+    delta_credit_limit: Decimal = Field(default=Decimal("0"))
+    source_plan_id: Optional[str] = None
+    source_transaction_id: Optional[str] = None

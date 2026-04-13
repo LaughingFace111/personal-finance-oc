@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from src.common.enums import PlanStatus, TransactionType, TransactionDirection, SourceType
 from src.core import generate_uuid, NotFoundException
 
-from .models import InstallmentPlan, InstallmentSchedule
-from .schemas import CreateInstallmentRequest, InstallmentPlanUpdate
+from .models import InstallmentPlan, InstallmentSchedule, InstallmentStateEvent
+from .schemas import CreateInstallmentRequest, CreateInstallmentStateEventRequest, InstallmentPlanUpdate
 from src.modules.transactions.service import create_transaction, create_credit_card_repayment, delete_transaction
 from src.modules.transactions.schemas import CreditCardRepaymentCreate, TransactionCreate
 from src.modules.accounts.service import update_account_frozen as update_account_frozen_amount
@@ -21,6 +21,33 @@ from src.modules.transactions.models import Transaction
 from src.modules.tags.models import Tag
 
 logger = logging.getLogger(__name__)
+
+
+INSTALLMENT_EVENT_CREATED = "installment_created"
+INSTALLMENT_EVENT_DELETED = "installment_deleted"
+INSTALLMENT_EVENT_EXECUTED = "installment_executed"
+INSTALLMENT_EVENT_REVERTED = "installment_reverted"
+INSTALLMENT_EVENT_CREDIT_LIMIT_CHANGED = "credit_limit_changed"
+
+
+def create_installment_state_event(
+    db: Session,
+    data: CreateInstallmentStateEventRequest,
+) -> InstallmentStateEvent:
+    event = InstallmentStateEvent(
+        id=generate_uuid(),
+        account_id=data.account_id,
+        event_type=data.event_type,
+        event_date=data.event_date,
+        delta_frozen_amount=data.delta_frozen_amount,
+        delta_debt_amount=data.delta_debt_amount,
+        delta_credit_limit=data.delta_credit_limit,
+        source_plan_id=data.source_plan_id,
+        source_transaction_id=data.source_transaction_id,
+    )
+    db.add(event)
+    db.flush()
+    return event
 
 
 def _get_installment_execution_business_key(plan_id: str, period_no: int) -> str:
@@ -386,6 +413,16 @@ def create_installment_with_transaction(db: Session, book_id: str, data: CreateI
         # 3. 创建分期时只冻结额度，不生成交易，也不增加 debt_amount
         if frozen_amount > 0:
             account.frozen_amount = (account.frozen_amount or Decimal("0")) + frozen_amount
+            create_installment_state_event(
+                db,
+                CreateInstallmentStateEventRequest(
+                    account_id=account.id,
+                    event_type=INSTALLMENT_EVENT_CREATED,
+                    event_date=data.occurred_at.date(),
+                    delta_frozen_amount=frozen_amount,
+                    source_plan_id=plan.id,
+                ),
+            )
 
         db.commit()
         db.refresh(plan)
@@ -481,6 +518,18 @@ def execute_installment_period(db: Session, plan_id: str, book_id: str) -> dict:
         schedule.paid_amount = amount
         schedule.paid_at = occurred_at
         schedule.status = "executed"
+        create_installment_state_event(
+            db,
+            CreateInstallmentStateEventRequest(
+                account_id=plan.account_id,
+                event_type=INSTALLMENT_EVENT_EXECUTED,
+                event_date=schedule.due_date,
+                delta_frozen_amount=-principal_amount,
+                delta_debt_amount=amount,
+                source_plan_id=plan.id,
+                source_transaction_id=transaction.id,
+            ),
+        )
 
         # 4. 更新计划进度
         plan.executed_periods = next_period
@@ -642,9 +691,23 @@ def revert_installment_period(db: Session, period_id: str, book_id: str) -> dict
         if not execution_transaction:
             raise NotFoundException("Linked installment transaction not found")
 
+        principal_amount = Decimal(str(schedule.principal_amount or 0))
+        reverted_debt_amount = Decimal(str(schedule.paid_amount or execution_transaction.amount or 0))
         delete_transaction(db, execution_transaction.id, book_id, auto_commit=False)
         # 🛡️ L: delete_transaction 内部已通过 _reverse_transaction_effects → update_account_frozen
         # 恢复了 frozen_release_amount（= principal_amount），此处不再重复恢复，避免双倍解冻
+        create_installment_state_event(
+            db,
+            CreateInstallmentStateEventRequest(
+                account_id=plan.account_id,
+                event_type=INSTALLMENT_EVENT_REVERTED,
+                event_date=schedule.due_date,
+                delta_frozen_amount=principal_amount,
+                delta_debt_amount=-reverted_debt_amount,
+                source_plan_id=plan.id,
+                source_transaction_id=execution_transaction.id,
+            ),
+        )
 
         schedule.payment_transaction_id = None
         schedule.paid_amount = Decimal("0")
@@ -696,6 +759,16 @@ def delete_installment_plan(db: Session, plan_id: str, book_id: str) -> None:
     account.frozen_amount = max(
         Decimal("0"),
         Decimal(str(account.frozen_amount or 0)) - Decimal(str(plan.total_amount or 0)),
+    )
+    create_installment_state_event(
+        db,
+        CreateInstallmentStateEventRequest(
+            account_id=plan.account_id,
+            event_type=INSTALLMENT_EVENT_DELETED,
+            event_date=date.today(),
+            delta_frozen_amount=-Decimal(str(plan.total_amount or 0)),
+            source_plan_id=plan.id,
+        ),
     )
     db.delete(plan)
     db.commit()
