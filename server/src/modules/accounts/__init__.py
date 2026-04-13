@@ -1,5 +1,4 @@
 from .models import Account
-from .router import router
 from .schemas import AccountBalanceResponse, AccountCreate, AccountResponse, AccountUpdate
 from .service import (
     create_account,
@@ -14,7 +13,6 @@ from .service import (
 
 __all__ = [
     "Account",
-    "router",
     "AccountCreate",
     "AccountResponse",
     "AccountUpdate",

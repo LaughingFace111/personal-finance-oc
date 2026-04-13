@@ -27,3 +27,4 @@ docs/
 *.md
 !README.md
 server/venv/
+.venv-pytest/

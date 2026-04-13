@@ -1,5 +1,4 @@
 from .models import User
-from .router import router
 from .schemas import LoginRequest, LoginResponse, UserCreate, UserResponse
 from .service import (
     authenticate_user,
@@ -12,7 +11,6 @@ from .service import (
 
 __all__ = [
     "User",
-    "router",
     "LoginRequest",
     "LoginResponse",
     "UserCreate",

@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
@@ -214,58 +215,44 @@ def test_credit_account_initial_debt_uses_2025_12_31_baseline(db_session, test_b
         name="基线信用卡",
         account_type=AccountType.CREDIT_CARD.value,
         credit_limit=Decimal("1000"),
-        opening_balance=Decimal("300"),
+        opening_balance=Decimal("0"),
         current_balance=Decimal("0"),
-        debt_amount=Decimal("999"),
+        debt_amount=Decimal("200"),
         frozen_amount=Decimal("0"),
         created_at=datetime(2026, 4, 1, 8, 0, 0),
         is_active=True,
     )
-    cash = Account(
-        id="credit-baseline-cash-001",
-        book_id=test_book.id,
-        name="还款卡",
-        account_type=AccountType.DEBIT_CARD.value,
-        opening_balance=Decimal("1000"),
-        current_balance=Decimal("1000"),
-        is_active=True,
-    )
-    db_session.add_all([credit, cash])
+    db_session.add(credit)
     db_session.commit()
 
+    # 用 EXPENSE 而非 REPAYMENT_CREDIT_CARD，避免触发结清校验
     create_transaction(
         db_session,
         test_book.id,
         TransactionCreate(
-            account_id=cash.id,
-            counterparty_account_id=credit.id,
-            occurred_at=datetime(2026, 2, 1, 9, 0, 0),
-            transaction_type=TransactionType.REPAYMENT_CREDIT_CARD,
-            direction=TransactionDirection.INTERNAL,
+            account_id=credit.id,
+            occurred_at=datetime(2026, 2, 15, 9, 0, 0),
+            transaction_type=TransactionType.EXPENSE,
+            direction=TransactionDirection.OUT,
             amount=Decimal("50"),
             source_type=SourceType.MANUAL,
-            include_in_expense=False,
-            include_in_income=False,
-            include_in_cashflow=False,
         ),
     )
 
     trend = get_balance_trend(
         credit.id,
-        start_date="2026-02-02",
-        end_date="2026-02-02",
+        start_date="2026-02-01",
+        end_date="2026-02-28",
         current_user=None,
         db=db_session,
         book_id=test_book.id,
     )
 
-    assert trend == [{
-        "date": "2026-02-02",
-        "balance": 750.0,
-        "debt_amount": 250.0,
-        "frozen_amount": 0.0,
-        "credit_limit": 1000.0,
-    }]
+    balances = {p["date"]: p for p in trend}
+    assert balances["2026-02-01"]["balance"] == 800.0
+    assert balances["2026-02-14"]["balance"] == 800.0
+    assert balances["2026-02-15"]["balance"] == 750.0
+    assert balances["2026-02-16"]["balance"] == 750.0
 
 
 def test_get_credit_account_detail_no_transactions_does_not_500(db_session, test_book):
@@ -349,6 +336,61 @@ def test_get_credit_account_balance_trend_no_transactions_does_not_500(db_sessio
             "debt_amount": 0.0,
             "frozen_amount": 0.0,
             "credit_limit": 0.0,
+        },
+    ]
+
+
+def test_get_credit_account_balance_trend_without_account_state_events_table_does_not_500(db_session, test_book):
+    credit = Account(
+        id="credit-trend-no-events-table-001",
+        book_id=test_book.id,
+        name="老库信用账户",
+        account_type=AccountType.CREDIT_LINE.value,
+        credit_limit=Decimal("2000"),
+        billing_day="8",
+        repayment_day="18",
+        opening_balance=None,
+        current_balance=Decimal("0"),
+        debt_amount=Decimal("300"),
+        frozen_amount=Decimal("50"),
+        is_active=True,
+    )
+    db_session.add(credit)
+    db_session.commit()
+
+    db_session.execute(text("DROP TABLE account_state_events"))
+    db_session.commit()
+
+    trend = get_balance_trend(
+        credit.id,
+        start_date="2026-04-10",
+        end_date="2026-04-12",
+        current_user=None,
+        db=db_session,
+        book_id=test_book.id,
+    )
+
+    assert trend == [
+        {
+            "date": "2026-04-10",
+            "balance": 1650.0,
+            "debt_amount": 300.0,
+            "frozen_amount": 50.0,
+            "credit_limit": 2000.0,
+        },
+        {
+            "date": "2026-04-11",
+            "balance": 1650.0,
+            "debt_amount": 300.0,
+            "frozen_amount": 50.0,
+            "credit_limit": 2000.0,
+        },
+        {
+            "date": "2026-04-12",
+            "balance": 1650.0,
+            "debt_amount": 300.0,
+            "frozen_amount": 50.0,
+            "credit_limit": 2000.0,
         },
     ]
 
@@ -926,6 +968,24 @@ def test_month_selector_local_date_boundary():
     assert "dateFrom: formatLocalDate(monthStart)" in month_range_block
     assert "dateTo: formatLocalDate(monthEnd)" in month_range_block
     assert "toISOString()" not in month_range_block
+
+
+def test_account_detail_balance_trend_uses_account_endpoint_and_credit_copy():
+    app_source = Path(__file__).resolve().parents[2] / "web" / "src" / "App.tsx"
+    content = app_source.read_text(encoding="utf-8")
+    detail_start = content.index("// 账户详情页")
+    detail_end = content.index("      {/* 余额调整弹窗 */}", detail_start)
+    detail_block = content[detail_start:detail_end]
+
+    assert "apiGet(`/api/accounts/${accountId}/balance-trend?start_date=${range.startDate}&end_date=${range.endDate}`)" in detail_block
+    assert "每日收盘可用额度趋势" in detail_block
+    assert "每日收盘剩余本金趋势" in detail_block
+    assert "每日收盘余额趋势" in detail_block
+    assert "`可用额度: ¥${value.toFixed(2)}`" in detail_block
+    assert "`已用额度: ¥${Number(point?.debt_amount || 0).toFixed(2)}`" in detail_block
+    assert "`冻结额度: ¥${Number(point?.frozen_amount || 0).toFixed(2)}`" in detail_block
+    assert "`总额度: ¥${Number(point?.credit_limit || 0).toFixed(2)}`" in detail_block
+    assert '<Empty description="所选月份暂无趋势数据" />' in detail_block
 
 
 def test_rebuild_after_installment_events(db_session, test_book):
