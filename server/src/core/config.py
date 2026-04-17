@@ -28,6 +28,18 @@ class Settings(BaseSettings):
         "https://fast-monkey-60.loca.lt",
         "https://409b61ca.r11.vip.cpolar.cn",
         "https://fuzzy-pumas-work.loca.lt",
+        "https://1a4d25f4.r38.cpolar.top",
+        "http://1a4d25f4.r38.cpolar.top",
+        "https://47dba8db.r38.cpolar.top",
+        "http://47dba8db.r38.cpolar.top",
+        "https://7cecff6.r11.vip.cpolar.cn",
+        "http://7cecff6.r11.vip.cpolar.cn",
+        "https://43bc1c65.r38.cpolar.top",
+        "http://43bc1c65.r38.cpolar.top",
+        "https://3bcb25cc.r38.cpolar.top",
+        "http://3bcb25cc.r38.cpolar.top",
+        "https://6da580c3.r38.cpolar.top",
+        "http://6da580c3.r38.cpolar.top",
     ]
 
     class Config:
