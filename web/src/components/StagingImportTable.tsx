@@ -182,6 +182,8 @@ type StagingImportRowProps = {
   accountById: Map<string, Account>;
   accounts: Account[];
   tags: SelectTagOption[];
+  tagIdsByName: Map<string, string>;
+  tagNamesById: Map<string, string>;
   bookId: string | null;
   onToggleSelect: (tempId: string, selected: boolean) => void;
   onUpdateRow: (tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => void;
@@ -190,7 +192,7 @@ type StagingImportRowProps = {
 };
 
 const StagingImportRow = React.memo(
-  ({ row, isSelected, categoryById, accountById, accounts, tags, bookId, onToggleSelect, onUpdateRow, onTagsUpdated, onOpenCategoryPicker }: StagingImportRowProps) => {
+  ({ row, isSelected, categoryById, accountById, accounts, tags, tagIdsByName, tagNamesById, bookId, onToggleSelect, onUpdateRow, onTagsUpdated, onOpenCategoryPicker }: StagingImportRowProps) => {
     const issues = useMemo(() => getRowIssues(row), [row]);
     const hasRefundWarning = useMemo(
       () => row.warnings.some(w => w.includes('疑似退款') || w.includes('is_orphan')),
@@ -200,9 +202,9 @@ const StagingImportRow = React.memo(
     const selectedTagIds = useMemo(
       () =>
         row.tags
-          .map((tagName) => tags.find((tag) => tag.name === tagName)?.id)
+          .map((tagName) => tagIdsByName.get(tagName))
           .filter((tagId): tagId is string => Boolean(tagId)),
-      [row.tags, tags],
+      [row.tags, tagIdsByName],
     );
 
     const handleDirectionChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -404,7 +406,7 @@ const StagingImportRow = React.memo(
               value={selectedTagIds}
               onChange={(nextTagIds) => {
                 const nextTagNames = nextTagIds
-                  .map((tagId) => tags.find((tag) => String(tag.id) === String(tagId))?.name)
+                  .map((tagId) => tagNamesById.get(String(tagId)))
                   .filter((tagName): tagName is string => Boolean(tagName));
                 onUpdateRow(row.tempId, { tags: nextTagNames });
               }}
@@ -471,7 +473,13 @@ const StagingImportRow = React.memo(
     return (
       prevProps.row === nextProps.row &&
       prevProps.isSelected === nextProps.isSelected &&
-      prevProps.accounts === nextProps.accounts
+      prevProps.accounts === nextProps.accounts &&
+      prevProps.tags === nextProps.tags &&
+      prevProps.tagIdsByName === nextProps.tagIdsByName &&
+      prevProps.tagNamesById === nextProps.tagNamesById &&
+      prevProps.bookId === nextProps.bookId &&
+      prevProps.categoryById === nextProps.categoryById &&
+      prevProps.accountById === nextProps.accountById
     );
   }
 );
@@ -489,6 +497,7 @@ export function StagingImportTable() {
   const [confirming, setConfirming] = useState(false);
   const [matchingTarget, setMatchingTarget] = useState<string | null>(null);
   const [rows, setRows] = useState<ParsedItem[]>([]);
+  const [loadedParseId, setLoadedParseId] = useState<string | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(new Set());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -538,12 +547,19 @@ export function StagingImportTable() {
   useEffect(() => {
     if (!parseId) {
       setRows([]);
+      setLoadedParseId(null);
+      return;
+    }
+    if (loadedParseId === parseId) {
       return;
     }
     apiGet<ParseResponse>(`/api/bills/parse/${parseId}`)
-      .then(res => setRows(res.items || []))
+      .then(res => {
+        setRows(res.items || []);
+        setLoadedParseId(parseId);
+      })
       .catch(() => setRows([]));
-  }, [parseId]);
+  }, [loadedParseId, parseId]);
 
   // ── Memoized lookups ─────────────────────────────────────────────────────────
 
@@ -558,6 +574,18 @@ export function StagingImportTable() {
     accounts.forEach(account => map.set(account.id, account));
     return map;
   }, [accounts]);
+
+  const tagIdsByName = useMemo(() => {
+    const map = new Map<string, string>();
+    tags.forEach((tag) => map.set(tag.name, String(tag.id)));
+    return map;
+  }, [tags]);
+
+  const tagNamesById = useMemo(() => {
+    const map = new Map<string, string>();
+    tags.forEach((tag) => map.set(String(tag.id), tag.name));
+    return map;
+  }, [tags]);
 
   // Sync selectedRowIds when rows change
   const rowIdKey = useMemo(() => rows.map(row => row.tempId).join('|'), [rows]);
@@ -615,6 +643,7 @@ export function StagingImportTable() {
       form.append('bill_type', billType);
       const res = await apiUpload<ParseResponse>('/api/bills/parse', form);
       setRows(res.items || []);
+      setLoadedParseId(res.parseId);
       navigate(`/imports?parseId=${res.parseId}`);
       message.success(`解析完成，共 ${res.items.length} 条`);
     } catch (err) {
@@ -663,6 +692,7 @@ export function StagingImportTable() {
         matchTarget,
       });
       setRows(res.items || []);
+      setLoadedParseId(parseId);
       message.success(
         matchTarget === 'account'
           ? '账户匹配已完成'
@@ -711,6 +741,17 @@ export function StagingImportTable() {
   const selectedCount = selectedRowIds.size;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
   const partiallySelected = selectedCount > 0 && selectedCount < rows.length;
+  const editingRow = useMemo(
+    () => (editingRowId ? rows.find((row) => row.tempId === editingRowId) ?? null : null),
+    [editingRowId, rows]
+  );
+  const categoryModalItems = useMemo(() => {
+    const direction = editingRow?.direction || 'out';
+    const categoryType = getCategoryTypeByDirection(direction);
+    return categories.filter(
+      (cat) => cat.category_type === categoryType || cat.category_type === 'income_expense'
+    );
+  }, [categories, editingRow?.direction]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -810,6 +851,8 @@ export function StagingImportTable() {
                 accountById={accountById}
                 accounts={accounts}
                 tags={tags}
+                tagIdsByName={tagIdsByName}
+                tagNamesById={tagNamesById}
                 bookId={bookId}
                 onToggleSelect={toggleRowSelect}
                 onUpdateRow={updateRow}
@@ -830,13 +873,8 @@ export function StagingImportTable() {
       <HierarchyPickerModal
         open={categoryModalOpen}
         title="选择类别"
-        items={(() => {
-          const editingRow = editingRowId ? rows.find(r => r.tempId === editingRowId)          : null;
-          const direction = editingRow?.direction || 'out';
-          const categoryType = getCategoryTypeByDirection(direction);
-          return categories.filter(cat => cat.category_type === categoryType || cat.category_type === 'income_expense');
-        })()}
-        value={editingRowId ? rows.find(r => r.tempId === editingRowId)?.categoryId || '' : ''}
+        items={categoryModalItems}
+        value={editingRow?.categoryId || ''}
         emptyText="暂无可选类别"
         onCancel={() => {
           setCategoryModalOpen(false);

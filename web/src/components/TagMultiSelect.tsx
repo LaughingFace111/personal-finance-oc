@@ -181,8 +181,12 @@ export function TagMultiSelect<T extends TagId>({
   placeholder = '请选择标签...',
 }: TagMultiSelectProps<T>) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const resolvedTags = (tags ?? allTags ?? []).filter(
-    (tag) => tag.is_active !== false && tag.is_deleted !== true
+  const resolvedTags = useMemo(
+    () =>
+      (tags ?? allTags ?? []).filter(
+        (tag) => tag.is_active !== false && tag.is_deleted !== true
+      ),
+    [allTags, tags]
   );
   const handleTagsChange = onTagsChange ?? onTagsUpdated;
 
@@ -224,13 +228,17 @@ export function TagMultiSelect<T extends TagId>({
   const totalTags = localTags.length;
   const canSearch = totalTags > 10;
 
+  const groupedTags = useMemo(() => {
+    if (!modalVisible) return [];
+    return buildGroups(localTags);
+  }, [localTags, modalVisible]);
+
   const visibleGroups = useMemo(() => {
-    const groups = buildGroups(localTags);
     const keyword = search.trim().toLowerCase();
 
-    if (!keyword) return groups;
+    if (!keyword) return groupedTags;
 
-    return groups
+    return groupedTags
       .map((group) => {
         const groupMatches = group.label.toLowerCase().includes(keyword);
         if (groupMatches) return group;
@@ -246,7 +254,7 @@ export function TagMultiSelect<T extends TagId>({
         };
       })
       .filter((group) => group.tags.length > 0);
-  }, [localTags, search]);
+  }, [groupedTags, search]);
 
   const toggleTag = (tagId: T) => {
     if (disabled) return;
@@ -275,7 +283,10 @@ export function TagMultiSelect<T extends TagId>({
   const draftSelectionHint = maxSelect
     ? `已选 ${(draftValue ?? []).length}/${maxSelect}`
     : `已选 ${(draftValue ?? []).length}`;
-  const selectedTags = localTags.filter((tag) => selectedSet.has(String(tag.id)));
+  const selectedTags = useMemo(
+    () => localTags.filter((tag) => selectedSet.has(String(tag.id))),
+    [localTags, selectedSet]
+  );
 
   return (
     <>
@@ -323,6 +334,7 @@ export function TagMultiSelect<T extends TagId>({
         open={modalVisible}
         title="选择标签"
         onCancel={() => setModalVisible(false)}
+        destroyOnHidden
         footer={[
           <button
             key="cancel"
