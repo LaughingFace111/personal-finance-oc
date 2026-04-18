@@ -478,8 +478,6 @@ const StagingImportRow = React.memo(
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-import React from 'react';
-
 export function StagingImportTable() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
