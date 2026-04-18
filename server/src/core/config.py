@@ -40,6 +40,11 @@ class Settings(BaseSettings):
         "http://3bcb25cc.r38.cpolar.top",
         "https://6da580c3.r38.cpolar.top",
         "http://6da580c3.r38.cpolar.top",
+        # 2026-04-18 新隧道
+        "https://2f3ef6a.r38.cpolar.top",
+        "http://2f3ef6a.r38.cpolar.top",
+        "https://69c36dc8.r9.cpolar.cn",
+        "http://69c36dc8.r9.cpolar.cn",
     ]
 
     class Config:
