@@ -1,8 +1,11 @@
 import { message } from 'antd';
-import { router } from '../router';
 
 // Get token from localStorage (same as App.tsx)
 const getToken = () => localStorage.getItem('token');
+
+function redirectToLogin() {
+  window.location.replace('/login');
+}
 
 interface FetchOptions extends RequestInit {
   requireAuth?: boolean;
@@ -47,7 +50,7 @@ export async function apiJson<T = any>(url: string, options: FetchOptions = {}):
   if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token');
     message.error('登录已失效，请重新登录');
-    router.navigate('/login');
+    redirectToLogin();
     throw new Error('AUTH_EXPIRED');
   }
 
@@ -133,7 +136,7 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
   if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token');
     message.error('登录已失效，请重新登录');
-    router.navigate('/login');
+    redirectToLogin();
     throw new Error('AUTH_EXPIRED');
   }
 
