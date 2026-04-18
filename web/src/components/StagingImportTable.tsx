@@ -1,9 +1,9 @@
-import { CSSProperties, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Select, Tag, message } from 'antd';
+import { Tag, message } from 'antd';
 import { apiGet, apiPost, apiUpload } from '../services/api';
-import { TagCreateModal } from './TagCreateModal';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
+import { TagMultiSelect } from './TagMultiSelect';
 import { getDefaultBookId, TagOption } from '../pages/transactionFormSupport';
 
 type Account = {
@@ -171,10 +171,314 @@ const styles = {
     marginTop: '6px',
     lineHeight: 1.4,
   },
-  selectControl: {
-    width: '100%',
-  } satisfies CSSProperties,
 } as const;
+
+// ─── Individual row component (memoized) ─────────────────────────────────────
+
+type StagingImportRowProps = {
+  row: ParsedItem;
+  isSelected: boolean;
+  categoryById: Map<string, Category>;
+  accountById: Map<string, Account>;
+  accounts: Account[];
+  tags: SelectTagOption[];
+  bookId: string | null;
+  onToggleSelect: (tempId: string, selected: boolean) => void;
+  onUpdateRow: (tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => void;
+  onTagsUpdated: (nextTags: SelectTagOption[]) => void;
+  onOpenCategoryPicker: (tempId: string) => void;
+};
+
+const StagingImportRow = React.memo(
+  ({ row, isSelected, categoryById, accountById, accounts, tags, bookId, onToggleSelect, onUpdateRow, onTagsUpdated, onOpenCategoryPicker }: StagingImportRowProps) => {
+    const issues = useMemo(() => getRowIssues(row), [row]);
+    const hasRefundWarning = useMemo(
+      () => row.warnings.some(w => w.includes('疑似退款') || w.includes('is_orphan')),
+      [row.warnings]
+    );
+    const hasIssue = issues.length > 0 || hasRefundWarning;
+    const selectedTagIds = useMemo(
+      () =>
+        row.tags
+          .map((tagName) => tags.find((tag) => tag.name === tagName)?.id)
+          .filter((tagId): tagId is string => Boolean(tagId)),
+      [row.tags, tags],
+    );
+
+    const handleDirectionChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextDirection = e.target.value;
+      const nextCategoryType = getCategoryTypeByDirection(nextDirection);
+      const currentCategory = row.categoryId ? categoryById.get(row.categoryId) : null;
+      const canKeepCategory =
+        currentCategory &&
+        (currentCategory.category_type === nextCategoryType ||
+          currentCategory.category_type === 'income_expense');
+
+      onUpdateRow(row.tempId, {
+        direction: nextDirection,
+        categoryId: canKeepCategory ? row.categoryId : null,
+        categoryName: canKeepCategory ? row.categoryName : null,
+        categoryMatchStatus: canKeepCategory && row.categoryId ? 'MATCHED' : 'UNMATCHED',
+      });
+    }, [row.tempId, row.categoryId, row.categoryName, categoryById, onUpdateRow]);
+
+    const handleAccountChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextAccountId = e.target.value || null;
+      const selected = nextAccountId ? accountById.get(nextAccountId) : null;
+      onUpdateRow(row.tempId, {
+        matchedAccountId: nextAccountId,
+        matchedAccountName: selected?.name || null,
+        accountMatchStatus: nextAccountId ? 'MATCHED' : 'UNMATCHED',
+      });
+    }, [row.tempId, accountById, onUpdateRow]);
+
+    const handleDateChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      onUpdateRow(row.tempId, { billDate: fromInputDateTime(e.target.value) });
+    }, [row.tempId, onUpdateRow]);
+
+    const handleAmountChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      if (value === '') {
+        onUpdateRow(row.tempId, { amount: 0 });
+        return;
+      }
+      const nextAmount = Number(value);
+      if (!Number.isNaN(nextAmount)) {
+        onUpdateRow(row.tempId, { amount: nextAmount });
+      }
+    }, [row.tempId, onUpdateRow]);
+
+    const handleCounterpartyChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      onUpdateRow(row.tempId, { counterparty: e.target.value || null });
+    }, [row.tempId, onUpdateRow]);
+
+    const handleDescChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      onUpdateRow(row.tempId, { itemDesc: e.target.value });
+    }, [row.tempId, onUpdateRow]);
+
+    const handleCheckboxChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      onToggleSelect(row.tempId, e.target.checked);
+    }, [row.tempId, onToggleSelect]);
+
+    return (
+      <div
+        style={{
+          border: `1px solid ${hasIssue ? 'rgba(245, 158, 11, 0.35)' : 'var(--border-color)'}`,
+          borderRadius: '12px',
+          padding: '14px',
+          background: hasIssue ? 'rgba(245, 158, 11, 0.08)' : 'var(--bg-elevated)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={handleCheckboxChange}
+            />
+            <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{row.tempId}</span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              {formatDirection(row.direction)}
+            </span>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              {row.tradeStatus || '待导入'}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <span
+              style={{
+                padding: '4px 8px',
+                borderRadius: '999px',
+                background: row.accountMatchStatus === 'MATCHED' ? 'rgba(22, 163, 74, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                color: row.accountMatchStatus === 'MATCHED' ? '#15803d' : '#b45309',
+                fontSize: '11px',
+                fontWeight: 600,
+              }}
+            >
+              账户 {row.accountMatchStatus}
+            </span>
+            <span
+              style={{
+                padding: '4px 8px',
+                borderRadius: '999px',
+                background: row.categoryMatchStatus === 'MATCHED' ? 'rgba(22, 163, 74, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                color: row.categoryMatchStatus === 'MATCHED' ? '#15803d' : '#b45309',
+                fontSize: '11px',
+                fontWeight: 600,
+              }}
+            >
+              分类 {row.categoryMatchStatus}
+            </span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: '12px',
+          }}
+        >
+          <div>
+            <div style={styles.label}>日期</div>
+            <input
+              style={styles.input}
+              type="date"
+              value={toInputDateTime(row.billDate)}
+              onChange={handleDateChange}
+            />
+          </div>
+
+          <div>
+            <div style={styles.label}>方向</div>
+            <select
+              style={styles.select}
+              value={row.direction}
+              onChange={handleDirectionChange}
+            >
+              <option value="out">支出</option>
+              <option value="in">收入</option>
+            </select>
+          </div>
+
+          <div>
+            <div style={styles.label}>金额</div>
+            <input
+              style={styles.input}
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={row.amount ?? ''}
+              onChange={handleAmountChange}
+            />
+          </div>
+
+          <div>
+            <div style={styles.label}>账户</div>
+            <select
+              style={styles.select}
+              value={row.matchedAccountId || ''}
+              onChange={handleAccountChange}
+            >
+              <option value="">未匹配</option>
+              {accounts.map(account => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+            <div style={styles.helper}>原始账户：{row.rawAccountName || '-'}</div>
+          </div>
+
+          <div>
+            <div style={styles.label}>类别</div>
+            <button
+              type="button"
+              onClick={() => onOpenCategoryPicker(row.tempId)}
+              style={{
+                ...styles.select,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                textAlign: 'left',
+                width: '100%',
+              }}
+            >
+              <span style={{ color: row.categoryId ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                {row.categoryId ? categoryById.get(row.categoryId)?.name || '未分类' : '点击选择类别'}
+              </span>
+              <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+            </button>
+            <div style={styles.helper}>原始类别：{row.tradeCategory || '-'}</div>
+          </div>
+
+          <div>
+            <div style={styles.label}>标签</div>
+            <TagMultiSelect<string>
+              tags={tags}
+              value={selectedTagIds}
+              onChange={(nextTagIds) => {
+                const nextTagNames = nextTagIds
+                  .map((tagId) => tags.find((tag) => String(tag.id) === String(tagId))?.name)
+                  .filter((tagName): tagName is string => Boolean(tagName));
+                onUpdateRow(row.tempId, { tags: nextTagNames });
+              }}
+              bookId={bookId}
+              onTagsUpdated={onTagsUpdated}
+              placeholder="搜索、选择或创建标签"
+            />
+          </div>
+
+          <div>
+            <div style={styles.label}>交易对方</div>
+            <input
+              style={styles.input}
+              value={row.counterparty || ''}
+              placeholder="交易对方"
+              onChange={handleCounterpartyChange}
+            />
+            <div style={styles.helper}>对方账户：{row.counterpartyAccount || '-'}</div>
+          </div>
+
+          <div style={{ gridColumn: '1 / -1' }}>
+            <div style={styles.label}>描述</div>
+            <input
+              style={styles.input}
+              value={row.itemDesc || ''}
+              placeholder="描述"
+              onChange={handleDescChange}
+            />
+            <div style={styles.helper}>
+              单号：{row.orderNo || '-'}{row.merchantOrderNo ? ` | 商户单号：${row.merchantOrderNo}` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: row.direction === 'in' ? '#15803d' : '#b91c1c' }}>
+            金额：¥{Number(row.amount || 0).toFixed(2)}
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            当前账户：{row.matchedAccountName || row.rawAccountName || '-'} | 当前类别：{row.categoryName || row.tradeCategory || '-'}
+          </div>
+        </div>
+
+        {issues.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {issues.map((issue, idx) => (
+              <div key={`${row.tempId}-issue-${idx}`} style={{ fontSize: '12px', color: '#b45309' }}>
+                {issue}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {hasRefundWarning && (
+          <div>
+            <Tag color="warning">⚠️ 该订单疑似退款订单/已退款订单，请分辨</Tag>
+          </div>
+        )}
+      </div>
+    );
+  },
+  (prevProps, nextProps) => {
+    // Custom comparator: only re-render when row data or selection actually changes
+    return (
+      prevProps.row === nextProps.row &&
+      prevProps.isSelected === nextProps.isSelected &&
+      prevProps.accounts === nextProps.accounts
+    );
+  }
+);
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+import React from 'react';
 
 export function StagingImportTable() {
   const navigate = useNavigate();
@@ -195,8 +499,8 @@ export function StagingImportTable() {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [bookId, setBookId] = useState<string | null>(null);
   const [tags, setTags] = useState<SelectTagOption[]>([]);
-  const [tagSearchValues, setTagSearchValues] = useState<Record<string, string>>({});
-  const [tagCreateState, setTagCreateState] = useState<{ rowId: string; name: string } | null>(null);
+
+  // ── Data fetching ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     apiGet<Account[]>('/api/accounts').then(setAccounts).catch(() => setAccounts([]));
@@ -243,6 +547,8 @@ export function StagingImportTable() {
       .catch(() => setRows([]));
   }, [parseId]);
 
+  // ── Memoized lookups ─────────────────────────────────────────────────────────
+
   const categoryById = useMemo(() => {
     const map = new Map<string, Category>();
     categories.forEach(category => map.set(category.id, category));
@@ -255,19 +561,16 @@ export function StagingImportTable() {
     return map;
   }, [accounts]);
 
-  const tagByName = useMemo(() => {
-    const map = new Map<string, SelectTagOption>();
-    tags.forEach((tag) => map.set(tag.name, tag));
-    return map;
-  }, [tags]);
-
+  // Sync selectedRowIds when rows change
   const rowIdKey = useMemo(() => rows.map(row => row.tempId).join('|'), [rows]);
 
   useEffect(() => {
     setSelectedRowIds(new Set(rows.map(row => row.tempId)));
   }, [rowIdKey]);
 
-  const updateRow = (tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => {
+  // ── Row operations ────────────────────────────────────────────────────────────
+
+  const updateRow = useCallback((tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => {
     setRows(prev =>
       prev.map(row => {
         if (row.tempId !== tempId) return row;
@@ -277,7 +580,29 @@ export function StagingImportTable() {
         return nextRow;
       })
     );
-  };
+  }, []);
+
+  const toggleRowSelect = useCallback((tempId: string, selected: boolean) => {
+    setSelectedRowIds(prev => {
+      const next = new Set(prev);
+      if (selected) next.add(tempId);
+      else next.delete(tempId);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback((selected: boolean) => {
+    setSelectedRowIds(selected ? new Set(rows.map(row => row.tempId)) : new Set());
+  }, [rows]);
+
+  // ── Category picker ──────────────────────────────────────────────────────────
+
+  const openCategoryPicker = useCallback((tempId: string) => {
+    setEditingRowId(tempId);
+    setCategoryModalOpen(true);
+  }, []);
+
+  // ── Import operations ────────────────────────────────────────────────────────
 
   const onParse = async () => {
     if (!file) {
@@ -355,9 +680,41 @@ export function StagingImportTable() {
     }
   };
 
+  // ── Tag refresh after creation ────────────────────────────────────────────────
+
+  const refreshTags = useCallback(async () => {
+    const url = bookId ? `/api/tags?book_id=${bookId}` : '/api/tags';
+    const latestTags = await apiGet<TagOption[]>(url).catch(() => []);
+    const list = latestTags || [];
+    setTags(
+      list.map((tag) => {
+        const parent = list.find((item) => item.id === tag.parent_id);
+        return {
+          ...tag,
+          displayLabel: parent ? `${parent.name} / ${tag.name}` : tag.name,
+        };
+      }),
+    );
+  }, [bookId]);
+
+  const handleTagsUpdated = useCallback((nextTags: SelectTagOption[]) => {
+    const normalizedTags = nextTags.map((tag) => {
+      const parent = nextTags.find((item) => item.id === tag.parent_id);
+      return {
+        ...tag,
+        displayLabel: parent ? `${parent.name} / ${tag.name}` : tag.name,
+      };
+    });
+    setTags(normalizedTags);
+  }, []);
+
+  // ── Derived state ────────────────────────────────────────────────────────────
+
   const selectedCount = selectedRowIds.size;
   const allSelected = rows.length > 0 && selectedCount === rows.length;
   const partiallySelected = selectedCount > 0 && selectedCount < rows.length;
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -376,6 +733,7 @@ export function StagingImportTable() {
             onChange={e => setBillType(e.target.value)}
           >
             <option value="alipay">支付宝</option>
+            <option value="alipay_pouch">支付宝小荷包</option>
             <option value="wechat">微信</option>
             <option value="jd">京东</option>
             <option value="custom">自定义</option>
@@ -438,341 +796,29 @@ export function StagingImportTable() {
                   if (el) el.indeterminate = partiallySelected;
                 }}
                 checked={allSelected}
-                onChange={e => {
-                  setSelectedRowIds(e.target.checked ? new Set(rows.map(row => row.tempId)) : new Set());
-                }}
+                onChange={e => toggleSelectAll(e.target.checked)}
               />
               全选 / 取消全选
             </label>
           </div>
 
           <div style={{ display: 'grid', gap: '12px' }}>
-            {rows.map(row => {
-              const issues = getRowIssues(row);
-              const hasRefundWarning = row.warnings.some(
-                warning => warning.includes('疑似退款') || warning.includes('is_orphan'),
-              );
-              const hasIssue = issues.length > 0 || hasRefundWarning;
-              const tagSearchValue = tagSearchValues[row.tempId] || '';
-              const filteredTagOptions = tags.filter((tag) =>
-                tag.displayLabel.toLowerCase().includes(tagSearchValue.toLowerCase()) ||
-                tag.name.toLowerCase().includes(tagSearchValue.toLowerCase()),
-              );
-
-              return (
-                <div
-                  key={row.tempId}
-                  style={{
-                    border: `1px solid ${hasIssue ? 'rgba(245, 158, 11, 0.35)' : 'var(--border-color)'}`,
-                    borderRadius: '12px',
-                    padding: '14px',
-                    background: hasIssue ? 'rgba(245, 158, 11, 0.08)' : 'var(--bg-elevated)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedRowIds.has(row.tempId)}
-                        onChange={e => {
-                          setSelectedRowIds(prev => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(row.tempId);
-                            else next.delete(row.tempId);
-                            return next;
-                          });
-                        }}
-                      />
-                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{row.tempId}</span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        {formatDirection(row.direction)}
-                      </span>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        {row.tradeStatus || '待导入'}
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <span
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '999px',
-                          background: row.accountMatchStatus === 'MATCHED' ? 'rgba(22, 163, 74, 0.12)' : 'rgba(245, 158, 11, 0.12)',
-                          color: row.accountMatchStatus === 'MATCHED' ? '#15803d' : '#b45309',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                        }}
-                      >
-                        账户 {row.accountMatchStatus}
-                      </span>
-                      <span
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: '999px',
-                          background: row.categoryMatchStatus === 'MATCHED' ? 'rgba(22, 163, 74, 0.12)' : 'rgba(245, 158, 11, 0.12)',
-                          color: row.categoryMatchStatus === 'MATCHED' ? '#15803d' : '#b45309',
-                          fontSize: '11px',
-                          fontWeight: 600,
-                        }}
-                      >
-                        分类 {row.categoryMatchStatus}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                      gap: '12px',
-                    }}
-                  >
-                    <div>
-                      <div style={styles.label}>日期</div>
-                      <input
-                        style={styles.input}
-                        type="date"
-                        value={toInputDateTime(row.billDate)}
-                        onChange={e => updateRow(row.tempId, { billDate: fromInputDateTime(e.target.value) })}
-                      />
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>方向</div>
-                      <select
-                        style={styles.select}
-                        value={row.direction}
-                        onChange={e =>
-                          updateRow(row.tempId, currentRow => {
-                            const nextDirection = e.target.value;
-                            const nextCategoryType = getCategoryTypeByDirection(nextDirection);
-                            const currentCategory = currentRow.categoryId ? categoryById.get(currentRow.categoryId) : null;
-                            const canKeepCategory =
-                              currentCategory &&
-                              (currentCategory.category_type === nextCategoryType ||
-                                currentCategory.category_type === 'income_expense');
-
-                            return {
-                              direction: nextDirection,
-                              categoryId: canKeepCategory ? currentRow.categoryId : null,
-                              categoryName: canKeepCategory ? currentRow.categoryName : null,
-                              categoryMatchStatus: canKeepCategory && currentRow.categoryId ? 'MATCHED' : 'UNMATCHED',
-                            };
-                          })
-                        }
-                      >
-                        <option value="out">支出</option>
-                        <option value="in">收入</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>金额</div>
-                      <input
-                        style={styles.input}
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={row.amount ?? ''}
-                        onChange={e => {
-                          const value = e.target.value;
-                          if (value === '') {
-                            updateRow(row.tempId, { amount: 0 });
-                            return;
-                          }
-                          const nextAmount = Number(value);
-                          if (!Number.isNaN(nextAmount)) {
-                            updateRow(row.tempId, { amount: nextAmount });
-                          }
-                        }}
-                      />
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>账户</div>
-                      <select
-                        style={styles.select}
-                        value={row.matchedAccountId || ''}
-                        onChange={e => {
-                          const nextAccountId = e.target.value || null;
-                          const selected = nextAccountId ? accountById.get(nextAccountId) : null;
-                          updateRow(row.tempId, {
-                            matchedAccountId: nextAccountId,
-                            matchedAccountName: selected?.name || null,
-                            accountMatchStatus: nextAccountId ? 'MATCHED' : 'UNMATCHED',
-                          });
-                        }}
-                      >
-                        <option value="">未匹配</option>
-                        {accounts.map(account => (
-                          <option key={account.id} value={account.id}>
-                            {account.name}
-                          </option>
-                        ))}
-                      </select>
-                      <div style={styles.helper}>原始账户：{row.rawAccountName || '-'}</div>
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>类别</div>
-                      <div
-                        style={styles.select}
-                        onClick={() => {
-                          setEditingRowId(row.tempId);
-                          setCategoryModalOpen(true);
-                        }}
-                      >
-                        {row.categoryId ? categoryById.get(row.categoryId)?.name || '未分类' : '点击选择类别'}
-                      </div>
-                      <div style={styles.helper}>原始类别：{row.tradeCategory || '-'}</div>
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>标签</div>
-                      <Select
-                        mode="multiple"
-                        showSearch
-                        value={row.tags || []}
-                        searchValue={tagSearchValue}
-                        placeholder="搜索、选择或创建标签"
-                        style={styles.selectControl}
-                        optionFilterProp="label"
-                        filterOption={false}
-                        onSearch={(value) =>
-                          setTagSearchValues((current) => ({ ...current, [row.tempId]: value }))
-                        }
-                        onChange={(value) => updateRow(row.tempId, { tags: value.map(String) })}
-                        onBlur={() =>
-                          setTagSearchValues((current) => ({ ...current, [row.tempId]: '' }))
-                        }
-                        options={filteredTagOptions.map((tag) => ({
-                          value: tag.name,
-                          label: tag.displayLabel,
-                        }))}
-                        maxTagCount="responsive"
-                        dropdownRender={(menu) => (
-                          <div>
-                            {menu}
-                            <div
-                              onMouseDown={(event) => event.preventDefault()}
-                              onClick={() =>
-                                setTagCreateState({
-                                  rowId: row.tempId,
-                                  name: tagSearchValue.trim(),
-                                })
-                              }
-                              style={{
-                                borderTop: '1px solid var(--border-light)',
-                                padding: '10px 12px',
-                                color: 'var(--accent-color)',
-                                cursor: 'pointer',
-                                fontSize: '13px',
-                                fontWeight: 600,
-                              }}
-                            >
-                              添加标签
-                              {tagSearchValue.trim() ? ` “${tagSearchValue.trim()}”` : ''}
-                            </div>
-                          </div>
-                        )}
-                        tagRender={({ value, closable, onClose }) => {
-                          const tagName = String(value);
-                          const tag = tagByName.get(tagName);
-                          return (
-                            <span
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                borderRadius: '999px',
-                                border: '1px solid var(--border-color)',
-                                background: 'var(--bg-card)',
-                                padding: '4px 10px',
-                                color: 'var(--text-primary)',
-                                fontSize: '12px',
-                                marginInlineEnd: '6px',
-                                marginBlock: '2px',
-                              }}
-                            >
-                              {tag?.displayLabel || tagName}
-                              {closable ? (
-                                <button
-                                  type="button"
-                                  onMouseDown={(event) => event.preventDefault()}
-                                  onClick={onClose}
-                                  style={{
-                                    border: 'none',
-                                    background: 'transparent',
-                                    color: 'var(--text-tertiary)',
-                                    cursor: 'pointer',
-                                    padding: 0,
-                                    lineHeight: 1,
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              ) : null}
-                            </span>
-                          );
-                        }}
-                      />
-                    </div>
-
-                    <div>
-                      <div style={styles.label}>交易对方</div>
-                      <input
-                        style={styles.input}
-                        value={row.counterparty || ''}
-                        placeholder="交易对方"
-                        onChange={e => updateRow(row.tempId, { counterparty: e.target.value || null })}
-                      />
-                      <div style={styles.helper}>对方账户：{row.counterpartyAccount || '-'}</div>
-                    </div>
-
-                    <div style={{ gridColumn: '1 / -1' }}>
-                      <div style={styles.label}>描述</div>
-                      <input
-                        style={styles.input}
-                        value={row.itemDesc || ''}
-                        placeholder="描述"
-                        onChange={e => updateRow(row.tempId, { itemDesc: e.target.value })}
-                      />
-                      <div style={styles.helper}>
-                        单号：{row.orderNo || '-'}{row.merchantOrderNo ? ` | 商户单号：${row.merchantOrderNo}` : ''}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: row.direction === 'in' ? '#15803d' : '#b91c1c' }}>
-                      金额：¥{Number(row.amount || 0).toFixed(2)}
-                    </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                      当前账户：{row.matchedAccountName || row.rawAccountName || '-'} | 当前类别：{row.categoryName || row.tradeCategory || '-'}
-                    </div>
-                  </div>
-
-                  {issues.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {issues.map((issue, idx) => (
-                        <div key={`${row.tempId}-issue-${idx}`} style={{ fontSize: '12px', color: '#b45309' }}>
-                          {issue}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {hasRefundWarning && (
-                    <div>
-                      <Tag color="warning">⚠️ 该订单疑似退款订单/已退款订单，请分辨</Tag>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {rows.map(row => (
+              <StagingImportRow
+                key={row.tempId}
+                row={row}
+                isSelected={selectedRowIds.has(row.tempId)}
+                categoryById={categoryById}
+                accountById={accountById}
+                accounts={accounts}
+                tags={tags}
+                bookId={bookId}
+                onToggleSelect={toggleRowSelect}
+                onUpdateRow={updateRow}
+                onTagsUpdated={handleTagsUpdated}
+                onOpenCategoryPicker={openCategoryPicker}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -783,41 +829,11 @@ export function StagingImportTable() {
         </div>
       )}
 
-      <TagCreateModal
-        open={!!tagCreateState}
-        bookId={bookId}
-        initialName={tagCreateState?.name || ''}
-        onCancel={() => setTagCreateState(null)}
-        onCreated={async (createdTag) => {
-          const url = bookId ? `/api/tags?book_id=${bookId}` : '/api/tags';
-          const latestTags = await apiGet<TagOption[]>(url).catch(() => []);
-          const list = latestTags || [];
-          setTags(
-            list.map((tag) => {
-              const parent = list.find((item) => item.id === tag.parent_id);
-              return {
-                ...tag,
-                displayLabel: parent ? `${parent.name} / ${tag.name}` : tag.name,
-              };
-            }),
-          );
-          if (tagCreateState) {
-            updateRow(tagCreateState.rowId, (currentRow) => ({
-              tags: currentRow.tags.includes(createdTag.name)
-                ? currentRow.tags
-                : [...currentRow.tags, createdTag.name],
-            }));
-            setTagSearchValues((current) => ({ ...current, [tagCreateState.rowId]: '' }));
-          }
-          setTagCreateState(null);
-        }}
-      />
-
       <HierarchyPickerModal
         open={categoryModalOpen}
         title="选择类别"
         items={(() => {
-          const editingRow = editingRowId ? rows.find(r => r.tempId === editingRowId) : null;
+          const editingRow = editingRowId ? rows.find(r => r.tempId === editingRowId)          : null;
           const direction = editingRow?.direction || 'out';
           const categoryType = getCategoryTypeByDirection(direction);
           return categories.filter(cat => cat.category_type === categoryType || cat.category_type === 'income_expense');
@@ -842,6 +858,7 @@ export function StagingImportTable() {
           setEditingRowId(null);
         }}
       />
+
     </div>
   );
 }

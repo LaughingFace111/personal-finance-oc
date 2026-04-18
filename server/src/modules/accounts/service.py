@@ -113,13 +113,13 @@ def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
     is_credit = data.account_type.value in ["credit_card", "credit_line"]
     is_loan = data.account_type.value == "loan"
 
-    # 信用类账户：opening_balance = 初始欠款（用于 get_balance_trend 和 rebuild 的口径一致）
-    #       debt_amount = 0（create_transaction 会通过交易 Effect 累加债务）
+    # 信用类账户：debt_amount = 初始欠款（前端/各处计算可用额度用此字段）
+    #       opening_balance = 0（余额趋势图基线，从 0 开始叠加交易）
     # 贷款类账户：opening_balance = 0, debt_amount = 初始本金
     # 非信用/贷款类账户：opening_balance 存入 current_balance, debt_amount = 0
     if is_credit:
-        opening_balance = data.opening_balance or Decimal("0")
-        debt_amount = Decimal("0")  # create_transaction 通过交易 Effect 累加债务
+        opening_balance = Decimal("0")  # 趋势图基线 = 0
+        debt_amount = data.opening_balance or Decimal("0")  # 初始欠款写入 debt_amount
     elif is_loan:
         opening_balance = Decimal("0")
         debt_amount = data.opening_balance or Decimal("0")  # 初始本金存入 debt_amount

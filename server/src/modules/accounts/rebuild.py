@@ -158,31 +158,34 @@ def rebuild_account_balance(db: Session, account_id: str) -> Dict:
     ).order_by(Transaction.occurred_at.asc(), Transaction.created_at.asc()).all()
 
     # Calculate new balance/debt
+    # IMPORTANT: For credit accounts, we DO NOT replay transactions.
+    # create_transaction already applies effects to debt_amount in real-time.
+    # Rebuilding would double-count: transaction effects were already applied.
+    # For credit accounts: new_debt = current debt_amount (no replay needed).
+    # For loan accounts: replay loan BORROW transactions from opening_balance.
+    # For asset accounts: replay all transactions.
     new_balance = account.opening_balance
-    # Loan accounts: opening_balance holds the initial principal
-    # Credit accounts: opening_balance holds the initial debt
-    #   (create_account now sets opening_balance=initial_debt for credit accounts,
-    #    so rebuild stays consistent with get_balance_trend's opening_balance baseline)
-    # Other accounts: debt starts at 0
     if _is_loan_account(account.account_type):
-        new_debt = Decimal(str(account.opening_balance or 0))
+        new_debt = Decimal(str(account.opening_balance or 0))  # loan: opening_balance = initial principal
     elif _is_credit_account(account.account_type):
-        new_debt = Decimal(str(account.opening_balance or 0))
+        new_debt = Decimal(str(account.debt_amount or 0))  # credit: preserve current debt (no replay)
     else:
         new_debt = Decimal("0")
 
     account_type = account.account_type
 
-    for txn in txns:
-        is_primary = txn.account_id == account_id
-        new_balance, new_debt = _apply_rebuild_delta(
-            account_id=account_id,
-            account_type=account_type,
-            txn=txn,
-            is_primary=is_primary,
-            balance=new_balance,
-            debt=new_debt,
-        )
+    # Skip transaction replay for credit accounts (real-time updates already applied)
+    if not _is_credit_account(account.account_type):
+        for txn in txns:
+            is_primary = txn.account_id == account_id
+            new_balance, new_debt = _apply_rebuild_delta(
+                account_id=account_id,
+                account_type=account_type,
+                txn=txn,
+                is_primary=is_primary,
+                balance=new_balance,
+                debt=new_debt,
+            )
 
     if _is_loan_account(account_type):
         principal_remaining = db.query(LoanPlan).filter(

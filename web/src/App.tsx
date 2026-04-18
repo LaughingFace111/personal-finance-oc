@@ -5,6 +5,7 @@ import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutl
 import { useState, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
 import { HierarchyPickerModal } from './components/HierarchyPickerModal'
+import { TagMultiSelect } from './components/TagMultiSelect'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
@@ -969,7 +970,6 @@ const TransactionFormPage = () => {
   const [tags, setTags] = useState<any[]>([])
   const [form, setForm] = useState({ type: 'expense', amount: '', account_id: '', category_id: '', note: '', occurred_at: '' })
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
-  const [tagModalOpen, setTagModalOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -1273,48 +1273,40 @@ const TransactionFormPage = () => {
 
         <div style={{ padding: '14px 0', borderBottom: '1px solid var(--border-light)' }}>
           <label className={transactionFormLabelClass}>标签</label>
-          <button
-            type="button"
-            onClick={() => setTagModalOpen(true)}
-            className={`${transactionFormFieldClass} h-auto min-h-11 py-3`}
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: '12px',
-              textAlign: 'left',
-            }}
-          >
-            <span
+          <TagMultiSelect
+            allTags={tags}
+            value={selectedTagIds}
+            onChange={setSelectedTagIds}
+            onTagsUpdated={setTags}
+            bookId={bookId}
+            placeholder="搜索、选择或创建标签"
+          />
+          {selectedTagLabels.length > 0 ? (
+            <div
               style={{
+                marginTop: '8px',
                 display: 'flex',
                 flexWrap: 'wrap',
                 gap: '8px',
-                color:
-                  selectedTagLabels.length > 0
-                    ? 'var(--text-primary)'
-                    : 'var(--text-tertiary)',
               }}
             >
-              {selectedTagLabels.length > 0
-                ? selectedTagLabels.map((label) => (
-                    <span
-                      key={label}
-                      style={{
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '999px',
-                        background: 'var(--bg-elevated)',
-                        padding: '4px 10px',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {label}
-                    </span>
-                  ))
-                : '点击选择标签'}
-            </span>
-            <span style={{ color: 'var(--text-tertiary)', lineHeight: '28px' }}>›</span>
-          </button>
+              {selectedTagLabels.map((label) => (
+                <span
+                  key={label}
+                  style={{
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '999px',
+                    background: 'var(--bg-elevated)',
+                    padding: '4px 10px',
+                    fontSize: '12px',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div style={{ padding: '14px 0' }}>
@@ -1340,20 +1332,6 @@ const TransactionFormPage = () => {
           onClick={handleSubmit}
         >{isEditMode ? '保存修改' : '记一笔'}</Button>
       </div>
-
-      <HierarchyPickerModal
-        open={tagModalOpen}
-        title="选择标签"
-        items={tags}
-        value={selectedTagIds}
-        multiple
-        emptyText="暂无可选标签"
-        onCancel={() => setTagModalOpen(false)}
-        onConfirm={(nextValue) => {
-          setSelectedTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : [])
-          setTagModalOpen(false)
-        }}
-      />
     </div>
   )
 }

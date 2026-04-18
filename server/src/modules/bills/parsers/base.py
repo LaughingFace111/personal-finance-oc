@@ -24,6 +24,8 @@ class BillRecord:
     merchant_order_no: Optional[str]
     payment_method: Optional[str]
     note: Optional[str]
+    operator_nickname: Optional[str] = None
+    operator_name: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
 
 

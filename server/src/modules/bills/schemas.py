@@ -55,15 +55,22 @@ class ParsedBillItem(BaseModel):
     merchantOrderNo: Optional[str] = None
     tradeStatus: Optional[str] = None
     rawDirection: Optional[str] = None
+    operatorNickname: Optional[str] = None
+    operatorName: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     ignoreReason: Optional[str] = None
     unresolvedReason: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
 
 
+class ParseBillMetadata(BaseModel):
+    availableOperatorNames: List[str] = Field(default_factory=list)
+
+
 class ParseBillResponse(BaseModel):
     parseId: str
     items: List[ParsedBillItem]
+    metadata: ParseBillMetadata = Field(default_factory=ParseBillMetadata)
 
 
 class MatchBillRequest(BaseModel):
@@ -73,6 +80,7 @@ class MatchBillRequest(BaseModel):
 class ConfirmImportRequest(BaseModel):
     parseId: str
     confirmedItems: List[ParsedBillItem]
+    excludedOperatorNames: List[str] = Field(default_factory=list)
 
 
 class ConfirmImportResponse(BaseModel):

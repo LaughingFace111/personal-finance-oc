@@ -1133,8 +1133,8 @@ def test_rebuild_after_installment_events(db_session, test_book):
 def test_rebuild_credit_account_preserves_initial_debt_without_transactions(db_session, test_book):
     """
     信用账户创建时设置初始欠款，rebuild 后应保留该初始欠款（不做重算丢失）。
-    create_account 对信用账户：opening_balance = 初始欠款，debt_amount = 0。
-    rebuild 对信用账户：new_debt = opening_balance（初始欠款），无交易时保持不变。
+    create_account 对信用账户：opening_balance = 0，debt_amount = 初始欠款。
+    rebuild 对信用账户：new_debt = debt_amount（初始欠款），无交易时保持不变。
     """
     credit = Account(
         id="credit-init-debt-no-txn-001",
@@ -1142,9 +1142,9 @@ def test_rebuild_credit_account_preserves_initial_debt_without_transactions(db_s
         name="初始欠款无交易信用卡",
         account_type=AccountType.CREDIT_CARD.value,
         credit_limit=Decimal("1000"),
-        opening_balance=Decimal("200"),  # initial debt carried in opening_balance
+        opening_balance=Decimal("0"),
         current_balance=Decimal("0"),
-        debt_amount=Decimal("0"),
+        debt_amount=Decimal("200"),  # initial debt now in debt_amount
         frozen_amount=Decimal("0"),
         is_active=True,
     )
@@ -1161,8 +1161,8 @@ def test_rebuild_credit_account_preserves_initial_debt_without_transactions(db_s
 def test_rebuild_credit_account_consistent_with_trend_endpoint(db_session, test_book):
     """
     信用账户 rebuild 后债务值与 get_balance_trend 趋势终点一致。
-    initial debt=50, EXPENSE 200 (+debt), INCOME 100 (-debt) → net 150.
-    rebuild 终点债务 = 150, trend endpoint 债务 = 150。
+    initial debt=50 (in debt_amount), EXPENSE 200 (+debt), INCOME 100 (-debt) → net 150.
+    rebuild 跳过 replay（实时更新已应用），保持当前 debt_amount。
     """
     credit = Account(
         id="credit-init-debt-consistent-001",
@@ -1170,9 +1170,9 @@ def test_rebuild_credit_account_consistent_with_trend_endpoint(db_session, test_
         name="初始欠款一致性信用卡",
         account_type=AccountType.CREDIT_CARD.value,
         credit_limit=Decimal("1000"),
-        opening_balance=Decimal("50"),  # initial debt
+        opening_balance=Decimal("0"),
         current_balance=Decimal("0"),
-        debt_amount=Decimal("0"),
+        debt_amount=Decimal("50"),  # initial debt now in debt_amount
         frozen_amount=Decimal("0"),
         is_active=True,
     )
@@ -1216,7 +1216,7 @@ def test_rebuild_credit_account_consistent_with_trend_endpoint(db_session, test_
         book_id=test_book.id,
     )
 
-    # rebuild 后债务 = 初始 50 + EXPENSE 200 - INCOME 100 = 150
+    # debt_amount after transactions: 50 + 200 - 100 = 150; rebuild preserves it
     assert credit.debt_amount == Decimal("150")
     # trend 终点债务 = 150，balance = 1000 - 150 = 850
     assert float(trend[0]["debt_amount"]) == 150.0
@@ -1235,9 +1235,9 @@ def test_rebuild_credit_account_with_initial_debt_and_transactions(db_session, t
         name="初始欠款多交易信用卡",
         account_type=AccountType.CREDIT_CARD.value,
         credit_limit=Decimal("1000"),
-        opening_balance=Decimal("50"),  # initial debt
+        opening_balance=Decimal("0"),
         current_balance=Decimal("0"),
-        debt_amount=Decimal("0"),
+        debt_amount=Decimal("50"),  # initial debt now in debt_amount
         frozen_amount=Decimal("0"),
         is_active=True,
     )
@@ -1268,7 +1268,7 @@ def test_rebuild_credit_account_with_initial_debt_and_transactions(db_session, t
         book_id=test_book.id,
     )
 
-    # net debt = initial 50 + EXPENSE 200 = 250; balance = 1000 - 250 = 750
+    # net debt = initial 50 + EXPENSE 200 = 250; rebuild preserves it
     assert credit.debt_amount == Decimal("250")
     assert float(trend[0]["debt_amount"]) == 250.0
     assert float(trend[0]["balance"]) == 750.0

@@ -18,10 +18,18 @@ from src.modules.transactions.schemas import TransactionCreate
 from src.modules.transactions.service import create_transaction
 
 from .matchers import AccountMatcher, CategoryMatcher
-from .parsers import AlipayBillParser, BillParser, JdBillParser, StubBillParser, WechatBillParser
+from .parsers import (
+    AlipayBillParser,
+    AlipayPouchBillParser,
+    BillParser,
+    JdBillParser,
+    StubBillParser,
+    WechatBillParser,
+)
 from .schemas import (
     BillImportResponse,
     ConfirmImportResponse,
+    ParseBillMetadata,
     ParseBillResponse,
     ParsedBillItem,
 )
@@ -38,6 +46,8 @@ def get_bill_parser(bill_type: str) -> BillParser:
         return AlipayBillParser()
     if normalized == "wechat":
         return WechatBillParser()
+    if normalized == "alipay_pouch":
+        return AlipayPouchBillParser()
     if normalized == "jd":
         return JdBillParser()
     if normalized == "custom":
@@ -105,10 +115,23 @@ def _build_parsed_item(record, account_matcher: AccountMatcher, category_matcher
         merchantOrderNo=record.merchant_order_no,
         tradeStatus=record.status,
         rawDirection=record.in_out,
+        operatorNickname=record.operator_nickname,
+        operatorName=record.operator_name,
         tags=[],
         unresolvedReason="；".join(unresolved_reasons) if unresolved_reasons else None,
         warnings=warnings,
     )
+
+
+def _build_parse_metadata(items: List[ParsedBillItem]) -> ParseBillMetadata:
+    available_operator_names = sorted(
+        {
+            item.operatorName.strip()
+            for item in items
+            if item.operatorName and item.operatorName.strip()
+        }
+    )
+    return ParseBillMetadata(availableOperatorNames=available_operator_names)
 
 
 def _rebuild_unresolved_reason(item: ParsedBillItem) -> Optional[str]:
@@ -185,7 +208,11 @@ def parse_bill_file(
 
         db.add_all(rows)
         db.commit()
-        return ParseBillResponse(parseId=batch.id, items=items)
+        return ParseBillResponse(
+            parseId=batch.id,
+            items=items,
+            metadata=_build_parse_metadata(items),
+        )
     except SQLAlchemyError as exc:
         db.rollback()
         raise AppException(
@@ -215,7 +242,11 @@ def get_parse_result(db: Session, user_id: str, parse_id: str) -> ParseBillRespo
         .all()
     )
     items = [ParsedBillItem(**json.loads(row.normalized_data or "{}")) for row in rows]
-    return ParseBillResponse(parseId=parse_id, items=items)
+    return ParseBillResponse(
+        parseId=parse_id,
+        items=items,
+        metadata=_build_parse_metadata(items),
+    )
 
 
 def apply_match_rules_to_parse(
@@ -281,7 +312,11 @@ def apply_match_rules_to_parse(
         items.append(item)
 
     db.commit()
-    return ParseBillResponse(parseId=parse_id, items=items)
+    return ParseBillResponse(
+        parseId=parse_id,
+        items=items,
+        metadata=_build_parse_metadata(items),
+    )
 
 
 def _build_business_key(item: ParsedBillItem, bill_type: str, book_id: str) -> str:
@@ -316,6 +351,7 @@ def confirm_import(
     user_id: str,
     parse_id: str,
     confirmed_items: List[ParsedBillItem],
+    excluded_operator_names: Optional[List[str]] = None,
 ) -> ConfirmImportResponse:
     book = get_default_book(db, user_id)
     if not book:
@@ -332,6 +368,9 @@ def confirm_import(
     rows = db.query(ImportRow).filter(ImportRow.batch_id == parse_id).all()
     row_map = {f"row-{row.row_no}": row for row in rows}
     bill_type = batch.source_name or "alipay"
+    excluded_operator_name_set = {
+        name.strip() for name in (excluded_operator_names or []) if name and name.strip()
+    }
 
     imported_rows = 0
     duplicate_rows = 0
@@ -344,6 +383,12 @@ def confirm_import(
         if not row:
             skipped_rows += 1
             warnings.append(f"{item.tempId} 未找到对应缓冲记录，已跳过")
+            continue
+
+        if item.operatorName and item.operatorName.strip() in excluded_operator_name_set:
+            row.confirm_status = "skipped"
+            row.error_message = f"操作人姓名 {item.operatorName} 已排除"
+            skipped_rows += 1
             continue
 
         # 预校验

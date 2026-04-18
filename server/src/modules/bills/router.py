@@ -90,6 +90,7 @@ def confirm_bills_import(
         user_id=current_user.id,
         parse_id=data.parseId,
         confirmed_items=data.confirmedItems,
+        excluded_operator_names=data.excludedOperatorNames,
     )
     
     # 记录审计日志

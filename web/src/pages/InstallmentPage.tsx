@@ -284,12 +284,56 @@ export default function InstallmentPage() {
           </div>
 
           {/* 分期的总期数 */}
-          <div>
-            <label className={transactionFormLabelClass}>分期期数 *</label>
-            <select value={periods} onChange={(e) => setPeriods(Number(e.target.value))} className={transactionFormFieldClass} disabled={isEditMode}>
-              {[3, 6, 9, 12, 18, 24, 36].map((p) => <option key={p} value={p}>{p} 期</option>)}
-            </select>
-          </div>
+          {!isEditMode && (
+            <div>
+              <label className={transactionFormLabelClass}>分期期数 *</label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {[1, 2, 3, 6, 9, 12, 24].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPeriods(p)}
+                    className={`rounded-xl px-3 py-2 text-sm font-semibold transition ${
+                      periods === p
+                        ? 'bg-blue-500 text-white shadow-sm'
+                        : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)] border border-[var(--border-color)]'
+                    }`}
+                  >
+                    {p} 期
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-[var(--text-secondary)]">自定义：</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="240"
+                  value={periods}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (v > 0 && v <= 240) setPeriods(v);
+                  }}
+                  onBlur={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!v || v < 1) setPeriods(1);
+                    else if (v > 240) setPeriods(240);
+                    else setPeriods(v);
+                  }}
+                  className={`${transactionFormFieldClass} w-24`}
+                />
+                <span className="text-sm text-[var(--text-secondary)]">期</span>
+              </div>
+            </div>
+          )}
+          {isEditMode && (
+            <div>
+              <label className={transactionFormLabelClass}>分期期数</label>
+              <div className={`${transactionFormFieldClass} flex items-center`}>
+                <span className="text-[var(--text-primary)]">{periods} 期</span>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className={transactionFormLabelClass}>每月账单日</label>

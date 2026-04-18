@@ -102,7 +102,7 @@ class CreateInstallmentRequest(BaseModel):
     note: Optional[str] = None
     # Plan details
     total_amount: Decimal = Field(..., gt=0)
-    total_periods: int = Field(..., gt=0, le=36)
+    total_periods: int = Field(..., gt=0, le=240)
     fee_per_period: Decimal = Field(default=Decimal("0"), ge=0)
     installment_amount: Decimal = Field(default=Decimal("0"), ge=0)  # 🛡️ L: 每期金额
     principal_per_period: Decimal = Field(default=None, ge=0)  # 🛡️ L: 每期本金，可选

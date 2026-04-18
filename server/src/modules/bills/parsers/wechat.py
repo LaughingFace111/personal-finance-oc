@@ -4,7 +4,7 @@ import re
 import zipfile
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from src.common.enums import TransactionDirection, TransactionType
 
@@ -109,10 +109,6 @@ class WechatBillParser(BillParser):
             if not row_data or not row_data.get("交易时间"):
                 continue
 
-            status = row_data.get("当前状态", "")
-            if status not in self.ACCEPTED_STATUS:
-                continue
-
             trade_type = row_data.get("交易类型", "")
             ignore_reason = self._check_ignore(trade_type, row_data)
             if ignore_reason:
@@ -129,6 +125,11 @@ class WechatBillParser(BillParser):
                     trade_type,
                     row_data.get("商品", ""),
                 )
+
+                status = row_data.get("当前状态", "")
+                warnings: List[str] = []
+                if status == "已全额退款":
+                    warnings.append("该交易状态为已全额退款，请确认是否需要导入")
 
                 raw_records.append(
                     BillRecord(
@@ -147,6 +148,7 @@ class WechatBillParser(BillParser):
                         merchant_order_no=row_data.get("商户单号", "") or None,
                         payment_method=row_data.get("支付方式") or None,
                         note=row_data.get("备注") or None,
+                        warnings=warnings,
                     )
                 )
                 row_num += 1

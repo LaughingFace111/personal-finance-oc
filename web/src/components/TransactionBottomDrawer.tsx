@@ -3,6 +3,7 @@ import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api'
 import { HierarchyPickerModal } from './HierarchyPickerModal'
+import { TagMultiSelect } from './TagMultiSelect'
 import TransferPage from '../pages/TransferPage'
 import OtherTransactionPage from '../pages/OtherTransactionPage'
 import {
@@ -79,7 +80,6 @@ export function TransactionBottomDrawer({
 
   // 弹窗状态
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
-  const [tagModalOpen, setTagModalOpen] = useState(false)
 
   const isTransferTransaction = transaction?.transaction_type === 'transfer'
   const isRepaymentTransaction = transaction?.transaction_type === 'repayment_credit_card'
@@ -90,7 +90,6 @@ export function TransactionBottomDrawer({
     if (!visible) {
       // 弹窗关闭时重置标签状态
       setSelectedTagIds([])
-      setTagModalOpen(false)
       setCategoryModalOpen(false)
     }
   }, [visible])
@@ -252,19 +251,6 @@ export function TransactionBottomDrawer({
     }
     return cat.name
   }
-
-  // 获取标签显示名称
-  const selectedTagLabels = useMemo(() => {
-    return selectedTagIds
-      .map((id) => {
-        const tag = tags.find((item: any) => item.id === id)
-        if (!tag) return ''
-        if (!tag.parent_id) return tag.name
-        const parent = tags.find((item: any) => item.id === tag.parent_id)
-        return parent ? `${parent.name} / ${tag.name}` : tag.name
-      })
-      .filter(Boolean)
-  }, [selectedTagIds, tags])
 
   const validate = () => {
     const errs: Record<string, string> = {}
@@ -588,42 +574,16 @@ export function TransactionBottomDrawer({
               />
             </div>
 
-            {/* 标签选择 - 弹窗选择 */}
+            {/* 标签选择 */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>标签</div>
-              <button
-                type="button"
-                onClick={() => setTagModalOpen(true)}
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid var(--border-color)', fontSize: 15,
-                  background: 'var(--bg-input)', color: 'var(--text-primary)',
-                  display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                  cursor: 'pointer', textAlign: 'left', minHeight: '42px'
-                }}
-              >
-                <span style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>
-                  {selectedTagLabels.length > 0 ? (
-                    selectedTagLabels.map((label) => (
-                      <span
-                        key={label}
-                        style={{
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '999px',
-                          background: 'var(--bg-elevated)',
-                          padding: '2px 10px',
-                          fontSize: 12,
-                        }}
-                      >
-                        {label}
-                      </span>
-                    ))
-                  ) : (
-                    <span style={{ color: 'var(--text-tertiary)' }}>点击选择标签</span>
-                  )}
-                </span>
-                <span style={{ color: 'var(--text-tertiary)', lineHeight: '24px' }}>›</span>
-              </button>
+              <TagMultiSelect
+                allTags={tags}
+                value={selectedTagIds}
+                onChange={setSelectedTagIds}
+                bookId={bookId}
+                placeholder="搜索、选择或创建标签"
+              />
             </div>
 
             {/* 备注输入 */}
@@ -684,20 +644,6 @@ export function TransactionBottomDrawer({
             }}
           /> : null}
 
-          {/* 标签选择弹窗 */}
-          {!isSpecialTransaction ? <HierarchyPickerModal
-            open={tagModalOpen}
-            title="选择标签"
-            items={tags as any}
-            value={selectedTagIds}
-            multiple
-            emptyText="暂无可选标签"
-            onCancel={() => setTagModalOpen(false)}
-            onConfirm={(nextValue) => {
-              setSelectedTagIds(Array.isArray(nextValue) ? nextValue : nextValue ? [nextValue] : [])
-              setTagModalOpen(false)
-            }}
-          /> : null}
         </>
       )}
     </Drawer>

@@ -168,6 +168,146 @@ def build_alipay_pouch_xlsx_bytes(rows):
     return buffer.getvalue()
 
 
+def build_wechat_xlsx_bytes(rows):
+    """
+    构建微信账单 xlsx 格式的字节内容。
+    rows: 列表，每行是一个 list，包含字段顺序：
+    交易时间, 交易类型, 交易对方, 商品, 收/支, 金额(元), 当前状态, 交易单号, 商户单号, 支付方式, 备注
+    """
+    # 微信账单表头
+    headers = [
+        "交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)",
+        "当前状态", "交易单号", "商户单号", "支付方式", "备注",
+    ]
+    all_rows = [headers] + rows
+
+    def column_name(index: int) -> str:
+        name = ""
+        current = index + 1
+        while current > 0:
+            current, remainder = divmod(current - 1, 26)
+            name = chr(ord("A") + remainder) + name
+        return name
+
+    sheet_rows = []
+    for row_idx, row in enumerate(all_rows, start=1):
+        cells = []
+        for col_idx, value in enumerate(row):
+            if value is None or value == "":
+                continue
+            cell_ref = column_name(col_idx) + str(row_idx)
+            value_text = str(value)
+            if isinstance(value, (int, float)) or value_text.replace(".", "", 1).isdigit():
+                cells.append('<c r="' + cell_ref + '"><v>' + escape(value_text) + '</v></c>')
+            else:
+                cells.append(
+                    '<c r="' + cell_ref + '" t="inlineStr"><is><t>' + escape(value_text) + '</t></is></c>'
+                )
+        row_content = "".join(cells)
+        sheet_rows.append("<row r=\"" + str(row_idx) + "\">" + row_content + "</row>")
+
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        "<sheetData>"
+        + "".join(sheet_rows)
+        + "</sheetData>"
+        + "</worksheet>"
+    )
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            "</Types>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            "</Relationships>",
+        )
+        archive.writestr(
+            "xl/workbook.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>'
+            "</workbook>",
+        )
+        archive.writestr(
+            "xl/_rels/workbook.xml.rels",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            "</Relationships>",
+        )
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buffer.getvalue()
+
+def test_wechat_xlsx_does_not_filter_rows_by_status():
+    """验证微信账单解析器不再按状态白名单过滤记录"""
+    parser = WechatBillParser()
+    content = build_wechat_xlsx_bytes([
+        ["2026-04-01 10:00:00", "转账", "张三", "转账给张三", "收入", "100.00", "已转账", "WX20260401001", "", "零钱", ""],
+        ["2026-04-02 11:00:00", "收款", "李四", "收到李四转账", "收入", "200.00", "已到账", "WX20260402001", "", "零钱", ""],
+        ["2026-04-03 12:00:00", "消费", "便利店", "购买零食", "支出", "38.50", "支付成功", "WX20260403001", "", "零钱", ""],
+        ["2026-04-04 13:00:00", "还款", "银行", "信用卡还款", "支出", "500.00", "已存入零钱", "WX20260404001", "", "零钱", ""],
+        ["2026-04-05 14:00:00", "转账", "王五", "转账给王五", "支出", "300.00", "对方已收钱", "WX20260405001", "", "零钱", ""],
+        ["2026-04-06 15:00:00", "微信红包", "群红包", "红包", "收入", "10.00", "已全额退款", "WX20260406001", "", "零钱", ""],
+    ])
+
+    records = parser.parse(content)
+
+    assert len(records) >= 5, f"期望至少5条记录，实际解析出 {len(records)} 条"
+    statuses = {r.status for r in records}
+    # 验证非 ACCEPTED_STATUS 中的状态也出现了
+    assert "已转账" in statuses, f"期望 '已转账' 在结果中，实际状态集合: {statuses}"
+    assert "已到账" in statuses, f"期望 '已到账' 在结果中，实际状态集合: {statuses}"
+
+
+def test_wechat_xlsx_keeps_full_refund_rows_with_warning():
+    """验证'已全额退款'状态的记录被保留且带有 warning"""
+    parser = WechatBillParser()
+    content = build_wechat_xlsx_bytes([
+        ["2026-04-06 15:00:00", "微信红包", "群红包", "红包", "/", "10.00", "已全额退款", "WX20260406001", "", "零钱", ""],
+    ])
+
+    records = parser.parse(content)
+
+    assert len(records) == 1, f"期望1条记录，实际解析出 {len(records)} 条"
+    record = records[0]
+    assert record.status == "已全额退款"
+    assert len(record.warnings) > 0, f"期望有 warnings，实际: {record.warnings}"
+    assert any("已全额退款" in w for w in record.warnings), f"期望 warnings 包含 '已全额退款'，实际: {record.warnings}"
+
+
+def test_wechat_xlsx_multiple_statuses_all_preserved():
+    """验证包含多种不同状态的记录都能被解析，不被过滤"""
+    parser = WechatBillParser()
+    content = build_wechat_xlsx_bytes([
+        ["2026-04-01 10:00:00", "转账", "用户A", "转账", "收入", "100.00", "已转账", "WX001", "", "零钱", ""],
+        ["2026-04-02 11:00:00", "转账", "用户B", "转账", "收入", "200.00", "已到账", "WX002", "", "零钱", ""],
+        ["2026-04-03 12:00:00", "消费", "商店", "购物", "支出", "50.00", "支付成功", "WX003", "", "零钱", ""],
+        ["2026-04-04 13:00:00", "转账", "用户C", "转账", "收入", "88.88", "已存入零钱", "WX004", "", "零钱", ""],
+        ["2026-04-05 14:00:00", "微信红包", "群", "红包", "收入", "5.00", "对方已收钱", "WX005", "", "零钱", ""],
+    ])
+
+    records = parser.parse(content)
+
+    assert len(records) == 5, f"期望5条记录，实际解析出 {len(records)} 条"
+    statuses = {r.status for r in records}
+    expected_statuses = {"已转账", "已到账", "支付成功", "已存入零钱", "对方已收钱"}
+    assert statuses == expected_statuses, f"期望状态集合 {expected_statuses}，实际: {statuses}"
+
+
 def test_parse_bill_file_raises_not_found_when_default_book_missing(db_session):
     with pytest.raises(NotFoundException) as exc_info:
         parse_bill_file(

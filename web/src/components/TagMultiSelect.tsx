@@ -31,6 +31,7 @@ interface TagMultiSelectProps<T extends TagId> {
   disabled?: boolean;
   allTags?: TagItem<T>[];
   onTagsUpdated?: (nextTags: TagItem<T>[]) => void;
+  placeholder?: string;
 }
 
 const DEFAULT_TAG_COLOR = '#3b82f6';
@@ -177,6 +178,7 @@ export function TagMultiSelect<T extends TagId>({
   disabled = false,
   allTags,
   onTagsUpdated,
+  placeholder = '请选择标签...',
 }: TagMultiSelectProps<T>) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const resolvedTags = (tags ?? allTags ?? []).filter(
@@ -302,7 +304,7 @@ export function TagMultiSelect<T extends TagId>({
         }}
       >
         {selectedTags.length === 0 ? (
-          <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>请选择标签...</div>
+          <div style={{ color: 'var(--text-tertiary)', fontSize: '14px' }}>{placeholder}</div>
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {selectedTags.map((tag) => (
