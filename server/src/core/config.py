@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         "http://2f3ef6a.r38.cpolar.top",
         "https://69c36dc8.r9.cpolar.cn",
         "http://69c36dc8.r9.cpolar.cn",
+        "https://151d081e.r38.cpolar.top",
+        "http://151d081e.r38.cpolar.top",
+        "https://2beb2b1.r38.cpolar.top",
+        "http://2beb2b1.r38.cpolar.top",
     ]
 
     class Config:
