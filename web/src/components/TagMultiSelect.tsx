@@ -337,203 +337,234 @@ export function TagMultiSelect<T extends TagId>({
         title="选择标签"
         onCancel={() => setModalVisible(false)}
         destroyOnHidden
-        footer={[
-          <button
-            key="cancel"
-            type="button"
-            onClick={() => setModalVisible(false)}
-            style={{
-              border: '1px solid var(--border-color)',
-              background: 'var(--bg-elevated)',
-              color: 'var(--text-primary)',
-              borderRadius: '10px',
-              padding: '8px 14px',
-              fontSize: '13px',
-              cursor: 'pointer',
-            }}
-          >
-            取消
-          </button>,
-          <button
-            key="confirm"
-            type="button"
-            onClick={() => {
-              onChange(draftValue);
-              setModalVisible(false);
-            }}
-            style={{
-              border: 'none',
-              background: 'var(--accent-color)',
-              color: '#fff',
-              borderRadius: '10px',
-              padding: '8px 14px',
-              fontSize: '13px',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            确定
-          </button>,
-        ]}
+        footer={null}
       >
         <div
           style={{
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: '12px',
-            marginBottom: canSearch ? '12px' : '6px',
-            flexWrap: 'wrap',
+            flexDirection: 'column',
+            maxHeight: '70vh',
+            minHeight: 0,
           }}
         >
-          <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{draftSelectionHint}</div>
-          {canSearch ? (
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              disabled={disabled}
-              placeholder="搜索标签"
-              style={{
-                minWidth: '200px',
-                flex: '1 1 220px',
-                border: '1px solid var(--border-color)',
-                borderRadius: '10px',
-                background: 'var(--bg-elevated)',
-                color: 'var(--text-primary)',
-                padding: '8px 12px',
-                fontSize: '13px',
-                outline: 'none',
-              }}
-            />
-          ) : null}
-        </div>
-
-        <div style={{ display: 'grid', gap: '12px' }}>
-          {visibleGroups.map((group) => (
-            <section
-              key={group.key}
-              style={{
-                border: `1px solid ${hexToRgba(group.color, 0.14)}`,
-                background: hexToRgba(group.color, 0.045),
-                borderRadius: '14px',
-                padding: '12px',
-              }}
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  marginBottom: '10px',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <span
-                  style={{
-                    display: 'inline-block',
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '999px',
-                    background: group.color,
-                  }}
-                />
-                <span style={{ color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}>
-                  {group.label}
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {group.tags.map((tag) => {
-                  const selected = draftSelectedSet.has(String(tag.id));
-                  const maxReached = Boolean(
-                    maxSelect && (draftValue ?? []).length >= maxSelect && !selected
-                  );
-                  return (
-                    <TagPill
-                      key={String(tag.id)}
-                      label={tag.name}
-                      color={tag.color || group.color || DEFAULT_TAG_COLOR}
-                      selected={selected}
-                      disabled={disabled || maxReached || tag.is_active === false}
-                      onClick={() => toggleTag(tag.id)}
-                    />
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-
-          {visibleGroups.length === 0 ? (
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              minHeight: 0,
+              paddingBottom: '8px',
+            }}
+          >
             <div
               style={{
-                border: '1px dashed var(--border-color)',
-                borderRadius: '12px',
-                padding: '14px',
-                color: 'var(--text-secondary)',
-                fontSize: '13px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '12px',
+                marginBottom: canSearch ? '12px' : '6px',
+                flexWrap: 'wrap',
               }}
             >
-              没有匹配的标签
+              <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>{draftSelectionHint}</div>
+              {canSearch ? (
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  disabled={disabled}
+                  placeholder="搜索标签"
+                  style={{
+                    minWidth: '200px',
+                    flex: '1 1 220px',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '10px',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    padding: '8px 12px',
+                    fontSize: '13px',
+                    outline: 'none',
+                  }}
+                />
+              ) : null}
             </div>
-          ) : null}
-        </div>
 
-        <div style={{ marginTop: '14px' }}>
-          {isCreatingInline ? (
-            <input
-              ref={inputRef}
-              value={createDraft}
-              onChange={(event) => setCreateDraft(event.target.value)}
-              onBlur={() => {
-                if (!createDraft.trim()) {
-                  setIsCreatingInline(false);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault();
-                  openCreateModal();
-                }
-                if (event.key === 'Escape') {
-                  setCreateDraft('');
-                  setIsCreatingInline(false);
-                }
-              }}
-              disabled={disabled || !bookId}
-              placeholder={bookId ? '输入标签名称，按 Enter 继续' : '缺少账本信息，无法创建标签'}
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {visibleGroups.map((group) => (
+                <section
+                  key={group.key}
+                  style={{
+                    border: `1px solid ${hexToRgba(group.color, 0.14)}`,
+                    background: hexToRgba(group.color, 0.045),
+                    borderRadius: '14px',
+                    padding: '12px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginBottom: '10px',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '999px',
+                        background: group.color,
+                      }}
+                    />
+                    <span style={{ color: 'var(--text-primary)', fontSize: '13px', fontWeight: 700 }}>
+                      {group.label}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {group.tags.map((tag) => {
+                      const selected = draftSelectedSet.has(String(tag.id));
+                      const maxReached = Boolean(
+                        maxSelect && (draftValue ?? []).length >= maxSelect && !selected
+                      );
+                      return (
+                        <TagPill
+                          key={String(tag.id)}
+                          label={tag.name}
+                          color={tag.color || group.color || DEFAULT_TAG_COLOR}
+                          selected={selected}
+                          disabled={disabled || maxReached || tag.is_active === false}
+                          onClick={() => toggleTag(tag.id)}
+                        />
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+
+              {visibleGroups.length === 0 ? (
+                <div
+                  style={{
+                    border: '1px dashed var(--border-color)',
+                    borderRadius: '12px',
+                    padding: '14px',
+                    color: 'var(--text-secondary)',
+                    fontSize: '13px',
+                  }}
+                >
+                  没有匹配的标签
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: '14px' }}>
+              {isCreatingInline ? (
+                <input
+                  ref={inputRef}
+                  value={createDraft}
+                  onChange={(event) => setCreateDraft(event.target.value)}
+                  onBlur={() => {
+                    if (!createDraft.trim()) {
+                      setIsCreatingInline(false);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      openCreateModal();
+                    }
+                    if (event.key === 'Escape') {
+                      setCreateDraft('');
+                      setIsCreatingInline(false);
+                    }
+                  }}
+                  disabled={disabled || !bookId}
+                  placeholder={bookId ? '输入标签名称，按 Enter 继续' : '缺少账本信息，无法创建标签'}
+                  style={{
+                    width: '100%',
+                    border: `1px solid ${hexToRgba(DEFAULT_TAG_COLOR, 0.28)}`,
+                    borderRadius: '10px',
+                    background: 'var(--bg-elevated)',
+                    color: 'var(--text-primary)',
+                    padding: '9px 12px',
+                    fontSize: '13px',
+                    outline: 'none',
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (disabled) return;
+                    setCreateDraft(search.trim());
+                    setIsCreatingInline(true);
+                  }}
+                  disabled={disabled || !bookId}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    padding: 0,
+                    color: disabled || !bookId ? 'var(--text-tertiary)' : 'var(--accent-color)',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: disabled || !bookId ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  [+ 新建标签]
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              flexShrink: 0,
+              position: 'sticky',
+              bottom: 0,
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: '8px',
+              paddingTop: '12px',
+              marginTop: '4px',
+              borderTop: '1px solid var(--border-color)',
+              background: 'var(--bg-card)',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setModalVisible(false)}
               style={{
-                width: '100%',
-                border: `1px solid ${hexToRgba(DEFAULT_TAG_COLOR, 0.28)}`,
-                borderRadius: '10px',
+                border: '1px solid var(--border-color)',
                 background: 'var(--bg-elevated)',
                 color: 'var(--text-primary)',
-                padding: '9px 12px',
+                borderRadius: '10px',
+                padding: '8px 14px',
                 fontSize: '13px',
-                outline: 'none',
+                cursor: 'pointer',
               }}
-            />
-          ) : (
+            >
+              取消
+            </button>
             <button
               type="button"
               onClick={() => {
-                if (disabled) return;
-                setCreateDraft(search.trim());
-                setIsCreatingInline(true);
+                onChange(draftValue);
+                setModalVisible(false);
               }}
-              disabled={disabled || !bookId}
               style={{
                 border: 'none',
-                background: 'transparent',
-                padding: 0,
-                color: disabled || !bookId ? 'var(--text-tertiary)' : 'var(--accent-color)',
+                background: 'var(--accent-color)',
+                color: '#fff',
+                borderRadius: '10px',
+                padding: '8px 14px',
                 fontSize: '13px',
                 fontWeight: 700,
-                cursor: disabled || !bookId ? 'not-allowed' : 'pointer',
+                cursor: 'pointer',
               }}
             >
-              [+ 新建标签]
+              确定
             </button>
-          )}
+          </div>
         </div>
       </Modal>
 
