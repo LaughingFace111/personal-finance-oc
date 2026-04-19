@@ -5,6 +5,7 @@ import { apiGet, apiPost, apiUpload } from '../services/api';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
 import { TagMultiSelect } from './TagMultiSelect';
 import { getDefaultBookId, TagOption } from '../pages/transactionFormSupport';
+import { clearImportDraft, loadImportDraft, saveImportDraft } from '../utils/importDraftStorage';
 
 type Account = {
   id: string;
@@ -122,6 +123,17 @@ function haveSameSelectedRowIds(left: Set<string>, right: Set<string>) {
     if (!right.has(id)) return false;
   }
   return true;
+}
+
+function normalizeSelectedRowIds(rows: ParsedItem[], selectedRowIds: Set<string>) {
+  const validRowIds = new Set(rows.map((row) => row.tempId));
+  const nextSelectedRowIds = new Set<string>();
+  selectedRowIds.forEach((id) => {
+    if (validRowIds.has(id)) {
+      nextSelectedRowIds.add(id);
+    }
+  });
+  return nextSelectedRowIds;
 }
 
 const styles = {
@@ -516,6 +528,7 @@ export function StagingImportTable() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const parseId = searchParams.get('parseId') || '';
+  const importCompletedRef = React.useRef(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [billType, setBillType] = useState('alipay');
@@ -580,6 +593,7 @@ export function StagingImportTable() {
 
   useEffect(() => {
     if (!parseId) {
+      importCompletedRef.current = false;
       setRows([]);
       syncSelectedRowIds([]);
       setLoadedParseId(null);
@@ -593,12 +607,18 @@ export function StagingImportTable() {
     }
     apiGet<ParseResponse>(`/api/bills/parse/${parseId}`)
       .then(res => {
-        const nextRows = res.items || [];
+        const savedDraft = loadImportDraft<ParsedItem>(parseId);
+        const nextRows = savedDraft?.rows || res.items || [];
+        const nextSelectedRowIds = savedDraft
+          ? normalizeSelectedRowIds(nextRows, savedDraft.selectedRowIds)
+          : createSelectedRowIdSet(nextRows);
+
+        importCompletedRef.current = false;
         setRows(nextRows);
         setParsedBillType(res.metadata?.billType || null);
         setAvailableOperatorNames(res.metadata?.availableOperatorNames || []);
         setExcludedOperatorNames([]);
-        syncSelectedRowIds(nextRows);
+        setSelectedRowIds(nextSelectedRowIds);
         setLoadedParseId(parseId);
       })
       .catch(() => {
@@ -609,6 +629,41 @@ export function StagingImportTable() {
         setExcludedOperatorNames([]);
       });
   }, [loadedParseId, parseId, syncSelectedRowIds]);
+
+  useEffect(() => {
+    if (!parseId || loadedParseId !== parseId || importCompletedRef.current) {
+      return;
+    }
+
+    saveImportDraft(parseId, {
+      rows,
+      selectedRowIds,
+      timestamp: Date.now(),
+    });
+  }, [loadedParseId, parseId, rows, selectedRowIds]);
+
+  useEffect(() => {
+    if (!parseId) {
+      return;
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden' || loadedParseId !== parseId || importCompletedRef.current) {
+        return;
+      }
+
+      saveImportDraft(parseId, {
+        rows,
+        selectedRowIds,
+        timestamp: Date.now(),
+      });
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [loadedParseId, parseId, rows, selectedRowIds]);
 
   // ── Memoized lookups ─────────────────────────────────────────────────────────
 
@@ -705,6 +760,7 @@ export function StagingImportTable() {
       form.append('bill_type', billType);
       const res = await apiUpload<ParseResponse>('/api/bills/parse', form);
       const nextRows = res.items || [];
+      importCompletedRef.current = false;
       setRows(nextRows);
       setParsedBillType(res.metadata?.billType || null);
       setAvailableOperatorNames(res.metadata?.availableOperatorNames || []);
@@ -739,6 +795,8 @@ export function StagingImportTable() {
         confirmedItems: visibleSelectedRows,
         excludedOperatorNames,
       });
+      importCompletedRef.current = true;
+      clearImportDraft(parseId);
       setConfirmResult(res);
       message.success(`导入完成，成功 ${res.importedRows} 条`);
     } catch (err) {
