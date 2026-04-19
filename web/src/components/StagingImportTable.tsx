@@ -106,6 +106,18 @@ function getRowIssues(row: ParsedItem) {
   return Array.from(new Set(issues.filter(Boolean)));
 }
 
+function createSelectedRowIdSet(rows: ParsedItem[]) {
+  return new Set(rows.map((row) => row.tempId));
+}
+
+function haveSameSelectedRowIds(left: Set<string>, right: Set<string>) {
+  if (left.size !== right.size) return false;
+  for (const id of left) {
+    if (!right.has(id)) return false;
+  }
+  return true;
+}
+
 const styles = {
   card: {
     background: 'var(--bg-card)',
@@ -191,6 +203,8 @@ type StagingImportRowProps = {
   onOpenCategoryPicker: (tempId: string) => void;
 };
 
+const MemoizedRowTagMultiSelect = React.memo(TagMultiSelect) as typeof TagMultiSelect;
+
 const StagingImportRow = React.memo(
   ({ row, isSelected, categoryById, accountById, accounts, tags, tagIdsByName, tagNamesById, bookId, onToggleSelect, onUpdateRow, onTagsUpdated, onOpenCategoryPicker }: StagingImportRowProps) => {
     const issues = useMemo(() => getRowIssues(row), [row]);
@@ -261,6 +275,13 @@ const StagingImportRow = React.memo(
     const handleCheckboxChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
       onToggleSelect(row.tempId, e.target.checked);
     }, [row.tempId, onToggleSelect]);
+
+    const handleTagChange = useCallback((nextTagIds: string[]) => {
+      const nextTagNames = nextTagIds
+        .map((tagId) => tagNamesById.get(String(tagId)))
+        .filter((tagName): tagName is string => Boolean(tagName));
+      onUpdateRow(row.tempId, { tags: nextTagNames });
+    }, [row.tempId, tagNamesById, onUpdateRow]);
 
     return (
       <div
@@ -401,15 +422,10 @@ const StagingImportRow = React.memo(
 
           <div>
             <div style={styles.label}>标签</div>
-            <TagMultiSelect<string>
+            <MemoizedRowTagMultiSelect<string>
               tags={tags}
               value={selectedTagIds}
-              onChange={(nextTagIds) => {
-                const nextTagNames = nextTagIds
-                  .map((tagId) => tagNamesById.get(String(tagId)))
-                  .filter((tagName): tagName is string => Boolean(tagName));
-                onUpdateRow(row.tempId, { tags: nextTagNames });
-              }}
+              onChange={handleTagChange}
               bookId={bookId}
               onTagsUpdated={onTagsUpdated}
               placeholder="搜索、选择或创建标签"
@@ -479,7 +495,11 @@ const StagingImportRow = React.memo(
       prevProps.tagNamesById === nextProps.tagNamesById &&
       prevProps.bookId === nextProps.bookId &&
       prevProps.categoryById === nextProps.categoryById &&
-      prevProps.accountById === nextProps.accountById
+      prevProps.accountById === nextProps.accountById &&
+      prevProps.onToggleSelect === nextProps.onToggleSelect &&
+      prevProps.onUpdateRow === nextProps.onUpdateRow &&
+      prevProps.onTagsUpdated === nextProps.onTagsUpdated &&
+      prevProps.onOpenCategoryPicker === nextProps.onOpenCategoryPicker
     );
   }
 );
@@ -506,6 +526,11 @@ export function StagingImportTable() {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [bookId, setBookId] = useState<string | null>(null);
   const [tags, setTags] = useState<SelectTagOption[]>([]);
+
+  const syncSelectedRowIds = useCallback((nextRows: ParsedItem[]) => {
+    const nextSelectedRowIds = createSelectedRowIdSet(nextRows);
+    setSelectedRowIds((prev) => (haveSameSelectedRowIds(prev, nextSelectedRowIds) ? prev : nextSelectedRowIds));
+  }, []);
 
   // ── Data fetching ────────────────────────────────────────────────────────────
 
@@ -547,6 +572,7 @@ export function StagingImportTable() {
   useEffect(() => {
     if (!parseId) {
       setRows([]);
+      syncSelectedRowIds([]);
       setLoadedParseId(null);
       return;
     }
@@ -555,11 +581,16 @@ export function StagingImportTable() {
     }
     apiGet<ParseResponse>(`/api/bills/parse/${parseId}`)
       .then(res => {
-        setRows(res.items || []);
+        const nextRows = res.items || [];
+        setRows(nextRows);
+        syncSelectedRowIds(nextRows);
         setLoadedParseId(parseId);
       })
-      .catch(() => setRows([]));
-  }, [loadedParseId, parseId]);
+      .catch(() => {
+        setRows([]);
+        syncSelectedRowIds([]);
+      });
+  }, [loadedParseId, parseId, syncSelectedRowIds]);
 
   // ── Memoized lookups ─────────────────────────────────────────────────────────
 
@@ -586,13 +617,6 @@ export function StagingImportTable() {
     tags.forEach((tag) => map.set(String(tag.id), tag.name));
     return map;
   }, [tags]);
-
-  // Sync selectedRowIds when rows change
-  const rowIdKey = useMemo(() => rows.map(row => row.tempId).join('|'), [rows]);
-
-  useEffect(() => {
-    setSelectedRowIds(new Set(rows.map(row => row.tempId)));
-  }, [rowIdKey]);
 
   // ── Row operations ────────────────────────────────────────────────────────────
 
@@ -642,7 +666,9 @@ export function StagingImportTable() {
       form.append('file', file);
       form.append('bill_type', billType);
       const res = await apiUpload<ParseResponse>('/api/bills/parse', form);
-      setRows(res.items || []);
+      const nextRows = res.items || [];
+      setRows(nextRows);
+      syncSelectedRowIds(nextRows);
       setLoadedParseId(res.parseId);
       navigate(`/imports?parseId=${res.parseId}`);
       message.success(`解析完成，共 ${res.items.length} 条`);
@@ -691,7 +717,9 @@ export function StagingImportTable() {
       const res = await apiPost<ParseResponse>(`/api/bills/parse/${parseId}/match`, {
         matchTarget,
       });
-      setRows(res.items || []);
+      const nextRows = res.items || [];
+      setRows(nextRows);
+      syncSelectedRowIds(nextRows);
       setLoadedParseId(parseId);
       message.success(
         matchTarget === 'account'
