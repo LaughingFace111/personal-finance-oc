@@ -225,8 +225,10 @@ export function TagMultiSelect<T extends TagId>({
     () => new Set((draftValue ?? []).map((item) => String(item))),
     [draftValue]
   );
-  const totalTags = localTags.length;
-  const canSearch = totalTags > 10;
+  const totalTags = useMemo(() => localTags.length, [localTags]);
+  const canSearch = useMemo(() => totalTags > 10, [totalTags]);
+  const searchKeyword = useMemo(() => search.trim().toLowerCase(), [search]);
+  const draftSelectionCount = useMemo(() => (draftValue ?? []).length, [draftValue]);
 
   const groupedTags = useMemo(() => {
     if (!modalVisible) return [];
@@ -234,18 +236,17 @@ export function TagMultiSelect<T extends TagId>({
   }, [localTags, modalVisible]);
 
   const visibleGroups = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-
-    if (!keyword) return groupedTags;
+    if (!modalVisible) return [];
+    if (!searchKeyword) return groupedTags;
 
     return groupedTags
       .map((group) => {
-        const groupMatches = group.label.toLowerCase().includes(keyword);
+        const groupMatches = group.label.toLowerCase().includes(searchKeyword);
         if (groupMatches) return group;
 
         const filteredTags = group.tags.filter((tag) => {
           const tagText = `${tag.name} ${group.label}`.toLowerCase();
-          return tagText.includes(keyword);
+          return tagText.includes(searchKeyword);
         });
 
         return {
@@ -254,7 +255,7 @@ export function TagMultiSelect<T extends TagId>({
         };
       })
       .filter((group) => group.tags.length > 0);
-  }, [groupedTags, search]);
+  }, [groupedTags, modalVisible, searchKeyword]);
 
   const toggleTag = (tagId: T) => {
     if (disabled) return;
@@ -280,9 +281,10 @@ export function TagMultiSelect<T extends TagId>({
     setIsCreatingInline(false);
   };
 
-  const draftSelectionHint = maxSelect
-    ? `已选 ${(draftValue ?? []).length}/${maxSelect}`
-    : `已选 ${(draftValue ?? []).length}`;
+  const draftSelectionHint = useMemo(
+    () => (maxSelect ? `已选 ${draftSelectionCount}/${maxSelect}` : `已选 ${draftSelectionCount}`),
+    [draftSelectionCount, maxSelect]
+  );
   const selectedTags = useMemo(
     () => localTags.filter((tag) => selectedSet.has(String(tag.id))),
     [localTags, selectedSet]

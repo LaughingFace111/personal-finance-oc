@@ -41,6 +41,8 @@ type ParsedItem = {
   merchantOrderNo?: string | null;
   tradeStatus?: string | null;
   rawDirection?: string | null;
+  operatorNickname?: string | null;
+  operatorName?: string | null;
   tags: string[];
   ignoreReason?: string | null;
   unresolvedReason?: string | null;
@@ -50,6 +52,10 @@ type ParsedItem = {
 type ParseResponse = {
   parseId: string;
   items: ParsedItem[];
+  metadata?: {
+    billType?: string | null;
+    availableOperatorNames?: string[];
+  };
 };
 
 type ConfirmResponse = {
@@ -526,6 +532,9 @@ export function StagingImportTable() {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [bookId, setBookId] = useState<string | null>(null);
   const [tags, setTags] = useState<SelectTagOption[]>([]);
+  const [parsedBillType, setParsedBillType] = useState<string | null>(null);
+  const [availableOperatorNames, setAvailableOperatorNames] = useState<string[]>([]);
+  const [excludedOperatorNames, setExcludedOperatorNames] = useState<string[]>([]);
 
   const syncSelectedRowIds = useCallback((nextRows: ParsedItem[]) => {
     const nextSelectedRowIds = createSelectedRowIdSet(nextRows);
@@ -574,6 +583,9 @@ export function StagingImportTable() {
       setRows([]);
       syncSelectedRowIds([]);
       setLoadedParseId(null);
+      setParsedBillType(null);
+      setAvailableOperatorNames([]);
+      setExcludedOperatorNames([]);
       return;
     }
     if (loadedParseId === parseId) {
@@ -583,12 +595,18 @@ export function StagingImportTable() {
       .then(res => {
         const nextRows = res.items || [];
         setRows(nextRows);
+        setParsedBillType(res.metadata?.billType || null);
+        setAvailableOperatorNames(res.metadata?.availableOperatorNames || []);
+        setExcludedOperatorNames([]);
         syncSelectedRowIds(nextRows);
         setLoadedParseId(parseId);
       })
       .catch(() => {
         setRows([]);
         syncSelectedRowIds([]);
+        setParsedBillType(null);
+        setAvailableOperatorNames([]);
+        setExcludedOperatorNames([]);
       });
   }, [loadedParseId, parseId, syncSelectedRowIds]);
 
@@ -618,6 +636,18 @@ export function StagingImportTable() {
     return map;
   }, [tags]);
 
+  const isAlipayPouchParse = parsedBillType === 'alipay_pouch';
+  const filteredRows = useMemo(() => {
+    if (!isAlipayPouchParse || excludedOperatorNames.length === 0) {
+      return rows;
+    }
+    const excludedSet = new Set(excludedOperatorNames);
+    return rows.filter((row) => {
+      const operatorName = row.operatorName?.trim();
+      return !operatorName || !excludedSet.has(operatorName);
+    });
+  }, [excludedOperatorNames, isAlipayPouchParse, rows]);
+
   // ── Row operations ────────────────────────────────────────────────────────────
 
   const updateRow = useCallback((tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => {
@@ -642,8 +672,16 @@ export function StagingImportTable() {
   }, []);
 
   const toggleSelectAll = useCallback((selected: boolean) => {
-    setSelectedRowIds(selected ? new Set(rows.map(row => row.tempId)) : new Set());
-  }, [rows]);
+    setSelectedRowIds(prev => {
+      const next = new Set(prev);
+      if (selected) {
+        filteredRows.forEach((row) => next.add(row.tempId));
+      } else {
+        filteredRows.forEach((row) => next.delete(row.tempId));
+      }
+      return next;
+    });
+  }, [filteredRows]);
 
   // ── Category picker ──────────────────────────────────────────────────────────
 
@@ -668,6 +706,9 @@ export function StagingImportTable() {
       const res = await apiUpload<ParseResponse>('/api/bills/parse', form);
       const nextRows = res.items || [];
       setRows(nextRows);
+      setParsedBillType(res.metadata?.billType || null);
+      setAvailableOperatorNames(res.metadata?.availableOperatorNames || []);
+      setExcludedOperatorNames([]);
       syncSelectedRowIds(nextRows);
       setLoadedParseId(res.parseId);
       navigate(`/imports?parseId=${res.parseId}`);
@@ -685,8 +726,8 @@ export function StagingImportTable() {
       message.warning('缺少 parseId，请先解析文件');
       return;
     }
-    const selectedRows = rows.filter(row => selectedRowIds.has(row.tempId));
-    if (selectedRows.length === 0) {
+    const visibleSelectedRows = filteredRows.filter(row => selectedRowIds.has(row.tempId));
+    if (visibleSelectedRows.length === 0) {
       message.warning('请至少勾选一条记录');
       return;
     }
@@ -695,7 +736,8 @@ export function StagingImportTable() {
     try {
       const res = await apiPost<ConfirmResponse>('/api/bills/confirm-import', {
         parseId,
-        confirmedItems: selectedRows,
+        confirmedItems: visibleSelectedRows,
+        excludedOperatorNames,
       });
       setConfirmResult(res);
       message.success(`导入完成，成功 ${res.importedRows} 条`);
@@ -719,6 +761,8 @@ export function StagingImportTable() {
       });
       const nextRows = res.items || [];
       setRows(nextRows);
+      setParsedBillType(res.metadata?.billType || null);
+      setAvailableOperatorNames(res.metadata?.availableOperatorNames || []);
       syncSelectedRowIds(nextRows);
       setLoadedParseId(parseId);
       message.success(
@@ -766,9 +810,9 @@ export function StagingImportTable() {
 
   // ── Derived state ────────────────────────────────────────────────────────────
 
-  const selectedCount = selectedRowIds.size;
-  const allSelected = rows.length > 0 && selectedCount === rows.length;
-  const partiallySelected = selectedCount > 0 && selectedCount < rows.length;
+  const selectedVisibleCount = filteredRows.filter((row) => selectedRowIds.has(row.tempId)).length;
+  const allSelected = filteredRows.length > 0 && selectedVisibleCount === filteredRows.length;
+  const partiallySelected = selectedVisibleCount > 0 && selectedVisibleCount < filteredRows.length;
   const editingRow = useMemo(
     () => (editingRowId ? rows.find((row) => row.tempId === editingRowId) ?? null : null),
     [editingRowId, rows]
@@ -854,7 +898,7 @@ export function StagingImportTable() {
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
             <div style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>
-              已选择 {selectedCount} / {rows.length} 条
+              已选择 {selectedVisibleCount} / {filteredRows.length} 条
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
               <input
@@ -869,8 +913,32 @@ export function StagingImportTable() {
             </label>
           </div>
 
+          {isAlipayPouchParse && availableOperatorNames.length > 0 && (
+            <div style={{ marginBottom: '12px' }}>
+              <div style={styles.label}>排除操作人姓名</div>
+              <select
+                multiple
+                value={excludedOperatorNames}
+                onChange={(e) => {
+                  const nextValues = Array.from(e.target.selectedOptions, (option) => option.value);
+                  setExcludedOperatorNames(nextValues);
+                }}
+                style={{ ...styles.select, minHeight: '96px' }}
+              >
+                {availableOperatorNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <div style={styles.helper}>
+                仅对“支付宝小荷包”生效。选中的操作人记录会从当前预览中排除，并在最终导入时由后端跳过；空白操作人不会被默认排除。
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gap: '12px' }}>
-            {rows.map(row => (
+            {filteredRows.map(row => (
               <StagingImportRow
                 key={row.tempId}
                 row={row}

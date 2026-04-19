@@ -123,7 +123,7 @@ def _build_parsed_item(record, account_matcher: AccountMatcher, category_matcher
     )
 
 
-def _build_parse_metadata(items: List[ParsedBillItem]) -> ParseBillMetadata:
+def _build_parse_metadata(items: List[ParsedBillItem], bill_type: Optional[str]) -> ParseBillMetadata:
     available_operator_names = sorted(
         {
             item.operatorName.strip()
@@ -131,7 +131,10 @@ def _build_parse_metadata(items: List[ParsedBillItem]) -> ParseBillMetadata:
             if item.operatorName and item.operatorName.strip()
         }
     )
-    return ParseBillMetadata(availableOperatorNames=available_operator_names)
+    return ParseBillMetadata(
+        billType=(bill_type or "").strip().lower() or None,
+        availableOperatorNames=available_operator_names,
+    )
 
 
 def _rebuild_unresolved_reason(item: ParsedBillItem) -> Optional[str]:
@@ -211,7 +214,7 @@ def parse_bill_file(
         return ParseBillResponse(
             parseId=batch.id,
             items=items,
-            metadata=_build_parse_metadata(items),
+            metadata=_build_parse_metadata(items, bill_type),
         )
     except SQLAlchemyError as exc:
         db.rollback()
@@ -245,7 +248,7 @@ def get_parse_result(db: Session, user_id: str, parse_id: str) -> ParseBillRespo
     return ParseBillResponse(
         parseId=parse_id,
         items=items,
-        metadata=_build_parse_metadata(items),
+        metadata=_build_parse_metadata(items, batch.source_name),
     )
 
 
@@ -315,7 +318,7 @@ def apply_match_rules_to_parse(
     return ParseBillResponse(
         parseId=parse_id,
         items=items,
-        metadata=_build_parse_metadata(items),
+        metadata=_build_parse_metadata(items, batch.source_name),
     )
 
 
@@ -368,6 +371,7 @@ def confirm_import(
     rows = db.query(ImportRow).filter(ImportRow.batch_id == parse_id).all()
     row_map = {f"row-{row.row_no}": row for row in rows}
     bill_type = batch.source_name or "alipay"
+    should_filter_excluded_operators = bill_type.strip().lower() == "alipay_pouch"
     excluded_operator_name_set = {
         name.strip() for name in (excluded_operator_names or []) if name and name.strip()
     }
@@ -385,7 +389,11 @@ def confirm_import(
             warnings.append(f"{item.tempId} 未找到对应缓冲记录，已跳过")
             continue
 
-        if item.operatorName and item.operatorName.strip() in excluded_operator_name_set:
+        if (
+            should_filter_excluded_operators
+            and item.operatorName
+            and item.operatorName.strip() in excluded_operator_name_set
+        ):
             row.confirm_status = "skipped"
             row.error_message = f"操作人姓名 {item.operatorName} 已排除"
             skipped_rows += 1

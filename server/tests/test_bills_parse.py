@@ -499,3 +499,104 @@ def test_confirm_import_skips_excluded_operator_names_for_alipay_pouch(
     assert skipped_row.confirm_status == "skipped"
     assert skipped_row.error_message == "操作人姓名 石帅 已排除"
     assert confirmed_row.confirm_status == "confirmed"
+
+
+def test_confirm_import_does_not_skip_empty_operator_name_by_default(
+    db_session,
+    test_book,
+    import_account_and_categories,
+    monkeypatch,
+):
+    account, expense_category, _ = import_account_and_categories
+    content = build_alipay_pouch_xlsx_bytes(
+        [
+            ["202604150041", "2026-04-06 09:30:00", "淘宝购物", "", "小石", "", "", "18.50"],
+        ]
+    )
+    parsed = parse_bill_file(
+        db=db_session,
+        user_id=test_book.user_id,
+        bill_type="alipay_pouch",
+        filename="alipay_pouch.xlsx",
+        content=content,
+    )
+
+    item = parsed.items[0]
+    item.matchedAccountId = account.id
+    item.matchedAccountName = account.name
+    item.accountMatchStatus = "MATCHED"
+    item.categoryId = expense_category.id
+    item.categoryName = expense_category.name
+    item.categoryMatchStatus = "MATCHED"
+    item.unresolvedReason = None
+
+    created_order_nos = []
+
+    def fake_create_transaction(db, book_id, txn_data):
+        created_order_nos.append(txn_data.external_ref)
+        return object()
+
+    monkeypatch.setattr("src.modules.bills.service.create_transaction", fake_create_transaction)
+
+    result = confirm_import(
+        db=db_session,
+        user_id=test_book.user_id,
+        parse_id=parsed.parseId,
+        confirmed_items=[item],
+        excluded_operator_names=["石帅"],
+    )
+
+    assert result.importedRows == 1
+    assert result.skippedRows == 0
+    assert created_order_nos == ["202604150041"]
+
+
+def test_confirm_import_ignores_excluded_operator_names_for_non_alipay_pouch(
+    db_session,
+    test_book,
+    import_account_and_categories,
+    monkeypatch,
+):
+    account, _, income_category = import_account_and_categories
+    content = build_wechat_xlsx_bytes(
+        [
+            ["2026-04-07 08:00:00", "收款", "张三", "收到转账", "收入", "88.00", "支付成功", "WX20260407001", "", "零钱", ""],
+        ]
+    )
+    parsed = parse_bill_file(
+        db=db_session,
+        user_id=test_book.user_id,
+        bill_type="wechat",
+        filename="wechat.xlsx",
+        content=content,
+    )
+
+    item = parsed.items[0]
+    item.operatorName = "石帅"
+    item.matchedAccountId = account.id
+    item.matchedAccountName = account.name
+    item.accountMatchStatus = "MATCHED"
+    item.categoryId = income_category.id
+    item.categoryName = income_category.name
+    item.categoryMatchStatus = "MATCHED"
+    item.unresolvedReason = None
+
+    created_order_nos = []
+
+    def fake_create_transaction(db, book_id, txn_data):
+        created_order_nos.append(txn_data.external_ref)
+        return object()
+
+    monkeypatch.setattr("src.modules.bills.service.create_transaction", fake_create_transaction)
+
+    result = confirm_import(
+        db=db_session,
+        user_id=test_book.user_id,
+        parse_id=parsed.parseId,
+        confirmed_items=[item],
+        excluded_operator_names=["石帅"],
+    )
+
+    assert result.importedRows == 1
+    assert result.skippedRows == 0
+    assert created_order_nos == ["WX20260407001"]

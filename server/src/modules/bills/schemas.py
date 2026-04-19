@@ -64,6 +64,7 @@ class ParsedBillItem(BaseModel):
 
 
 class ParseBillMetadata(BaseModel):
+    billType: Optional[str] = None
     availableOperatorNames: List[str] = Field(default_factory=list)
 
 
