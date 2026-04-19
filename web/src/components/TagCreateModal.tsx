@@ -90,7 +90,7 @@ export function TagCreateModal({
       okText="创建并选中"
       cancelText="取消"
       confirmLoading={loading}
-      okButtonProps={{ disabled: !bookId || parentTags.length === 0 }}
+      okButtonProps={{ disabled: !bookId }}
     >
       <Form form={form} layout="vertical" initialValues={{ name: initialName }}>
         <Form.Item
@@ -103,10 +103,12 @@ export function TagCreateModal({
 
         <Form.Item
           name="parent_id"
-          label="所属一级标签"
-          rules={[{ required: true, message: '请选择一级标签' }]}
+          label="上级标签（可选）"
         >
-          <Select placeholder={parentTags.length > 0 ? '请选择一级标签' : '请先创建一级标签'}>
+          <Select
+            allowClear
+            placeholder={parentTags.length > 0 ? '不选则创建为一级标签' : '留空将创建一级标签'}
+          >
             {parentTags.map((item) => (
               <Select.Option key={item.id} value={item.id}>
                 <Tag color={item.color || 'blue'}>{item.name}</Tag>
@@ -136,7 +138,7 @@ export function TagCreateModal({
 
         {parentTags.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
-            暂无一级标签，当前只能先去标签管理页创建一级标签。
+            暂无一级标签，留空提交将直接创建一级标签。
           </div>
         ) : null}
       </Form>
