@@ -92,6 +92,21 @@ export function TagCreateModal({
       confirmLoading={loading}
       okButtonProps={{ disabled: !bookId }}
     >
+      <style>
+        {`
+          .parent-tag-scroll-wrapper {
+            overflow: hidden;
+          }
+
+          .parent-tag-selector-dropdown,
+          .parent-tag-selector-dropdown .rc-virtual-list,
+          .parent-tag-selector-dropdown .rc-virtual-list-holder {
+            overscroll-behavior: contain;
+            touch-action: pan-y;
+            -webkit-overflow-scrolling: touch;
+          }
+        `}
+      </style>
       <Form form={form} layout="vertical" initialValues={{ name: initialName }}>
         <Form.Item
           name="name"
@@ -101,21 +116,24 @@ export function TagCreateModal({
           <Input placeholder="请输入标签名称" />
         </Form.Item>
 
-        <Form.Item
-          name="parent_id"
-          label="上级标签（可选）"
-        >
-          <Select
-            allowClear
-            placeholder={parentTags.length > 0 ? '不选则创建为一级标签' : '留空将创建一级标签'}
+        <div className="parent-tag-scroll-wrapper">
+          <Form.Item
+            name="parent_id"
+            label="上级标签（可选）"
           >
-            {parentTags.map((item) => (
-              <Select.Option key={item.id} value={item.id}>
-                <Tag color={item.color || 'blue'}>{item.name}</Tag>
-              </Select.Option>
-            ))}
-          </Select>
-        </Form.Item>
+            <Select
+              allowClear
+              popupClassName="parent-tag-selector-dropdown"
+              placeholder={parentTags.length > 0 ? '不选则创建为一级标签' : '留空将创建一级标签'}
+            >
+              {parentTags.map((item) => (
+                <Select.Option key={item.id} value={item.id}>
+                  <Tag color={item.color || 'blue'}>{item.name}</Tag>
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        </div>
 
         {selectedParentColor ? (
           <div style={{ marginTop: '-4px', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '12px' }}>
