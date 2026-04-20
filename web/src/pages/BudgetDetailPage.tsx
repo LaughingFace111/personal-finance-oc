@@ -156,7 +156,7 @@ if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
         )}
       />
 
-      <Card style={{ borderRadius: 16, borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
+      <Card style={{ borderRadius: 16, borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)', marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 600 }}>预算状态</div>
@@ -183,7 +183,7 @@ if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
         )}
       </Card>
 
-      <Card style={{ borderRadius: 16, borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
+      <Card style={{ borderRadius: 16, borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)', marginBottom: 16 }}>
         <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
           {budget.dimension_type === 'category' ? '分类明细' : budget.dimension_type === 'tag' ? '标签预算分类分布' : '分类分布'}
         </div>
@@ -203,7 +203,7 @@ if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
 
       <Card style={{ borderRadius: 16, borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
         <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
-          {budget.dimension_type === 'category' ? '分类预算交易' : budget.dimension_type === 'tag' ? '标签预算交易' : '预算周期交易'}
+          {budget.dimension_type === 'category' ? '分类预算交易' : budget.dimension_type === 'tag' ? '标签预算交易' : '预算周期交易'}}
         </div>
         {breakdown.transactions.length === 0 ? (
           <Empty description="预算周期内暂无交易" />
