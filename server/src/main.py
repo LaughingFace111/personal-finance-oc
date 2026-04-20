@@ -21,6 +21,8 @@ from src.modules.recurring_pending import router as recurring_pending_router
 from src.modules.reports import router as reports_router
 from src.modules.tags import router as tags_router
 from src.modules.bills import router as bills_router
+from src.modules.budgets.router import router as budgets_router
+from src.modules.budgets.models import Budget  # noqa: F401
 from src.modules.wishlists import router as wishlists_router
 from src.modules.wishlists.models import WishlistItem  # noqa: F401
 from src.modules.durable_assets import router as durable_assets_router
@@ -70,6 +72,7 @@ app.include_router(recurring_rules_router, prefix="/api")
 app.include_router(recurring_pending_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
+app.include_router(budgets_router, prefix="/api")
 app.include_router(wishlists_router, prefix="/api")
 app.include_router(durable_assets_router, prefix="/api")
 app.include_router(bills_router, prefix="/api")
