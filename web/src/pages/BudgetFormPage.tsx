@@ -6,7 +6,6 @@ import { useAuth } from '../App'
 import { CategorySelector, type CategoryOption } from '../components/CategorySelector'
 import { TagSelector, type TagOption } from '../components/TagSelector'
 import { apiGet, apiPatch, apiPost } from '../services/api'
-import type { TagOption } from './transactionFormSupport'
 
 type BudgetFormValues = {
   name: string
