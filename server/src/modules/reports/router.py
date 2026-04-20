@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from src.core import get_db
@@ -69,6 +69,8 @@ def overview(
 def expense_by_category(
     date_from: str = None,
     date_to: str = None,
+    exclude_category_ids: list[str] | None = Query(default=None),
+    exclude_tag_ids: list[str] | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     book_id: str = None
@@ -87,7 +89,14 @@ def expense_by_category(
     else:
         date_to = date.fromisoformat(date_to)
 
-    return get_expense_by_category(db, bid, date_from, date_to)
+    return get_expense_by_category(
+        db,
+        bid,
+        date_from,
+        date_to,
+        exclude_category_ids=set(exclude_category_ids or []),
+        exclude_tag_ids=set(exclude_tag_ids or []),
+    )
 
 
 @router.get("/accounts")

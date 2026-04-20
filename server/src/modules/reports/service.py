@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, time
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Integer, alias, case, func, or_
+from sqlalchemy import Integer, alias, bindparam, case, func, or_, text
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from src.common.enums import AccountType, TransactionType, TransactionStatus
@@ -219,8 +219,13 @@ def _get_category_amounts_for_period(
     date_from: date,
     date_to: date,
     direction: str,
+    exclude_category_ids: Optional[set[str]] = None,
 ) -> dict[str, Decimal]:
-    if not category_ids:
+    working_category_ids = set(category_ids)
+    if exclude_category_ids:
+        working_category_ids -= exclude_category_ids
+
+    if not working_category_ids:
         return {}
 
     dt_from, dt_to = _datetime_range(date_from, date_to)
@@ -236,7 +241,7 @@ def _get_category_amounts_for_period(
             Transaction.include_in_income == True,  # 🛡️ L: 收支开关过滤
             Transaction.occurred_at >= dt_from,
             Transaction.occurred_at <= dt_to,
-            Transaction.category_id.in_(category_ids),
+            Transaction.category_id.in_(working_category_ids),
         ).group_by(Transaction.category_id).all()
         return {row.category_id: row.amount or Decimal("0") for row in rows if row.category_id}
 
@@ -257,7 +262,7 @@ def _get_category_amounts_for_period(
         Transaction.include_in_expense == True,  # 🛡️ L: 收支开关过滤
         Transaction.occurred_at >= dt_from,
         Transaction.occurred_at <= dt_to,
-        Transaction.category_id.in_(category_ids),
+        Transaction.category_id.in_(working_category_ids),
     ).group_by(Transaction.category_id).all()
 
     refund_rows = db.query(
@@ -271,7 +276,7 @@ def _get_category_amounts_for_period(
         RefundTxn.c.status == "confirmed",
         RefundTxn.c.occurred_at >= dt_from,
         RefundTxn.c.occurred_at <= dt_to,
-        OriginalTxn.c.category_id.in_(category_ids),
+        OriginalTxn.c.category_id.in_(working_category_ids),
     ).group_by(OriginalTxn.c.category_id).all()
 
     amounts = {row.category_id: row.gross_amount or Decimal("0") for row in expense_rows if row.category_id}
@@ -466,6 +471,103 @@ def _parse_tag_names(raw_tags: Optional[str]) -> list[str]:
     return names
 
 
+def _resolve_excluded_category_ids(
+    db: Session,
+    book_id: str,
+    exclude_category_ids: Optional[set[str]],
+    direction: str = "expense",
+) -> set[str]:
+    if not exclude_category_ids:
+        return set()
+
+    category_type = "expense" if direction == "expense" else "income"
+    categories = db.query(Category).filter(
+        Category.book_id == book_id,
+        Category.category_type == category_type,
+        Category.is_deleted == False,
+    ).all()
+    _, children_map = _build_category_tree(categories)
+
+    resolved: set[str] = set()
+    for category_id in exclude_category_ids:
+        resolved.update(_collect_descendant_ids(category_id, children_map))
+    return resolved
+
+
+def _resolve_excluded_tag_names(
+    db: Session,
+    book_id: str,
+    exclude_tag_ids: Optional[set[str]],
+) -> set[str]:
+    if not exclude_tag_ids:
+        return set()
+
+    tags = db.query(Tag).filter(
+        Tag.book_id == book_id,
+    ).all()
+    tags_by_id = {tag.id: tag.name for tag in tags}
+    return {
+        tag_name.strip()
+        for tag_id in exclude_tag_ids
+        for tag_name in [tags_by_id.get(tag_id, "")]
+        if tag_name.strip()
+    }
+
+
+def _query_transaction_ids_matching_tag_names(
+    db: Session,
+    book_id: str,
+    date_from: date,
+    date_to: date,
+    transaction_types: list[str],
+    excluded_tag_names: set[str],
+) -> set[str]:
+    if not excluded_tag_names:
+        return set()
+
+    dt_from, dt_to = _datetime_range(date_from, date_to)
+    query = db.query(Transaction.id, Transaction.tags).filter(
+        Transaction.book_id == book_id,
+        Transaction.transaction_type.in_(transaction_types),
+        Transaction.status == TransactionStatus.CONFIRMED.value,
+        Transaction.occurred_at >= dt_from,
+        Transaction.occurred_at <= dt_to,
+    )
+
+    dialect_name = (db.bind.dialect.name if db.bind else "").lower()
+    try:
+        if dialect_name == "sqlite":
+            clauses = []
+            for index, tag_name in enumerate(sorted(excluded_tag_names)):
+                key = f"tag_name_{index}"
+                clauses.append(
+                    text(
+                        f"EXISTS (SELECT 1 FROM json_each(transactions.tags) WHERE json_each.value = :{key})"
+                    ).bindparams(bindparam(key, value=tag_name))
+                )
+            if clauses:
+                return {row.id for row in query.filter(or_(*clauses)).all()}
+        if dialect_name == "postgresql":
+            clauses = []
+            for index, tag_name in enumerate(sorted(excluded_tag_names)):
+                key = f"tag_name_{index}"
+                clauses.append(
+                    text(
+                        f"EXISTS (SELECT 1 FROM jsonb_array_elements_text(CAST(transactions.tags AS jsonb)) AS tag(value) WHERE tag.value = :{key})"
+                    ).bindparams(bindparam(key, value=tag_name))
+                )
+            if clauses:
+                return {row.id for row in query.filter(or_(*clauses)).all()}
+    except Exception:
+        pass
+
+    matching_ids: set[str] = set()
+    for row in query.all():
+        if excluded_tag_names.intersection(_parse_tag_names(row.tags)):
+            matching_ids.add(row.id)
+    return matching_ids
+
+
 def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> dict:
     """
     Get dashboard overview
@@ -526,13 +628,43 @@ def get_overview(db: Session, book_id: str, date_from: date, date_to: date) -> d
     return result
 
 
-def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to: date) -> list:
+def get_expense_by_category(
+    db: Session,
+    book_id: str,
+    date_from: date,
+    date_to: date,
+    exclude_category_ids: Optional[set[str]] = None,
+    exclude_tag_ids: Optional[set[str]] = None,
+) -> list:
     """
     Get expense breakdown by category (净支出)
     按最终设计口径:
     - 按原消费分类统计
     - 退款冲减按原消费分类扣减
     """
+    excluded_category_ids = _resolve_excluded_category_ids(db, book_id, exclude_category_ids, direction="expense")
+    excluded_tag_names = _resolve_excluded_tag_names(db, book_id, exclude_tag_ids)
+    excluded_expense_transaction_ids = _query_transaction_ids_matching_tag_names(
+        db,
+        book_id,
+        date_from,
+        date_to,
+        [
+            TransactionType.EXPENSE.value,
+            TransactionType.FEE.value,
+            TransactionType.INSTALLMENT_PURCHASE.value,
+        ],
+        excluded_tag_names,
+    )
+    excluded_refund_transaction_ids = _query_transaction_ids_matching_tag_names(
+        db,
+        book_id,
+        date_from,
+        date_to,
+        [TransactionType.REFUND.value],
+        excluded_tag_names,
+    )
+
     # === 支出查询：使用别名避免混淆 ===
     # 原始支出（毛支出）- 退款需要通过它找到原交易的分类
     OriginalTxn = alias(Transaction, name="original_txn")
@@ -554,7 +686,10 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max),
         Transaction.category_id.isnot(None)
-    ).group_by(Transaction.category_id).all()
+    )
+    if excluded_expense_transaction_ids:
+        expense_query = expense_query.filter(Transaction.id.notin_(excluded_expense_transaction_ids))
+    expense_query = expense_query.group_by(Transaction.category_id).all()
 
     # 按原交易分类统计退款冲减
     # 思路：通过 refund.related_transaction_id 找到原交易，再获取原交易的 category_id
@@ -571,7 +706,12 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
         RefundTxn.c.occurred_at >= datetime.combine(date_from, time.min),
         RefundTxn.c.occurred_at <= datetime.combine(date_to, time.max),
         OriginalTxn.c.category_id.isnot(None)
-    ).group_by(OriginalTxn.c.category_id).all()
+    )
+    if excluded_expense_transaction_ids:
+        refund_query = refund_query.filter(OriginalTxn.c.id.notin_(excluded_expense_transaction_ids))
+    if excluded_refund_transaction_ids:
+        refund_query = refund_query.filter(RefundTxn.c.id.notin_(excluded_refund_transaction_ids))
+    refund_query = refund_query.group_by(OriginalTxn.c.category_id).all()
 
     # 构建退款冲减映射
     refund_map = {r.category_id: r.refund_amount for r in refund_query if r.category_id}
@@ -587,14 +727,19 @@ def get_expense_by_category(db: Session, book_id: str, date_from: date, date_to:
         Transaction.occurred_at >= datetime.combine(date_from, time.min),
         Transaction.occurred_at <= datetime.combine(date_to, time.max),
         Transaction.related_transaction_id.is_(None)
-    ).scalar() or Decimal("0")
+    )
+    if excluded_refund_transaction_ids:
+        unlinked_refunds = unlinked_refunds.filter(Transaction.id.notin_(excluded_refund_transaction_ids))
+    unlinked_refunds = unlinked_refunds.scalar() or Decimal("0")
 
     # === 获取分类信息并组装结果 ===
-    category_ids = [e.category_id for e in expense_query]
+    category_ids = [e.category_id for e in expense_query if e.category_id not in excluded_category_ids]
     categories = {c.id: c for c in db.query(Category).filter(Category.id.in_(category_ids)).all()} if category_ids else {}
 
     result = []
     for e in expense_query:
+        if e.category_id in excluded_category_ids:
+            continue
         cat = categories.get(e.category_id)
         refund = refund_map.get(e.category_id, Decimal("0"))
         result.append({

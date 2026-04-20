@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Button, Spin, Empty } from 'antd'
+import { Card, Button, Spin, Empty, Select } from 'antd'
 import { LeftOutlined, RightOutlined, HomeOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
-import { apiGet } from '../services/api'
+import { apiGet, getExpenseByCategory } from '../services/api'
 import { useAuth } from '../App'
 import PeriodComparison, { type PeriodComparisonData } from '../components/PeriodComparison'
+import type { CategoryOption, TagOption } from './transactionFormSupport'
+import { getCategoryLabel } from './transactionFormSupport'
 
 export default function ExpenseDistributionPage() {
   const { user } = useAuth()
@@ -15,6 +17,10 @@ export default function ExpenseDistributionPage() {
   const [currentDate, setCurrentDate] = useState(new Date())
   const [categoryData, setCategoryData] = useState<any[]>([])
   const [comparison, setComparison] = useState<PeriodComparisonData | null>(null)
+  const [categories, setCategories] = useState<CategoryOption[]>([])
+  const [tags, setTags] = useState<TagOption[]>([])
+  const [excludedCategoryIds, setExcludedCategoryIds] = useState<string[]>([])
+  const [excludedTagIds, setExcludedTagIds] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
   const year = currentDate.getFullYear()
@@ -43,13 +49,35 @@ export default function ExpenseDistributionPage() {
 
   useEffect(() => {
     if (!bookId) return
+    Promise.all([
+      apiGet<CategoryOption[]>(`/api/categories?book_id=${bookId}&category_type=expense`),
+      apiGet<TagOption[]>(`/api/tags?book_id=${bookId}`),
+    ])
+      .then(([categoryList, tagList]) => {
+        setCategories(categoryList ?? [])
+        setTags(tagList ?? [])
+      })
+      .catch(() => {
+        setCategories([])
+        setTags([])
+      })
+  }, [bookId])
+
+  useEffect(() => {
+    if (!bookId) return
     setLoading(true)
 
     const firstDay = formatLocalDate(new Date(year, month - 1, 1))
     const lastDay = formatLocalDate(new Date(year, month, 0))
 
     Promise.all([
-      apiGet(`/api/reports/expense-by-category?book_id=${bookId}&date_from=${firstDay}&date_to=${lastDay}`),
+      getExpenseByCategory({
+        bookId,
+        dateFrom: firstDay,
+        dateTo: lastDay,
+        excludeCategoryIds: excludedCategoryIds,
+        excludeTagIds: excludedTagIds,
+      }),
       apiGet<PeriodComparisonData>(`/api/reports/period-comparison?book_id=${bookId}&year=${year}&month=${month}&type=expense`)
     ])
       .then(([data, comparisonData]) => {
@@ -65,7 +93,7 @@ export default function ExpenseDistributionPage() {
         setComparison(null)
       })
       .finally(() => setLoading(false))
-  }, [bookId, year, month])
+  }, [bookId, year, month, excludedCategoryIds, excludedTagIds])
 
   const goToPrevMonth = () => setCurrentDate(new Date(year, month - 2, 1))
   const goToNextMonth = () => setCurrentDate(new Date(year, month, 1))
@@ -106,6 +134,16 @@ export default function ExpenseDistributionPage() {
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
 
   const monthOptions = getMonthOptions()
+  const categoryOptions = categories.map((category) => ({
+    value: category.id,
+    label: getCategoryLabel(categories, category.id),
+  }))
+  const tagOptions = tags
+    .filter((tag) => tag.is_active !== false && !tag.is_deleted)
+    .map((tag) => ({
+      value: tag.id,
+      label: tag.name,
+    }))
 
   return (
     <div style={{ paddingBottom: 80 }}>
@@ -170,6 +208,41 @@ export default function ExpenseDistributionPage() {
             {opt.label}
           </div>
         ))}
+      </div>
+
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        marginBottom: 16,
+        flexWrap: 'wrap'
+      }}>
+        <Select
+          mode="multiple"
+          allowClear
+          placeholder="排除分类"
+          value={excludedCategoryIds}
+          onChange={setExcludedCategoryIds}
+          options={categoryOptions}
+          optionFilterProp="label"
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <Select
+          mode="multiple"
+          allowClear
+          placeholder="排除标签"
+          value={excludedTagIds}
+          onChange={setExcludedTagIds}
+          options={tagOptions}
+          optionFilterProp="label"
+          style={{ flex: 1, minWidth: 180 }}
+        />
+        <Button onClick={() => {
+          setExcludedCategoryIds([])
+          setExcludedTagIds([])
+        }}
+        >
+          重置
+        </Button>
       </div>
 
       {/* 统计概览 */}

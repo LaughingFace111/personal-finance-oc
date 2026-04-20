@@ -163,3 +163,30 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
 
   return response.json();
 }
+
+export interface ExpenseByCategoryParams {
+  bookId: string;
+  dateFrom: string;
+  dateTo: string;
+  excludeCategoryIds?: string[];
+  excludeTagIds?: string[];
+}
+
+export function getExpenseByCategory<T = any>({
+  bookId,
+  dateFrom,
+  dateTo,
+  excludeCategoryIds = [],
+  excludeTagIds = [],
+}: ExpenseByCategoryParams): Promise<T> {
+  const params = new URLSearchParams({
+    book_id: bookId,
+    date_from: dateFrom,
+    date_to: dateTo,
+  });
+
+  excludeCategoryIds.forEach((id) => params.append('exclude_category_ids', id));
+  excludeTagIds.forEach((id) => params.append('exclude_tag_ids', id));
+
+  return apiGet<T>(`/api/reports/expense-by-category?${params.toString()}`);
+}
