@@ -1,10 +1,14 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.core.database import Base, generate_uuid
+
+if TYPE_CHECKING:
+    from src.modules.tags.models import Tag
 
 
 class Budget(Base):
@@ -19,6 +23,7 @@ class Budget(Base):
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
     category_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("categories.id"), nullable=True)
+    tag_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("tags.id"), nullable=True)
     rollup_children: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False, index=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -29,3 +34,4 @@ class Budget(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+    tag: Mapped["Tag | None"] = relationship("Tag", foreign_keys=[tag_id])

@@ -14,7 +14,7 @@ export default function BudgetsPage() {
 
   const [budgets, setBudgets] = useState<BudgetSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'active' | 'archived'>('all')
+  const [filter, setFilter] = useState<'all' | 'active' | 'archived' | 'category' | 'tag'>('all')
 
   useEffect(() => {
     if (!bookId) return
@@ -27,6 +27,8 @@ export default function BudgetsPage() {
 
   const filteredBudgets = useMemo(() => {
     if (filter === 'all') return budgets
+    if (filter === 'category') return budgets.filter((budget) => budget.dimension_type === 'category')
+    if (filter === 'tag') return budgets.filter((budget) => budget.dimension_type === 'tag')
     return budgets.filter((budget) => budget.status === filter)
   }, [budgets, filter])
 
@@ -37,7 +39,7 @@ export default function BudgetsPage() {
       <div className="flex items-start justify-between gap-3 rounded-2xl border p-5 shadow-sm" style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card)', boxShadow: 'var(--shadow-card)' }}>
         <div>
           <h1 className="text-lg font-semibold text-[var(--text-primary)]">预算</h1>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">管理自然月或自定义区间的总预算，并查看 80% / 100% 预警。</p>
+          <p className="mt-1 text-sm text-[var(--text-secondary)]">管理总预算、分类预算和标签预算，并查看 80% / 100% 预警。</p>
         </div>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/budgets/new')}>
           新建预算
@@ -46,11 +48,13 @@ export default function BudgetsPage() {
 
       <Segmented
         value={filter}
-        onChange={(value) => setFilter(value as 'all' | 'active' | 'archived')}
+        onChange={(value) => setFilter(value as 'all' | 'active' | 'archived' | 'category' | 'tag')}
         options={[
           { label: '全部', value: 'all' },
           { label: '进行中', value: 'active' },
           { label: '已归档', value: 'archived' },
+          { label: '分类预算', value: 'category' },
+          { label: '标签预算', value: 'tag' },
         ]}
       />
 
@@ -72,4 +76,3 @@ export default function BudgetsPage() {
     </div>
   )
 }
-

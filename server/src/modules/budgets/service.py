@@ -2,6 +2,7 @@ from calendar import monthrange
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
+import json
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, aliased, selectinload
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session, aliased, selectinload
 from src.common.enums import CategoryType, TransactionStatus, TransactionType
 from src.core.database import generate_uuid
 from src.modules.categories.models import Category
+from src.modules.tags.models import Tag
 from src.modules.transactions.models import Transaction
 from src.modules.reports.service import _datetime_range
 
@@ -33,6 +35,7 @@ def _validate_budget_dates(
     status: str = "active",
     dimension_type: str = "overall",
     category_id: str | None = None,
+    tag_id: str | None = None,
 ) -> None:
     if start_date > end_date:
         raise ValueError("开始日期不能晚于结束日期")
@@ -47,6 +50,8 @@ def _validate_budget_dates(
     )
     if dimension_type == "category":
         query = query.filter(Budget.category_id == category_id)
+    if dimension_type == "tag":
+        query = query.filter(Budget.tag_id == tag_id)
 
     if exclude_budget_id:
         query = query.filter(Budget.id != exclude_budget_id)
@@ -98,7 +103,6 @@ def _get_category_or_raise(db: Session, book_id: str, category_id: str) -> Categ
         Category.id == category_id,
         Category.book_id == book_id,
         Category.is_deleted == False,
-        Category.is_active == True,
     ).first()
     if not category:
         raise ValueError("预算分类不存在")
@@ -112,18 +116,38 @@ def _validate_budget_dimension(
     book_id: str,
     dimension_type: str,
     category_id: str | None,
-) -> Category | None:
-    if dimension_type not in {"overall", "category"}:
+    tag_id: str | None,
+) -> tuple[Category | None, Tag | None]:
+    if dimension_type not in {"overall", "category", "tag"}:
         raise ValueError("不支持的预算维度")
 
     if dimension_type == "overall":
         if category_id is not None:
             raise ValueError("总预算不能指定分类")
-        return None
+        if tag_id is not None:
+            raise ValueError("总预算不能指定标签")
+        return None, None
 
-    if not category_id:
-        raise ValueError("分类预算必须选择分类")
-    return _get_category_or_raise(db, book_id, category_id)
+    if dimension_type == "category":
+        if tag_id is not None:
+            raise ValueError("分类预算不能指定标签")
+        if not category_id:
+            raise ValueError("分类预算必须选择分类")
+        return _get_category_or_raise(db, book_id, category_id), None
+
+    if category_id is not None:
+        raise ValueError("标签预算不能指定分类")
+    if not tag_id:
+        raise ValueError("标签预算必须选择标签")
+
+    tag = db.query(Tag).filter(
+        Tag.id == tag_id,
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
+        Tag.is_active == True,
+    ).first()
+    if not tag:
+        raise ValueError("预算标签不存在")
+    return None, tag
 
 
 def _get_descendant_category_ids(db: Session, book_id: str, category_id: str) -> set[str]:
@@ -158,6 +182,45 @@ def _resolve_budget_category_ids(db: Session, budget: Budget) -> set[str] | None
     if budget.rollup_children:
         return _get_descendant_category_ids(db, budget.book_id, budget.category_id)
     return {budget.category_id}
+
+
+def _get_tag_name(db: Session, book_id: str, tag_id: str | None) -> str | None:
+    if not tag_id:
+        return None
+    return db.query(Tag.name).filter(
+        Tag.id == tag_id,
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
+    ).scalar()
+
+
+def _parse_transaction_tag_names(raw_tags: str | None) -> list[str]:
+    if not raw_tags:
+        return []
+    try:
+        parsed = json.loads(raw_tags)
+    except (TypeError, json.JSONDecodeError):
+        return [item.strip() for item in raw_tags.split(",") if item.strip()]
+
+    if not isinstance(parsed, list):
+        return []
+
+    tag_names: list[str] = []
+    for item in parsed:
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict) and isinstance(item.get("name"), str):
+            name = item["name"].strip()
+        else:
+            name = ""
+        if name:
+            tag_names.append(name)
+    return tag_names
+
+
+def _transaction_has_tag_name(raw_tags: str | None, tag_name: str | None) -> bool:
+    if not tag_name:
+        return False
+    return tag_name in _parse_transaction_tag_names(raw_tags)
 
 
 def _get_category_names(db: Session, book_id: str, category_ids: set[str]) -> dict[str, str]:
@@ -197,6 +260,15 @@ def _serialize_category_breakdown(category_metrics: dict[str | None, dict[str, D
 def _build_budget_metrics(db: Session, budget: Budget) -> dict:
     dt_from, dt_to = _datetime_range(budget.start_date, budget.end_date)
     relevant_category_ids = _resolve_budget_category_ids(db, budget)
+    relevant_tag_name = _get_tag_name(db, budget.book_id, budget.tag_id) if budget.dimension_type == "tag" else None
+    if budget.dimension_type == "tag" and not relevant_tag_name:
+        return {
+            "gross_expense": Decimal("0"),
+            "refund_deduction": Decimal("0"),
+            "net_expense": Decimal("0"),
+            "transactions": [],
+            "category_breakdown": [],
+        }
     visible_category_ids = set(relevant_category_ids or set())
 
     expense_query = db.query(Transaction).options(
@@ -212,9 +284,11 @@ def _build_budget_metrics(db: Session, budget: Budget) -> dict:
     if relevant_category_ids is not None:
         expense_query = expense_query.filter(Transaction.category_id.in_(relevant_category_ids))
     expenses = expense_query.all()
+    if relevant_tag_name:
+        expenses = [txn for txn in expenses if _transaction_has_tag_name(txn.tags, relevant_tag_name)]
 
     OriginalTxn = aliased(Transaction)
-    refund_query = db.query(Transaction, OriginalTxn.category_id).outerjoin(
+    refund_query = db.query(Transaction, OriginalTxn.category_id, OriginalTxn.tags).outerjoin(
         OriginalTxn,
         Transaction.related_transaction_id == OriginalTxn.id,
     ).filter(
@@ -227,9 +301,15 @@ def _build_budget_metrics(db: Session, budget: Budget) -> dict:
     if relevant_category_ids is not None:
         refund_query = refund_query.filter(OriginalTxn.category_id.in_(relevant_category_ids))
     refunds = refund_query.all()
+    if relevant_tag_name:
+        refunds = [
+            (txn, original_category_id, original_tags)
+            for txn, original_category_id, original_tags in refunds
+            if _transaction_has_tag_name(original_tags, relevant_tag_name)
+        ]
 
     visible_category_ids.update(txn.category_id for txn in expenses if txn.category_id)
-    visible_category_ids.update(original_category_id for _, original_category_id in refunds if original_category_id)
+    visible_category_ids.update(original_category_id for _, original_category_id, _ in refunds if original_category_id)
     category_names = _get_category_names(db, budget.book_id, visible_category_ids)
 
     gross_expense = Decimal("0")
@@ -263,7 +343,7 @@ def _build_budget_metrics(db: Session, budget: Budget) -> dict:
             "related_transaction_id": txn.related_transaction_id,
         })
 
-    for txn, original_category_id in refunds:
+    for txn, original_category_id, _ in refunds:
         refund_category_name = category_names.get(original_category_id) or category_names.get(txn.category_id)
         transactions.append({
             "id": txn.id,
@@ -291,7 +371,12 @@ def _build_budget_metrics(db: Session, budget: Budget) -> dict:
     }
 
 
-def _to_budget_summary(budget: Budget, spent_amount: Decimal, category_name: str | None = None) -> dict:
+def _to_budget_summary(
+    budget: Budget,
+    spent_amount: Decimal,
+    category_name: str | None = None,
+    tag_name: str | None = None,
+) -> dict:
     remaining_amount = budget.amount - spent_amount
     usage_ratio = float(spent_amount / budget.amount) if budget.amount else 0.0
     return {
@@ -304,6 +389,8 @@ def _to_budget_summary(budget: Budget, spent_amount: Decimal, category_name: str
         "end_date": budget.end_date,
         "category_id": budget.category_id,
         "category_name": category_name,
+        "tag_id": budget.tag_id,
+        "tag_name": tag_name,
         "rollup_children": budget.rollup_children,
         "status": budget.status,
         "spent_amount": spent_amount,
@@ -314,7 +401,13 @@ def _to_budget_summary(budget: Budget, spent_amount: Decimal, category_name: str
 
 
 def create_budget(db: Session, book_id: str, data: BudgetCreateSchema) -> dict:
-    category = _validate_budget_dimension(db, book_id, data.dimension_type, data.category_id)
+    category, tag = _validate_budget_dimension(
+        db,
+        book_id,
+        data.dimension_type,
+        data.category_id,
+        data.tag_id,
+    )
     _validate_budget_dates(
         db,
         book_id,
@@ -323,6 +416,7 @@ def create_budget(db: Session, book_id: str, data: BudgetCreateSchema) -> dict:
         data.end_date,
         dimension_type=data.dimension_type,
         category_id=category.id if category else None,
+        tag_id=tag.id if tag else None,
     )
 
     budget = Budget(
@@ -335,6 +429,7 @@ def create_budget(db: Session, book_id: str, data: BudgetCreateSchema) -> dict:
         start_date=data.start_date,
         end_date=data.end_date,
         category_id=category.id if category else None,
+        tag_id=tag.id if tag else None,
         rollup_children=data.rollup_children,
         status="active",
         note=data.note,
@@ -364,7 +459,15 @@ def update_budget(db: Session, budget_id: str, book_id: str, data: BudgetUpdateS
     next_dimension_type = update_data.get("dimension_type", budget.dimension_type)
     category_id_supplied = "category_id" in update_data
     next_category_id = update_data["category_id"] if category_id_supplied else budget.category_id
-    category = _validate_budget_dimension(db, book_id, next_dimension_type, next_category_id)
+    tag_id_supplied = "tag_id" in update_data
+    next_tag_id = update_data["tag_id"] if tag_id_supplied else budget.tag_id
+    category, tag = _validate_budget_dimension(
+        db,
+        book_id,
+        next_dimension_type,
+        next_category_id,
+        next_tag_id,
+    )
     next_name = update_data.get("name", budget.name)
     next_amount = update_data.get("amount", budget.amount)
     next_start_date = update_data.get("start_date", budget.start_date)
@@ -383,6 +486,7 @@ def update_budget(db: Session, budget_id: str, book_id: str, data: BudgetUpdateS
         status=next_status,
         dimension_type=next_dimension_type,
         category_id=category.id if category else None,
+        tag_id=tag.id if tag else None,
     )
 
     budget.name = next_name.strip() if isinstance(next_name, str) else next_name
@@ -391,6 +495,7 @@ def update_budget(db: Session, budget_id: str, book_id: str, data: BudgetUpdateS
     budget.start_date = next_start_date
     budget.end_date = next_end_date
     budget.category_id = category.id if category else None
+    budget.tag_id = tag.id if tag else None
     budget.rollup_children = next_rollup_children
     budget.status = next_status
     budget.note = next_note
@@ -423,9 +528,12 @@ def get_budget_summary(db: Session, budget_id: str, book_id: str) -> dict:
     budget = _get_budget_or_raise(db, budget_id, book_id)
     metrics = _build_budget_metrics(db, budget)
     category_name = None
+    tag_name = None
     if budget.category_id:
         category_name = _get_category_names(db, book_id, {budget.category_id}).get(budget.category_id)
-    summary = _to_budget_summary(budget, metrics["net_expense"], category_name)
+    if budget.tag_id:
+        tag_name = _get_tag_name(db, book_id, budget.tag_id)
+    summary = _to_budget_summary(budget, metrics["net_expense"], category_name, tag_name)
     summary["category_breakdown"] = metrics["category_breakdown"]
     return summary
 
@@ -434,13 +542,18 @@ def get_budget_breakdown(db: Session, budget_id: str, book_id: str) -> dict:
     budget = _get_budget_or_raise(db, budget_id, book_id)
     metrics = _build_budget_metrics(db, budget)
     category_name = None
+    tag_name = None
     if budget.category_id:
         category_name = _get_category_names(db, book_id, {budget.category_id}).get(budget.category_id)
+    if budget.tag_id:
+        tag_name = _get_tag_name(db, book_id, budget.tag_id)
     return {
         "budget_id": budget.id,
         "dimension_type": budget.dimension_type,
         "category_id": budget.category_id,
         "category_name": category_name,
+        "tag_id": budget.tag_id,
+        "tag_name": tag_name,
         "rollup_children": budget.rollup_children,
         "gross_expense": metrics["gross_expense"],
         "refund_deduction": metrics["refund_deduction"],
@@ -452,8 +565,11 @@ def get_budget_breakdown(db: Session, budget_id: str, book_id: str) -> dict:
 
 def budget_to_dict(db: Session, budget: Budget) -> dict:
     category_name = None
+    tag_name = None
     if budget.category_id:
         category_name = _get_category_names(db, budget.book_id, {budget.category_id}).get(budget.category_id)
+    if budget.tag_id:
+        tag_name = _get_tag_name(db, budget.book_id, budget.tag_id)
     return {
         "id": budget.id,
         "book_id": budget.book_id,
@@ -465,6 +581,8 @@ def budget_to_dict(db: Session, budget: Budget) -> dict:
         "end_date": budget.end_date,
         "category_id": budget.category_id,
         "category_name": category_name,
+        "tag_id": budget.tag_id,
+        "tag_name": tag_name,
         "rollup_children": budget.rollup_children,
         "status": budget.status,
         "note": budget.note,
