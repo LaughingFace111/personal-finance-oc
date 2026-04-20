@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeftOutlined } from '@ant-design/icons'
 import { Button, Card, Empty, List, Popconfirm, Spin, Tag, message } from 'antd'
 
 import { useAuth } from '../App'
@@ -131,12 +132,16 @@ export default function BudgetDetailPage() {
     }
   }
 
-  if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
+if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
   if (loading) return <div style={{ textAlign: 'center', padding: 48 }}><Spin size="large" /></div>
   if (!budget || !summary || !breakdown) return <Empty description="预算不存在" />
 
   return (
     <div className="space-y-4">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/budgets')}>返回</Button>
+      </div>
+
       <BudgetProgressCard
         budget={summary}
         extra={(

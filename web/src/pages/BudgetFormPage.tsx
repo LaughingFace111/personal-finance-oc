@@ -4,6 +4,7 @@ import { Button, Card, Form, Input, InputNumber, Radio, Select, Spin, Switch, me
 
 import { useAuth } from '../App'
 import { CategorySelector, type CategoryOption } from '../components/CategorySelector'
+import { TagSelector, type TagOption } from '../components/TagSelector'
 import { apiGet, apiPatch, apiPost } from '../services/api'
 import type { TagOption } from './transactionFormSupport'
 
@@ -268,14 +269,11 @@ export default function BudgetFormPage() {
 
         {dimensionType === 'tag' && (
           <Form.Item name="tag_id" label="预算标签" rules={[{ required: true, message: '请选择预算标签' }]}>
-            <Select
-              showSearch
+            <TagSelector
+              tags={tags}
+              value={form.getFieldValue('tag_id') || ''}
+              onChange={(value) => form.setFieldValue('tag_id', value)}
               placeholder="点击选择标签"
-              optionFilterProp="label"
-              options={tags.map((tag) => ({
-                value: tag.id,
-                label: tag.name,
-              }))}
             />
           </Form.Item>
         )}
