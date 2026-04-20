@@ -57,24 +57,40 @@ export default function BudgetDetailPage() {
     if (!bookId || !id) return
     setLoading(true)
     try {
-      const [budgetData, summaryData, breakdownData] = await Promise.all([
-        apiGet<BudgetDetail>(`/api/budgets/${id}?book_id=${bookId}`),
-        apiGet<BudgetSummary>(`/api/budgets/${id}/summary?book_id=${bookId}`),
-        apiGet<BudgetBreakdown>(`/api/budgets/${id}/breakdown?book_id=${bookId}`),
-      ])
-      setBudget(budgetData)
-      setSummary(summaryData)
-      setBreakdown(breakdownData)
+      const budgetData = await apiGet<BudgetDetail>(`/api/budgets/${id}?book_id=${bookId}`, {
+        showErrorMessage: false,
+      })
 
       const params = new URLSearchParams({
         book_id: bookId,
         date_from: budgetData.start_date,
         date_to: budgetData.end_date,
       })
-      const categoryData = await apiGet<any[]>(`/api/reports/expense-by-category?${params.toString()}`)
+
+      const [summaryData, breakdownData, categoryData] = await Promise.all([
+        apiGet<BudgetSummary>(`/api/budgets/${id}/summary?book_id=${bookId}`, {
+          showErrorMessage: false,
+        }),
+        apiGet<BudgetBreakdown>(`/api/budgets/${id}/breakdown?book_id=${bookId}`, {
+          showErrorMessage: false,
+        }),
+        apiGet<any[]>(`/api/reports/expense-by-category?${params.toString()}`, {
+          showErrorMessage: false,
+        }),
+      ])
+
+      setBudget(budgetData)
+      setSummary(summaryData)
+      setBreakdown(breakdownData)
       setCategoryBreakdown(categoryData || [])
     } catch (err: any) {
-      message.error(err.message || '加载预算详情失败')
+      const errorMessage = err?.message || '加载预算详情失败'
+      if (errorMessage === 'Budget not found' || errorMessage === '请求失败 (404)') {
+        message.error('预算不存在')
+        navigate('/budgets', { replace: true })
+        return
+      }
+      message.error(errorMessage)
     } finally {
       setLoading(false)
     }
