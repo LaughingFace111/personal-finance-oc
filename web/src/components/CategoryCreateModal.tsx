@@ -93,6 +93,7 @@ export function CategoryCreateModal({
       };
       const created = await apiPost<CategoryItem>('/api/categories', payload);
       message.success('分类创建成功');
+      form.resetFields();
       onCreated?.({
         id: created.id,
         name: created.name || payload.name,
@@ -102,7 +103,6 @@ export function CategoryCreateModal({
         icon: created.icon || payload.icon || undefined,
         is_active: true,
       });
-      form.resetFields();
     } catch (err) {
       if (err instanceof Error && err.message) return;
     } finally {
@@ -123,7 +123,7 @@ export function CategoryCreateModal({
       cancelText="取消"
       confirmLoading={loading}
       okButtonProps={{ disabled: !bookId }}
-      destroyOnHidden
+      destroyOnClose
     >
       <Form form={form} layout="vertical">
         <Form.Item
@@ -186,10 +186,6 @@ export function CategoryCreateModal({
 
         <Form.Item name="icon" label="图标（可选）">
           <Input placeholder="例如：🍜" maxLength={8} />
-        </Form.Item>
-
-        <Form.Item name="color" label="颜色（可选）">
-          <Input type="color" style={{ width: '100%', height: 40, padding: 4 }} />
         </Form.Item>
       </Form>
     </Modal>
