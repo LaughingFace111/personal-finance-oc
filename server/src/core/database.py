@@ -46,6 +46,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_legacy_installment_schema(bind_engine=engine)
     _ensure_budget_schema(bind_engine=engine)
+    _ensure_frequent_items_schema(bind_engine=engine)
 
 
 def _ensure_legacy_installment_schema(bind_engine) -> None:
@@ -137,3 +138,32 @@ def _ensure_budget_schema(bind_engine) -> None:
                 connection.exec_driver_sql(
                     f"ALTER TABLE budgets ADD COLUMN {column_name} {ddl}"
                 )
+
+
+def _ensure_frequent_items_schema(bind_engine) -> None:
+    if bind_engine.dialect.name != "sqlite":
+        return
+
+    table_columns = {
+        "tags": {
+            "usage_count": "INTEGER NOT NULL DEFAULT 0",
+        },
+        "categories": {
+            "usage_count": "INTEGER NOT NULL DEFAULT 0",
+        },
+    }
+
+    with bind_engine.begin() as connection:
+        inspector = inspect(connection)
+        for table_name, columns in table_columns.items():
+            if not inspector.has_table(table_name):
+                continue
+
+            existing_columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            for column_name, ddl in columns.items():
+                if column_name not in existing_columns:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"
+                    )

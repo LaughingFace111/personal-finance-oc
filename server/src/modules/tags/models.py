@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, DateTime, Index, String
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
 from sqlalchemy.sql import func
 from src.core.database import Base
 
@@ -14,6 +14,7 @@ class Tag(Base):
     parent_id = Column(String(36), nullable=True, index=True)
     name = Column(String(50), nullable=False)
     color = Column(String(20), nullable=True)
+    usage_count = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
     is_system = Column(Boolean, default=False)  # 🛡️ L: 系统标签，所有账本共享
     created_at = Column(DateTime, server_default=func.now())

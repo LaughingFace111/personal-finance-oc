@@ -8,7 +8,10 @@ from src.core.auth import get_current_user
 from src.modules.auth.models import User
 
 from .schemas import CategoryCreate, CategoryResponse, CategoryUpdate
-from .service import create_category, delete_category, get_category, get_categories, get_category_tree, update_category
+from .service import (
+    create_category, delete_category, get_category, get_categories,
+    get_category_tree, update_category, get_frequent_categories
+)
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -51,6 +54,18 @@ def list_categories(
     """Get all categories"""
     bid = get_current_book_id(current_user, db, book_id)
     return get_categories(db, bid, category_type, include_inactive)
+
+
+@router.get("/frequent", response_model=List[CategoryResponse])
+def list_frequent_categories(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+    limit: int = 10
+):
+    """Get frequently used categories from the last 90 days"""
+    bid = get_current_book_id(current_user, db, book_id)
+    return get_frequent_categories(db, bid, limit)
 
 
 @router.get("/tree", response_model=List[dict])

@@ -18,6 +18,7 @@ class Category(Base):
     icon = Column(String(50))
     color = Column(String(20))
     sort_order = Column(Integer, default=0)
+    usage_count = Column(Integer, default=0)
     is_system = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
     is_deleted = Column(Boolean, default=False)

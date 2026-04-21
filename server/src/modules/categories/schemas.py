@@ -33,6 +33,7 @@ class CategoryUpdate(BaseModel):
 class CategoryResponse(CategoryBase):
     id: str
     book_id: str
+    usage_count: int = 0
     is_system: bool = False
     is_active: bool = True
     is_deleted: bool = False

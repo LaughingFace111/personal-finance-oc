@@ -1,10 +1,13 @@
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src.common.enums import CategoryType
 from src.core import ErrorCode, AppException, generate_uuid, NotFoundException
 from src.common import from_json
+from src.modules.transactions.models import Transaction
 
 from .models import Category
 from .schemas import CategoryCreate, CategoryUpdate
@@ -74,6 +77,48 @@ def get_category(db: Session, category_id: str, book_id: str) -> Optional[Catego
         Category.book_id == book_id,
         Category.is_deleted == False
     ).first()
+
+
+def get_frequent_categories(db: Session, book_id: str, limit: int = 10) -> List[Dict]:
+    """Get categories ranked by usage in the last 90 days"""
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    rows = db.query(
+        Category,
+        func.count(Transaction.id).label("usage_count")
+    ).join(
+        Transaction,
+        Transaction.category_id == Category.id
+    ).filter(
+        Category.book_id == book_id,
+        Category.is_deleted == False,
+        Transaction.book_id == book_id,
+        Transaction.occurred_at >= cutoff,
+        Transaction.category_id.isnot(None)
+    ).group_by(Category.id).order_by(
+        func.count(Transaction.id).desc(),
+        Category.name.asc()
+    ).limit(limit).all()
+
+    return [
+        {
+            "id": category.id,
+            "book_id": category.book_id,
+            "name": category.name,
+            "category_type": category.category_type,
+            "parent_id": category.parent_id,
+            "icon": category.icon,
+            "color": category.color,
+            "sort_order": category.sort_order,
+            "keywords": category.keywords,
+            "usage_count": usage_count,
+            "is_system": category.is_system,
+            "is_active": category.is_active,
+            "is_deleted": category.is_deleted,
+            "created_at": category.created_at,
+            "updated_at": category.updated_at,
+        }
+        for category, usage_count in rows
+    ]
 
 
 def get_category_tree(db: Session, book_id: str, category_type: Optional[str] = None) -> List[Dict]:

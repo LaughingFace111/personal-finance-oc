@@ -8,7 +8,7 @@ from .schemas import TagCreate, TagUpdate, TagResponse, TagTreeNode
 from .service import (
     init_system_tags,
     create_tag, get_tags, get_tag, update_tag, delete_tag,
-    get_first_level_tags, get_tags_tree, restore_tag, permanent_delete_tag
+    get_first_level_tags, get_tags_tree, restore_tag, permanent_delete_tag, get_frequent_tags
 )
 from src.modules.books.service import get_default_book
 
@@ -66,6 +66,18 @@ def list_first_level_tags(
     """Get only first-level tags (for parent selector)"""
     bid = get_current_book_id(current_user, db, book_id)
     return get_first_level_tags(db, bid)
+
+
+@router.get("/frequent", response_model=List[TagResponse])
+def list_frequent_tags(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+    limit: int = 10
+):
+    """Get frequently used tags from the last 90 days"""
+    bid = get_current_book_id(current_user, db, book_id)
+    return get_frequent_tags(db, bid, limit)
 
 
 @router.get("", response_model=List[TagResponse])

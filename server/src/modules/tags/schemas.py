@@ -23,6 +23,7 @@ class TagUpdate(BaseModel):
 class TagResponse(TagBase):
     id: str
     book_id: Optional[str] = None  # 🛡️ L: 系统标签允许为 None
+    usage_count: int = 0
     is_system: bool = False
     is_active: bool = True
     is_deleted: bool = False

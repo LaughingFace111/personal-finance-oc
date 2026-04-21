@@ -1,5 +1,7 @@
 import json
 import uuid
+from datetime import datetime, timedelta
+from collections import Counter
 from typing import List, Optional, Dict, Any, Iterable, Set
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -160,6 +162,51 @@ def get_tag(db: Session, tag_id: str, book_id: str = None) -> Optional[Tag]:
     if book_id:
         query = query.filter(Tag.book_id == book_id)
     return query.first()
+
+
+def get_frequent_tags(db: Session, book_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    transactions = db.query(Transaction.tags).filter(
+        Transaction.book_id == book_id,
+        Transaction.occurred_at >= cutoff,
+        Transaction.tags.isnot(None)
+    ).all()
+
+    tag_counter: Counter[str] = Counter()
+    for (raw_tags,) in transactions:
+        tag_counter.update(_parse_transaction_tag_names(raw_tags))
+
+    if not tag_counter:
+        return []
+
+    tags = db.query(Tag).filter(
+        ((Tag.book_id == book_id) | (Tag.is_system == True)),
+        Tag.is_active == True
+    ).all()
+
+    tag_map = {tag.name: tag for tag in tags}
+    frequent_tags: List[Dict[str, Any]] = []
+    for tag_name, usage_count in tag_counter.most_common():
+        tag = tag_map.get(tag_name)
+        if not tag:
+            continue
+        frequent_tags.append({
+            "id": tag.id,
+            "book_id": tag.book_id,
+            "name": tag.name,
+            "color": tag.color,
+            "parent_id": tag.parent_id,
+            "usage_count": usage_count,
+            "is_system": tag.is_system,
+            "is_active": tag.is_active,
+            "is_deleted": not tag.is_active,
+            "created_at": tag.created_at,
+            "updated_at": tag.updated_at,
+        })
+        if len(frequent_tags) >= limit:
+            break
+
+    return frequent_tags
 
 
 def _parse_transaction_tag_names(raw_tags: Any) -> List[str]:
