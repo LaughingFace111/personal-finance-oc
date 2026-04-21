@@ -115,7 +115,12 @@ export function HierarchyPickerModal({
         if (cancelled) return;
         setFrequentCategories(
           Array.isArray(data)
-            ? data.filter((item) => item?.parent_id && item?.is_active !== false)
+            ? data.filter(
+                (item) =>
+                  item?.parent_id && // only level-2 categories
+                  item?.is_active !== false &&
+                  item?.category_type === defaultCategoryType // match current expense/income type
+              )
             : []
         );
       })

@@ -93,8 +93,9 @@ export function CategoryCreateModal({
       };
       const created = await apiPost<CategoryItem>('/api/categories', payload);
       message.success('分类创建成功');
-      form.resetFields();
-      onCreated?.({
+
+      // Capture the created category before closing
+      const newCategory: CategoryItem = {
         id: created.id,
         name: created.name || payload.name,
         parent_id: created.parent_id || undefined,
@@ -102,7 +103,17 @@ export function CategoryCreateModal({
         color: created.color || payload.color || undefined,
         icon: created.icon || payload.icon || undefined,
         is_active: true,
-      });
+      };
+
+      // Reset form and close modal FIRST (so loading=false before unmount)
+      form.resetFields();
+      setLoading(false);
+      onCancel();
+
+      // Call onCreated AFTER modal is fully closed to avoid React state conflict
+      setTimeout(() => {
+        onCreated?.(newCategory);
+      }, 0);
     } catch (err) {
       if (err instanceof Error && err.message) return;
     } finally {
@@ -124,6 +135,7 @@ export function CategoryCreateModal({
       confirmLoading={loading}
       okButtonProps={{ disabled: !bookId }}
       destroyOnClose
+      bodyStyle={{ overflow: 'hidden' }}
     >
       <Form form={form} layout="vertical">
         <Form.Item
@@ -159,6 +171,7 @@ export function CategoryCreateModal({
         <Form.Item
           name="parent_id"
           label="上级分类"
+          style={{ touchAction: 'none', overflow: 'hidden' }}
           rules={[
             {
               validator: async (_, value) => {
