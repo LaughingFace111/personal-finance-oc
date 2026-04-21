@@ -1,6 +1,7 @@
 import { Modal } from 'antd';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { TagCreateModal } from './TagCreateModal';
+import { apiGet } from '../services/api';
 
 type TagId = string | number;
 
@@ -9,6 +10,7 @@ type TagItem<T extends TagId> = {
   name: string;
   color?: string;
   parent_id?: T | string;
+  usage_count?: number;
   is_active?: boolean;
   is_deleted?: boolean;
 };
@@ -191,6 +193,7 @@ export function TagMultiSelect<T extends TagId>({
   const handleTagsChange = onTagsChange ?? onTagsUpdated;
 
   const [localTags, setLocalTags] = useState<TagItem<T>[]>(resolvedTags);
+  const [frequentTags, setFrequentTags] = useState<TagItem<T>[]>([]);
   const [search, setSearch] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [draftValue, setDraftValue] = useState<T[]>(value ?? []);
@@ -202,6 +205,34 @@ export function TagMultiSelect<T extends TagId>({
   useEffect(() => {
     setLocalTags(resolvedTags);
   }, [resolvedTags]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!bookId) {
+      setFrequentTags([]);
+      return;
+    }
+
+    apiGet<TagItem<T>[]>(`/api/tags/frequent?book_id=${bookId}&limit=10`, { showErrorMessage: false })
+      .then((data) => {
+        if (cancelled) return;
+        setFrequentTags(
+          Array.isArray(data)
+            ? data.filter((tag) => tag?.is_active !== false && tag?.is_deleted !== true)
+            : []
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFrequentTags([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId]);
 
   useEffect(() => {
     if (isCreatingInline) {
@@ -256,6 +287,17 @@ export function TagMultiSelect<T extends TagId>({
       })
       .filter((group) => group.tags.length > 0);
   }, [groupedTags, modalVisible, searchKeyword]);
+
+  const visibleFrequentTags = useMemo(() => {
+    const filtered = frequentTags.filter((tag) => {
+      if (!searchKeyword) return true;
+      return tag.name.toLowerCase().includes(searchKeyword);
+    });
+
+    const selected = filtered.filter((tag) => draftSelectedSet.has(String(tag.id)));
+    const unselected = filtered.filter((tag) => !draftSelectedSet.has(String(tag.id)));
+    return [...selected, ...unselected];
+  }, [draftSelectedSet, frequentTags, searchKeyword]);
 
   const toggleTag = (tagId: T) => {
     if (disabled) return;
@@ -388,6 +430,90 @@ export function TagMultiSelect<T extends TagId>({
             </div>
 
             <div style={{ display: 'grid', gap: '12px' }}>
+              <section
+                style={{
+                  border: '1px solid var(--border-light)',
+                  background: 'var(--bg-elevated)',
+                  borderRadius: '14px',
+                  padding: '12px',
+                }}
+              >
+                <div
+                  style={{
+                    color: 'var(--text-tertiary)',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    marginBottom: '10px',
+                  }}
+                >
+                  常用标签
+                </div>
+                {visibleFrequentTags.length === 0 ? (
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>常用标签会在此展示</div>
+                ) : (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      overflowX: 'auto',
+                      paddingBottom: '2px',
+                    }}
+                  >
+                    {visibleFrequentTags.map((tag) => {
+                      const selected = draftSelectedSet.has(String(tag.id));
+                      const maxReached = Boolean(
+                        maxSelect && (draftValue ?? []).length >= maxSelect && !selected
+                      );
+                      const color = tag.color || DEFAULT_TAG_COLOR;
+                      return (
+                        <button
+                          key={`frequent-${String(tag.id)}`}
+                          type="button"
+                          onClick={() => toggleTag(tag.id)}
+                          disabled={disabled || maxReached || tag.is_active === false}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            border: selected
+                              ? `1px solid ${color}`
+                              : '1px solid var(--border-color)',
+                            background: selected ? hexToRgba(color, 0.12) : 'var(--bg-card)',
+                            color: 'var(--text-primary)',
+                            borderRadius: '999px',
+                            padding: '6px 10px',
+                            fontSize: '12px',
+                            lineHeight: 1.2,
+                            cursor:
+                              disabled || maxReached || tag.is_active === false
+                                ? 'not-allowed'
+                                : 'pointer',
+                            opacity:
+                              disabled || maxReached || tag.is_active === false ? 0.5 : 1,
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <span
+                            style={{
+                              width: '7px',
+                              height: '7px',
+                              borderRadius: '999px',
+                              background: color,
+                              flexShrink: 0,
+                            }}
+                          />
+                          <span>{tag.name}</span>
+                          <span style={{ color: 'var(--text-tertiary)', fontSize: '11px' }}>
+                            {tag.usage_count ?? 0}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
               {visibleGroups.map((group) => (
                 <section
                   key={group.key}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Button } from 'antd';
 import { CategoryCreateModal } from './CategoryCreateModal';
+import { apiGet } from '../services/api';
 
 type HierarchyItem = {
   id: string;
@@ -8,6 +9,9 @@ type HierarchyItem = {
   parent_id?: string;
   color?: string;
   category_type?: string;
+  icon?: string;
+  usage_count?: number;
+  is_active?: boolean;
 };
 
 interface HierarchyPickerModalProps {
@@ -52,6 +56,7 @@ export function HierarchyPickerModal({
   const [expandedParentId, setExpandedParentId] = useState<string | null>(null);
   const [localItems, setLocalItems] = useState<HierarchyItem[]>(items);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [frequentCategories, setFrequentCategories] = useState<HierarchyItem[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -87,12 +92,43 @@ export function HierarchyPickerModal({
 
   const isTagMode = multiple || title.includes('标签');
   const canCreateCategory = enableCreate && !isTagMode && !multiple && Boolean(bookId);
+  const shouldShowFrequentCategories = !isTagMode && !multiple;
   const defaultCategoryType = useMemo(() => {
     const categoryTypes = Array.from(
       new Set(localItems.map((item) => item.category_type).filter(Boolean))
     );
     return categoryTypes.length === 1 && categoryTypes[0] === 'income' ? 'income' : 'expense';
   }, [localItems]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!bookId || !shouldShowFrequentCategories) {
+      setFrequentCategories([]);
+      return;
+    }
+
+    apiGet<HierarchyItem[]>(`/api/categories/frequent?book_id=${bookId}&limit=10`, {
+      showErrorMessage: false,
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setFrequentCategories(
+          Array.isArray(data)
+            ? data.filter((item) => item?.parent_id && item?.is_active !== false)
+            : []
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFrequentCategories([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bookId, shouldShowFrequentCategories]);
 
   // 切换展开状态（仅一级分类触发）
   const toggleExpand = (parentId: string) => {
@@ -245,6 +281,74 @@ export function HierarchyPickerModal({
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {shouldShowFrequentCategories && (
+          <section
+            style={{
+              border: '1px solid var(--border-light)',
+              background: 'var(--bg-elevated)',
+              borderRadius: 14,
+              padding: 12,
+            }}
+          >
+            <div
+              style={{
+                color: 'var(--text-tertiary)',
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 10,
+              }}
+            >
+              常用分类
+            </div>
+            {frequentCategories.length === 0 ? (
+              <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>常用分类会在此展示</div>
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  overflowX: 'auto',
+                  paddingBottom: 2,
+                }}
+              >
+                {frequentCategories.map((item) => {
+                  const isSelected = draftValue.includes(item.id);
+                  return (
+                    <button
+                      key={`frequent-${item.id}`}
+                      type="button"
+                      onClick={() => {
+                        setDraftValue([item.id]);
+                        onConfirm(item.id);
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        border: isSelected
+                          ? '1.5px solid var(--accent-color)'
+                          : '1px solid var(--border-color)',
+                        borderRadius: 999,
+                        background: isSelected ? 'rgba(22, 119, 255, 0.12)' : 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        padding: '7px 12px',
+                        fontSize: 12,
+                        fontWeight: 500,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span>{item.icon || '📁'}</span>
+                      <span>{item.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* 有二级的一级分类 - 每3个一行 */}
         {groupedRows.map((row, rowIdx) => {
           const hasExpandedInRow = row.some(g => g.parent.id === expandedParentId);

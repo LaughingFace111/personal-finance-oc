@@ -275,6 +275,7 @@ export default function BudgetFormPage() {
               tags={tags}
               value={[form.getFieldValue('tag_id') || ''].filter(Boolean)}
               onChange={([id]) => form.setFieldValue('tag_id', id || undefined)}
+              bookId={bookId}
               maxSelect={1}
               placeholder="点击选择标签"
             />
