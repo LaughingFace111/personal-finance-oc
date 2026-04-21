@@ -254,6 +254,8 @@ export default function BudgetFormPage() {
                 categories={categories}
                 value={selectedCategoryId}
                 onChange={(value) => form.setFieldValue('category_id', value)}
+                bookId={bookId}
+                onCategoriesUpdated={setCategories}
                 placeholder="点击选择分类"
               />
             </Form.Item>

@@ -45,6 +45,7 @@ def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)
     _ensure_legacy_installment_schema(bind_engine=engine)
+    _ensure_budget_schema(bind_engine=engine)
 
 
 def _ensure_legacy_installment_schema(bind_engine) -> None:
@@ -110,3 +111,29 @@ def _ensure_legacy_installment_schema(bind_engine) -> None:
             connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_account_state_events_account_date ON account_state_events (account_id, event_date)"
             )
+
+
+def _ensure_budget_schema(bind_engine) -> None:
+    if bind_engine.dialect.name != "sqlite":
+        return
+
+    budget_columns = {
+        "dimension_type": "VARCHAR(20) NOT NULL DEFAULT 'overall'",
+        "category_id": "VARCHAR(36)",
+        "tag_id": "VARCHAR(36)",
+        "rollup_children": "BOOLEAN NOT NULL DEFAULT 1",
+    }
+
+    with bind_engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("budgets"):
+            return
+
+        existing_columns = {
+            column["name"] for column in inspector.get_columns("budgets")
+        }
+        for column_name, ddl in budget_columns.items():
+            if column_name not in existing_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE budgets ADD COLUMN {column_name} {ddl}"
+                )

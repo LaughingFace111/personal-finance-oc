@@ -72,6 +72,7 @@ export function TransactionBottomDrawer({
     occurred_at: ''
   })
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [localCategories, setLocalCategories] = useState<CategoryOption[]>(categories as CategoryOption[])
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -93,6 +94,10 @@ export function TransactionBottomDrawer({
       setCategoryModalOpen(false)
     }
   }, [visible])
+
+  useEffect(() => {
+    setLocalCategories(categories as CategoryOption[])
+  }, [categories])
 
   // 🛡️ L: Bug 2 修复 - 交易切换时立即清理状态
   useEffect(() => {
@@ -233,20 +238,20 @@ export function TransactionBottomDrawer({
 
   // 过滤分类
   const filteredCategories = useMemo(() => {
-    return categories.filter((c: any) => {
+    return localCategories.filter((c: CategoryOption) => {
       if (form.type === 'income') {
         return c.category_type === 'income' || c.category_type === 'income_expense'
       }
       return c.category_type === 'expense' || c.category_type === 'income_expense'
     })
-  }, [categories, form.type])
+  }, [form.type, localCategories])
 
   // 获取分类显示名称
   const getCategoryLabel = (categoryId: string) => {
-    const cat = categories.find((c: any) => c.id === categoryId)
+    const cat = localCategories.find((c: CategoryOption) => c.id === categoryId)
     if (!cat) return ''
     if (cat.parent_id) {
-      const parent = categories.find((c: any) => c.id === cat.parent_id)
+      const parent = localCategories.find((c: CategoryOption) => c.id === cat.parent_id)
       return parent ? `${parent.name} / ${cat.name}` : cat.name
     }
     return cat.name
@@ -637,6 +642,16 @@ export function TransactionBottomDrawer({
             items={filteredCategories as any}
             value={form.category_id}
             emptyText="暂无可选类别"
+            bookId={bookId}
+            enableCreate
+            createButtonText="[+ 新建分类]"
+            onItemsUpdated={(nextItems) =>
+              setLocalCategories((current) => {
+                const merged = new Map(current.map((item) => [item.id, item]));
+                (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
+                return Array.from(merged.values());
+              })
+            }
             onCancel={() => setCategoryModalOpen(false)}
             onConfirm={(nextValue) => {
               setForm(f => ({ ...f, category_id: typeof nextValue === 'string' ? nextValue : '' }))

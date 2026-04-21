@@ -245,6 +245,8 @@ export default function InstallmentPage() {
               categories={installmentCategories as any}
               value={categoryId}
               onChange={setCategoryId}
+              bookId={bookId || null}
+              onCategoriesUpdated={(nextCategories) => setCategories(nextCategories as CategoryOption[])}
               placeholder="点击选择类别"
             />
           </div>

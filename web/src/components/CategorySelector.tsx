@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
 
 export interface CategoryOption {
@@ -18,21 +18,30 @@ export function CategorySelector({
   categories,
   value,
   onChange,
+  bookId = null,
+  onCategoriesUpdated,
   placeholder = "点击选择类别",
   allowClear = true,
 }: {
   categories: CategoryOption[];
   value: string;
   onChange: (value: string) => void;
+  bookId?: string | null;
+  onCategoriesUpdated?: (nextCategories: CategoryOption[]) => void;
   placeholder?: string;
   allowClear?: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
+  const [localCategories, setLocalCategories] = useState<CategoryOption[]>(categories);
+
+  useEffect(() => {
+    setLocalCategories(categories);
+  }, [categories]);
   
   // 过滤有效分类（排除已删除或停用的）
   const validCategories = useMemo(() => 
-    categories.filter(c => c.category_type !== 'income_expense'), 
-    [categories]
+    localCategories.filter(c => c.category_type !== 'income_expense'), 
+    [localCategories]
   );
   
   // 获取选中分类的显示名称
@@ -71,6 +80,18 @@ export function CategorySelector({
         items={validCategories}
         value={value}
         emptyText="暂无可选类别"
+        bookId={bookId}
+        enableCreate={Boolean(bookId)}
+        createButtonText="[+ 新建分类]"
+        onItemsUpdated={(nextItems) => {
+          setLocalCategories((current) => {
+            const merged = new Map(current.map((item) => [item.id, item]));
+            (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
+            const nextCategories = Array.from(merged.values());
+            onCategoriesUpdated?.(nextCategories);
+            return nextCategories;
+          });
+        }}
         onCancel={() => setModalOpen(false)}
         onConfirm={(nextValue) => {
           onChange(typeof nextValue === 'string' ? nextValue : '');

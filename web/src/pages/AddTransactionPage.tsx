@@ -327,6 +327,16 @@ export default function AddTransactionPage() {
         items={filteredCategories}
         value={categoryId}
         emptyText="暂无可选类别"
+        bookId={bookId}
+        enableCreate={Boolean(bookId)}
+        createButtonText="[+ 新建分类]"
+        onItemsUpdated={(nextItems) =>
+          setCategories((current) => {
+            const merged = new Map(current.map((item) => [item.id, item]));
+            (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
+            return Array.from(merged.values());
+          })
+        }
         onCancel={() => setCategoryModalOpen(false)}
         onConfirm={(nextValue) => {
           setCategoryId(typeof nextValue === 'string' ? nextValue : '');

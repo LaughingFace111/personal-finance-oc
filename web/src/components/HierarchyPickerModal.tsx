@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Button } from 'antd';
+import { CategoryCreateModal } from './CategoryCreateModal';
 
 type HierarchyItem = {
   id: string;
@@ -16,6 +17,10 @@ interface HierarchyPickerModalProps {
   value: string | string[];
   multiple?: boolean;
   emptyText?: string;
+  bookId?: string | null;
+  enableCreate?: boolean;
+  createButtonText?: string;
+  onItemsUpdated?: (nextItems: HierarchyItem[]) => void;
   onCancel: () => void;
   onConfirm: (nextValue: string | string[]) => void;
 }
@@ -36,11 +41,17 @@ export function HierarchyPickerModal({
   value,
   multiple = false,
   emptyText = '暂无可选项',
+  bookId = null,
+  enableCreate = false,
+  createButtonText = '[+ 新建分类]',
+  onItemsUpdated,
   onCancel,
   onConfirm,
 }: HierarchyPickerModalProps) {
   const [draftValue, setDraftValue] = useState<string[]>([]);
   const [expandedParentId, setExpandedParentId] = useState<string | null>(null);
+  const [localItems, setLocalItems] = useState<HierarchyItem[]>(items);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -48,19 +59,23 @@ export function HierarchyPickerModal({
     setExpandedParentId(null);
   }, [open, value]);
 
+  useEffect(() => {
+    setLocalItems(items);
+  }, [items]);
+
   // 分离一级和二级分类
   const { groups, singles, orphans } = useMemo(() => {
-    const topLevel = items.filter((item) => !item.parent_id);
+    const topLevel = localItems.filter((item) => !item.parent_id);
     const withChildren = topLevel.map((parent) => ({
       parent,
-      children: items.filter((item) => item.parent_id === parent.id),
+      children: localItems.filter((item) => item.parent_id === parent.id),
     }));
-    const childIds = new Set(items.filter((item) => item.parent_id).map((item) => item.id));
+    const childIds = new Set(localItems.filter((item) => item.parent_id).map((item) => item.id));
     const ungroupedTopLevel = topLevel.filter(
       (item) => !withChildren.some((group) => group.parent.id === item.id && group.children.length > 0),
     );
-    const orphanChildren = items.filter(
-      (item) => item.parent_id && !items.some((candidate) => candidate.id === item.parent_id),
+    const orphanChildren = localItems.filter(
+      (item) => item.parent_id && !localItems.some((candidate) => candidate.id === item.parent_id),
     );
 
     return {
@@ -68,9 +83,16 @@ export function HierarchyPickerModal({
       singles: ungroupedTopLevel.filter((item) => !childIds.has(item.id)),
       orphans: orphanChildren,
     };
-  }, [items]);
+  }, [localItems]);
 
-  const isTagMode = items.some((item) => item.color) || title.includes('标签');
+  const isTagMode = multiple || title.includes('标签');
+  const canCreateCategory = enableCreate && !isTagMode && !multiple && Boolean(bookId);
+  const defaultCategoryType = useMemo(() => {
+    const categoryTypes = Array.from(
+      new Set(localItems.map((item) => item.category_type).filter(Boolean))
+    );
+    return categoryTypes.length === 1 && categoryTypes[0] === 'income' ? 'income' : 'expense';
+  }, [localItems]);
 
   // 切换展开状态（仅一级分类触发）
   const toggleExpand = (parentId: string) => {
@@ -78,10 +100,11 @@ export function HierarchyPickerModal({
   };
 
   // 切换选中状态
-  const toggleSelect = (id: string, isChild: boolean = false) => {
+  const toggleSelect = (id: string, options?: { isLeafOption?: boolean }) => {
+    const isLeafOption = options?.isLeafOption === true;
     if (multiple) {
       // 多选模式（标签）- 只有点击二级标签才切换选中状态
-      if (isChild) {
+      if (isLeafOption) {
         setDraftValue((current) =>
           current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
         );
@@ -91,7 +114,7 @@ export function HierarchyPickerModal({
       }
     } else {
       // 单选模式（分类）- 只有点击二级分类才选中并关闭
-      if (isChild) {
+      if (isLeafOption) {
         setDraftValue([id]);
         onConfirm(id);
       } else {
@@ -102,15 +125,16 @@ export function HierarchyPickerModal({
   };
 
   // 渲染一级分类卡片
-  const renderParentCard = (item: HierarchyItem, isExpanded: boolean) => {
+  const renderParentCard = (item: HierarchyItem, isExpanded: boolean, hasChildren: boolean) => {
     const isSelected = draftValue.includes(item.id);
     const tagColor = item.color || 'blue';
+    const selectableLevelOne = !isTagMode && !hasChildren;
     
     return (
       <button
         key={item.id}
         type="button"
-        onClick={() => toggleSelect(item.id, false)}
+        onClick={() => toggleSelect(item.id, { isLeafOption: selectableLevelOne })}
         style={{
           flex: '1 1 0',
           minWidth: 0,
@@ -133,33 +157,40 @@ export function HierarchyPickerModal({
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
         )}
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
-          {isExpanded ? '▼' : '▶'}
-        </span>
+        {hasChildren ? (
+          <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
+            {isExpanded ? '▼' : '▶'}
+          </span>
+        ) : null}
       </button>
     );
   };
 
   // 渲染二级分类卡片
-  const renderChildCard = (item: HierarchyItem) => {
+  const renderChildCard = (item: HierarchyItem, options?: { isLevelOneOption?: boolean }) => {
     const isSelected = draftValue.includes(item.id);
     const tagColor = item.color || 'blue';
+    const isLevelOneOption = options?.isLevelOneOption === true;
     
     return (
       <button
         key={item.id}
         type="button"
-        onClick={() => toggleSelect(item.id, true)}
+        onClick={() => toggleSelect(item.id, { isLeafOption: true })}
         style={{
           minWidth: '70px',
           padding: '8px 12px',
           border: isSelected ? `1.5px solid ${isTagMode ? tagColor : 'var(--accent-color)'}` : '1px solid var(--border-color)',
           borderRadius: '10px',
-          background: isSelected ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)') : 'var(--bg-card)',
+          background: isSelected
+            ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)')
+            : isLevelOneOption
+              ? 'var(--bg-elevated)'
+              : 'var(--bg-card)',
           color: 'var(--text-primary)',
           cursor: 'pointer',
           fontSize: 12,
-          fontWeight: 500,
+          fontWeight: isLevelOneOption ? 600 : 500,
           transition: 'all 0.2s ease',
           display: 'inline-flex',
           alignItems: 'center',
@@ -174,6 +205,11 @@ export function HierarchyPickerModal({
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
         )}
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+        {isLevelOneOption && (
+          <span style={{ color: 'var(--text-tertiary)', fontSize: 11, flexShrink: 0 }}>
+            （一级）
+          </span>
+        )}
       </button>
     );
   };
@@ -223,7 +259,7 @@ export function HierarchyPickerModal({
                 }}
               >
                 {row.map(({ parent, children }) => 
-                  renderParentCard(parent, expandedParentId === parent.id)
+                  renderParentCard(parent, expandedParentId === parent.id, children.length > 0)
                 )}
               </div>
               
@@ -242,6 +278,11 @@ export function HierarchyPickerModal({
                     animation: 'fadeIn 0.2s ease',
                   }}
                 >
+                  {!isTagMode && (() => {
+                    const expandedGroup = groups.find(g => g.parent.id === expandedParentId);
+                    if (!expandedGroup) return null;
+                    return renderChildCard(expandedGroup.parent, { isLevelOneOption: true });
+                  })()}
                   {groups
                     .find(g => g.parent.id === expandedParentId)
                     ?.children.map(child => renderChildCard(child))}
@@ -256,7 +297,7 @@ export function HierarchyPickerModal({
           const singleRows = chunkArray(singles, 3);
           return singleRows.map((row, rowIdx) => (
             <div key={`single-${rowIdx}`} style={{ display: 'flex', gap: 8 }}>
-              {row.map(item => renderParentCard(item, false))}
+              {row.map(item => renderParentCard(item, false, false))}
             </div>
           ));
         })()}
@@ -265,6 +306,26 @@ export function HierarchyPickerModal({
         {orphans.length > 0 && isTagMode && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
             {orphans.map(item => renderChildCard(item))}
+          </div>
+        )}
+
+        {canCreateCategory && (
+          <div style={{ marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={() => setCreateModalOpen(true)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                padding: 0,
+                color: 'var(--accent-color)',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              {createButtonText}
+            </button>
           </div>
         )}
       </div>
@@ -304,6 +365,32 @@ export function HierarchyPickerModal({
       <div style={{ maxHeight: '50vh', overflowY: 'auto', padding: '8px 0' }}>
         {renderContent()}
       </div>
+      <CategoryCreateModal
+        open={createModalOpen}
+        bookId={bookId}
+        initialType={defaultCategoryType}
+        onCancel={() => setCreateModalOpen(false)}
+        onCreated={(createdCategory) => {
+          const nextItem: HierarchyItem = {
+            id: createdCategory.id,
+            name: createdCategory.name,
+            parent_id: createdCategory.parent_id,
+            color: createdCategory.color,
+            category_type: createdCategory.category_type,
+          };
+          const nextItems = localItems.some((item) => item.id === nextItem.id)
+            ? localItems
+            : [...localItems, nextItem];
+          setLocalItems(nextItems);
+          onItemsUpdated?.(nextItems);
+          setCreateModalOpen(false);
+          if (nextItem.parent_id) {
+            setExpandedParentId(nextItem.parent_id);
+          }
+          setDraftValue([nextItem.id]);
+          onConfirm(nextItem.id);
+        }}
+      />
     </Modal>
   );
 }

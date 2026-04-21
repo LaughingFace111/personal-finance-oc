@@ -16,6 +16,9 @@ type Category = {
   id: string;
   name: string;
   category_type: string;
+  parent_id?: string;
+  color?: string;
+  icon?: string;
 };
 
 type SelectTagOption = TagOption & {
@@ -1030,6 +1033,16 @@ export function StagingImportTable() {
         items={categoryModalItems}
         value={editingRow?.categoryId || ''}
         emptyText="暂无可选类别"
+        bookId={bookId}
+        enableCreate={Boolean(bookId)}
+        createButtonText="[+ 新建分类]"
+        onItemsUpdated={(nextItems) =>
+          setCategories((current) => {
+            const merged = new Map(current.map((item) => [item.id, item]));
+            (nextItems as Category[]).forEach((item) => merged.set(item.id, item));
+            return Array.from(merged.values());
+          })
+        }
         onCancel={() => {
           setCategoryModalOpen(false);
           setEditingRowId(null);

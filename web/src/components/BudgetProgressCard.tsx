@@ -5,9 +5,15 @@ export interface BudgetSummary {
   id: string
   name: string
   period_type: 'monthly' | 'custom_range'
+  dimension_type: 'overall' | 'category' | 'tag'
   amount: string | number
   start_date: string
   end_date: string
+  category_id?: string | null
+  category_name?: string | null
+  tag_id?: string | null
+  tag_name?: string | null
+  rollup_children?: boolean
   status: 'active' | 'archived'
   spent_amount: string | number
   remaining_amount: string | number
@@ -41,6 +47,11 @@ export default function BudgetProgressCard({
 }) {
   const meta = alertMeta[budget.alert_status] || alertMeta.normal
   const percent = Math.min(100, Math.round((budget.usage_ratio || 0) * 100))
+  const dimensionLabel = budget.dimension_type === 'category'
+    ? `分类预算${budget.category_name ? ` · ${budget.category_name}` : ''}`
+    : budget.dimension_type === 'tag'
+      ? `标签预算${budget.tag_name ? ` · ${budget.tag_name}` : ''}`
+      : '总预算'
 
   return (
     <Card
@@ -59,6 +70,9 @@ export default function BudgetProgressCard({
           <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>{budget.name}</div>
           <div style={{ marginTop: 4, fontSize: 13, color: 'var(--text-secondary)' }}>
             {formatBudgetPeriod(budget)}
+          </div>
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-tertiary)' }}>
+            {dimensionLabel}
           </div>
         </div>
         <Tag color={meta.color}>{meta.tag}</Tag>

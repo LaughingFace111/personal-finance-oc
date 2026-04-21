@@ -9,6 +9,7 @@ function redirectToLogin() {
 
 interface FetchOptions extends RequestInit {
   requireAuth?: boolean;
+  showErrorMessage?: boolean;
 }
 
 // Unified API fetch function
@@ -38,18 +39,21 @@ export async function apiFetch(url: string, options: FetchOptions = {}): Promise
 export async function apiJson<T = any>(url: string, options: FetchOptions = {}): Promise<T> {
   // If body is FormData, let fetch handle it automatically (don't set Content-Type)
   const isFormData = options.body instanceof FormData;
+  const { showErrorMessage = true, ...requestOptions } = options;
   
   const response = await apiFetch(url, {
-    ...options,
+    ...requestOptions,
     headers: isFormData 
-      ? options.headers 
-      : { 'Content-Type': 'application/json', ...options.headers },
+      ? requestOptions.headers 
+      : { 'Content-Type': 'application/json', ...requestOptions.headers },
   });
 
   // Only handle auth errors - 401/403
   if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token');
-    message.error('登录已失效，请重新登录');
+    if (showErrorMessage) {
+      message.error('登录已失效，请重新登录');
+    }
     redirectToLogin();
     throw new Error('AUTH_EXPIRED');
   }
@@ -77,7 +81,9 @@ export async function apiJson<T = any>(url: string, options: FetchOptions = {}):
     } catch {
       errorMsg = `请求失败 (${response.status})`;
     }
-    message.error(errorMsg);
+    if (showErrorMessage) {
+      message.error(errorMsg);
+    }
     const err = new Error(errorMsg);
     (err as any).detail = errorMsg;
     throw err;
@@ -125,8 +131,9 @@ export function apiPatch<T = any>(url: string, body?: any, options?: FetchOption
 
 // Upload request (for FormData - file uploads)
 export async function apiUpload<T = any>(url: string, formData: FormData, options?: FetchOptions): Promise<T> {
+  const { showErrorMessage = true, ...requestOptions } = options || {};
   const response = await apiFetch(url, {
-    ...options,
+    ...requestOptions,
     method: 'POST',
     body: formData,
     // Don't set Content-Type for FormData - browser will set with boundary
@@ -135,7 +142,9 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
   // Handle auth errors
   if (response.status === 401 || response.status === 403) {
     localStorage.removeItem('token');
-    message.error('登录已失效，请重新登录');
+    if (showErrorMessage) {
+      message.error('登录已失效，请重新登录');
+    }
     redirectToLogin();
     throw new Error('AUTH_EXPIRED');
   }
@@ -157,7 +166,9 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
     } catch {
       errorMsg = `上传失败 (${response.status})`;
     }
-    message.error(errorMsg);
+    if (showErrorMessage) {
+      message.error(errorMsg);
+    }
     throw new Error(errorMsg);
   }
 
