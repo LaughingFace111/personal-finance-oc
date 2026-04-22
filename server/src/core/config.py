@@ -53,6 +53,9 @@ class Settings(BaseSettings):
         "http://151d081e.r38.cpolar.top",
         "https://2beb2b1.r38.cpolar.top",
         "http://2beb2b1.r38.cpolar.top",
+        # 2026-04-22 新隧道
+        "https://72cae0d0.r38.cpolar.top",
+        "http://72cae0d0.r38.cpolar.top",
     ]
 
     class Config:
