@@ -328,8 +328,8 @@ export function TagMultiSelect<T extends TagId>({
     [draftSelectionCount, maxSelect]
   );
   const selectedTags = useMemo(
-    () => localTags.filter((tag) => selectedSet.has(String(tag.id))),
-    [localTags, selectedSet]
+    () => localTags.filter((tag) => draftSelectedSet.has(String(tag.id))),
+    [localTags, draftSelectedSet]
   );
 
   return (
@@ -713,7 +713,9 @@ export function TagMultiSelect<T extends TagId>({
           handleTagsChange?.(nextTags);
 
           if (!draftSelectedSet.has(String(nextTag.id))) {
-            setDraftValue((current) => [...current, nextTag.id]);
+            const newDraft = [...(draftValue ?? []), nextTag.id];
+            setDraftValue(newDraft);
+            onChange(newDraft); // Immediately notify parent so value/draftValue stay in sync
           }
 
           setCreateDraft('');
