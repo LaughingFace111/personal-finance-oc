@@ -492,12 +492,13 @@ export function HierarchyPickerModal({
             : [...localItems, nextItem];
           setLocalItems(nextItems);
           onItemsUpdated?.(nextItems);
-          setCreateModalOpen(false);
+          // 预高亮新分类（不触发关闭）
+          setDraftValue([nextItem.id]);
           if (nextItem.parent_id) {
             setExpandedParentId(nextItem.parent_id);
           }
-          setDraftValue([nextItem.id]);
-          onConfirm(nextItem.id);
+          // 不关闭 CategoryCreateModal，也不关闭/选中父弹窗
+          // 由用户手动关闭创建弹窗
         }}
       />
     </Modal>

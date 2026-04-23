@@ -94,7 +94,6 @@ export function CategoryCreateModal({
       const created = await apiPost<CategoryItem>('/api/categories', payload);
       message.success('分类创建成功');
 
-      // Capture the created category before closing
       const newCategory: CategoryItem = {
         id: created.id,
         name: created.name || payload.name,
@@ -105,13 +104,9 @@ export function CategoryCreateModal({
         is_active: true,
       };
 
+      // 保存后不关闭弹窗，让用户手动关闭；只通知父组件刷新列表
+      onCreated?.(newCategory);
       form.resetFields();
-      setLoading(false);
-
-      onCancel();
-      window.setTimeout(() => {
-        onCreated?.(newCategory);
-      }, 0);
     } catch (err) {
       if (err instanceof Error && err.message) return;
     } finally {
