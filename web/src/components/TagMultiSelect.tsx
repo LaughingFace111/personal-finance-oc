@@ -454,9 +454,10 @@ export function TagMultiSelect<T extends TagId>({
                   <div
                     style={{
                       display: 'flex',
+                      flexWrap: 'wrap',
                       gap: '8px',
-                      overflowX: 'auto',
                       paddingBottom: '2px',
+                      width: '100%',
                     }}
                   >
                     {visibleFrequentTags.map((tag) => {

@@ -791,6 +791,15 @@ export function StagingImportTable() {
       return;
     }
 
+    // 前端整体校验：必填字段未配置时直接阻断，不允许部分导入
+    const incompleteRows = visibleSelectedRows.filter(
+      (row) => !row.matchedAccountId || !row.categoryId
+    );
+    if (incompleteRows.length > 0) {
+      message.error(`有 ${incompleteRows.length} 条交易未完成账户或分类配置，无法导入，请先完善后重试`);
+      return;
+    }
+
     setConfirming(true);
     try {
       const res = await apiPost<ConfirmResponse>('/api/bills/confirm-import', {

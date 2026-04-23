@@ -311,8 +311,8 @@ export function HierarchyPickerModal({
               <div
                 style={{
                   display: 'flex',
+                  flexWrap: 'wrap',
                   gap: 8,
-                  overflowX: 'auto',
                   paddingBottom: 2,
                 }}
               >

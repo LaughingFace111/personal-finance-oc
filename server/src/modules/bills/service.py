@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.common.enums import ImportStatus, SourceType
-from src.core import AppException, ErrorCode, IdempotencyException, NotFoundException, generate_uuid
+from src.core import AppException, ErrorCode, IdempotencyException, NotFoundException, ValidationException, generate_uuid
 from src.modules.books.service import get_default_book
 from src.modules.imports.models import ImportBatch, ImportRow
 from src.modules.accounts.service import get_accounts
@@ -381,6 +381,16 @@ def confirm_import(
     skipped_rows = 0
     error_rows = 0
     warnings: List[str] = []
+
+    # 前置硬阻断校验：只要存在任一必填字段缺失的记录，直接拒绝整批导入
+    incomplete_items = [
+        item for item in confirmed_items
+        if not item.matchedAccountId or not item.categoryId
+    ]
+    if incomplete_items:
+        raise ValidationException(
+            f"有 {len(incomplete_items)} 条交易未完成账户或分类配置，无法导入"
+        )
 
     for item in confirmed_items:
         row = row_map.get(item.tempId)

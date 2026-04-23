@@ -105,13 +105,10 @@ export function CategoryCreateModal({
         is_active: true,
       };
 
-      // Reset form and close modal FIRST (so loading=false before unmount)
+      // 只关闭 CategoryCreateModal，不执行选中
+      // 防止同时关闭两个弹窗导致 HierarchyPickerModal 状态异常
       form.resetFields();
       setLoading(false);
-
-      // Call onCreated BEFORE onCancel (onCancel unmounts the modal via destroyOnClose,
-      // and setState on unmounted component is a bug)
-      onCreated?.(newCategory);
       onCancel();
     } catch (err) {
       if (err instanceof Error && err.message) return;
