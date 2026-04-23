@@ -130,8 +130,7 @@ export function CategoryCreateModal({
       onOk={handleOk}
       okText="创建并选中"
       cancelText="取消"
-      confirmLoading={loading}
-      okButtonProps={{ disabled: !bookId }}
+      okButtonProps={{ disabled: !bookId || loading }}
       destroyOnClose
       bodyStyle={{ overflow: 'hidden' }}
     >
