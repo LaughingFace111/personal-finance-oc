@@ -109,6 +109,9 @@ export function CategoryCreateModal({
       // 防止同时关闭两个弹窗导致 HierarchyPickerModal 状态异常
       form.resetFields();
       setLoading(false);
+
+      // 通知 HierarchyPickerModal 添加新分类（会同步到父组件状态）
+      onCreated?.(newCategory);
       onCancel();
     } catch (err) {
       if (err instanceof Error && err.message) return;
