@@ -98,7 +98,15 @@ export function CategoryCreateModal({
         icon: values.icon?.trim() || null,
         is_active: true,
       };
-      const created = await apiPost<CategoryItem>('/api/categories', payload);
+
+      // 10秒超时兜底，确保 API 挂死时也能关闭弹窗
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('网络请求超时，请重试')), 10000)
+      );
+      const created = await Promise.race([
+        apiPost<CategoryItem>('/api/categories', payload),
+        timeoutPromise,
+      ]);
       message.success('分类创建成功');
 
       const newCategory: CategoryItem = {
@@ -153,6 +161,7 @@ export function CategoryCreateModal({
           </Button>
         </Space>
       }
+      maskClosable
       destroyOnClose
       bodyStyle={{ overflow: 'hidden' }}
     >
