@@ -105,14 +105,13 @@ export function CategoryCreateModal({
         is_active: true,
       };
 
-      // 只关闭 CategoryCreateModal，不执行选中
-      // 防止同时关闭两个弹窗导致 HierarchyPickerModal 状态异常
       form.resetFields();
       setLoading(false);
 
-      // 通知 HierarchyPickerModal 添加新分类（会同步到父组件状态）
-      onCreated?.(newCategory);
       onCancel();
+      window.setTimeout(() => {
+        onCreated?.(newCategory);
+      }, 0);
     } catch (err) {
       if (err instanceof Error && err.message) return;
     } finally {
