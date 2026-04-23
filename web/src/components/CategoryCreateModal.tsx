@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Form, Input, Modal, Radio, Select, message } from 'antd';
+import { Button, Form, Input, Modal, Radio, Select, Space, message } from 'antd';
 import { apiGet, apiPost } from '../services/api';
 
 type CategoryTypeValue = 'expense' | 'income';
@@ -131,10 +131,28 @@ export function CategoryCreateModal({
         form.resetFields();
         onCancel();
       }}
-      onOk={() => { void handleOk(); }}
-      okText="创建并选中"
-      cancelText="取消"
-      okButtonProps={{ disabled: !bookId || loading }}
+      footer={
+        <Space>
+          <Button
+            onClick={() => {
+              form.resetFields();
+              onCancel();
+            }}
+          >
+            取消
+          </Button>
+          <Button
+            type="primary"
+            disabled={!bookId || loading}
+            loading={loading}
+            onClick={() => {
+              void handleOk();
+            }}
+          >
+            创建并选中
+          </Button>
+        </Space>
+      }
       destroyOnClose
       bodyStyle={{ overflow: 'hidden' }}
     >
