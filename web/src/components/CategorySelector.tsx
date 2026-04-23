@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
+import { apiGet } from '../services/api';
 
 export interface CategoryOption {
   id: string;
@@ -33,6 +34,27 @@ export function CategorySelector({
 }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [localCategories, setLocalCategories] = useState<CategoryOption[]>(categories);
+  const [needRefresh, setNeedRefresh] = useState(false);
+
+  // 新建分类后重新获取分类列表，确保父组件和本地状态同步
+  const refreshCategories = useCallback(async () => {
+    if (!bookId) return;
+    try {
+      const latest = await apiGet<CategoryOption[]>(`/api/categories?book_id=${bookId}`);
+      const valid = (latest || []).filter((c: CategoryOption) => c.category_type !== 'income_expense');
+      setLocalCategories(valid);
+      onCategoriesUpdated?.(valid);
+    } catch {
+      // 静默失败，不影响用户操作
+    }
+  }, [bookId]);
+
+  useEffect(() => {
+    if (needRefresh) {
+      setNeedRefresh(false);
+      refreshCategories();
+    }
+  }, [needRefresh, refreshCategories]);
 
   useEffect(() => {
     setLocalCategories(categories);
@@ -84,13 +106,14 @@ export function CategorySelector({
         enableCreate={Boolean(bookId)}
         createButtonText="[+ 新建分类]"
         onItemsUpdated={(nextItems) => {
+          // 先乐观更新本地状态
           setLocalCategories((current) => {
             const merged = new Map(current.map((item) => [item.id, item]));
             (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
-            const nextCategories = Array.from(merged.values());
-            onCategoriesUpdated?.(nextCategories);
-            return nextCategories;
+            return Array.from(merged.values());
           });
+          // 触发 API 刷新，确保新建分类同步到父组件
+          setNeedRefresh(true);
         }}
         onCancel={() => setModalOpen(false)}
         onConfirm={(nextValue) => {
