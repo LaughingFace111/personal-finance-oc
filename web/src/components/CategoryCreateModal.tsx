@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Form, Input, Modal, Radio, Select, Space, message } from 'antd';
+import { Form, Input, Modal, Radio, Select, message } from 'antd';
 import { apiGet, apiPost } from '../services/api';
 
 type CategoryTypeValue = 'expense' | 'income';
@@ -79,16 +79,9 @@ export function CategoryCreateModal({
       return;
     }
 
-    let values;
     try {
-      values = await form.validateFields();
-    } catch {
-      // 表单校验失败，AntD 已展示内联错误，无需处理
-      return;
-    }
-
-    setLoading(true);
-    try {
+      const values = await form.validateFields();
+      setLoading(true);
       const payload = {
         name: values.name.trim(),
         parent_id: values.level === 'level2' ? values.parent_id : null,
@@ -98,17 +91,10 @@ export function CategoryCreateModal({
         icon: values.icon?.trim() || null,
         is_active: true,
       };
-
-      // 10秒超时兜底，确保 API 挂死时也能关闭弹窗
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('网络请求超时，请重试')), 10000)
-      );
-      const created = await Promise.race([
-        apiPost<CategoryItem>('/api/categories', payload),
-        timeoutPromise,
-      ]);
+      const created = await apiPost<CategoryItem>('/api/categories', payload);
       message.success('分类创建成功');
 
+      // Capture the created category before closing
       const newCategory: CategoryItem = {
         id: created.id,
         name: created.name || payload.name,
@@ -120,12 +106,14 @@ export function CategoryCreateModal({
       };
 
       form.resetFields();
+      setLoading(false);
+
       onCancel();
-      // AntD 不再跟踪 Promise，状态更新在同一次事件循环中批处理，无需 setTimeout
-      onCreated?.(newCategory);
+      window.setTimeout(() => {
+        onCreated?.(newCategory);
+      }, 0);
     } catch (err) {
-      // 仅展示真实的运行时错误，而非静默吞掉
-      message.error(err instanceof Error ? err.message : '创建失败，请重试');
+      if (err instanceof Error && err.message) return;
     } finally {
       setLoading(false);
     }
@@ -139,29 +127,11 @@ export function CategoryCreateModal({
         form.resetFields();
         onCancel();
       }}
-      footer={
-        <Space>
-          <Button
-            onClick={() => {
-              form.resetFields();
-              onCancel();
-            }}
-          >
-            取消
-          </Button>
-          <Button
-            type="primary"
-            disabled={!bookId || loading}
-            loading={loading}
-            onClick={() => {
-              void handleOk();
-            }}
-          >
-            创建并选中
-          </Button>
-        </Space>
-      }
-      maskClosable
+      onOk={handleOk}
+      okText="创建并选中"
+      cancelText="取消"
+      confirmLoading={loading}
+      okButtonProps={{ disabled: !bookId }}
       destroyOnClose
       bodyStyle={{ overflow: 'hidden' }}
     >
