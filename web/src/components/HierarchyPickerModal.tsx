@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Modal, Button } from 'antd';
+import { Button, Modal } from 'antd';
 import { CategoryCreateModal } from './CategoryCreateModal';
 import { apiGet } from '../services/api';
+import { getHierarchyPathLabel } from '../utils/hierarchySelection';
 
 type HierarchyItem = {
   id: string;
@@ -29,13 +30,46 @@ interface HierarchyPickerModalProps {
   onConfirm: (nextValue: string | string[]) => void;
 }
 
-// 将数组按每3个一组分组
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const result: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    result.push(arr.slice(i, i + size));
-  }
-  return result;
+type CategoryViewMode = 'topLevelGrid' | 'expandedCategory';
+
+function SelectionPill({
+  label,
+  selected,
+  onClick,
+  tone = 'default',
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+  tone?: 'default' | 'parent';
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        border: selected ? '1.5px solid var(--accent-color)' : '1px solid var(--border-color)',
+        background: selected
+          ? 'rgba(22, 119, 255, 0.12)'
+          : tone === 'parent'
+            ? 'var(--bg-elevated)'
+            : 'var(--bg-card)',
+        color: 'var(--text-primary)',
+        borderRadius: 12,
+        padding: '8px 12px',
+        fontSize: 13,
+        fontWeight: tone === 'parent' ? 700 : 500,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        textAlign: 'left',
+      }}
+    >
+      {selected ? <span style={{ color: 'var(--accent-color)', fontSize: 10 }}>✓</span> : null}
+      <span>{label}</span>
+    </button>
+  );
 }
 
 export function HierarchyPickerModal({
@@ -53,57 +87,69 @@ export function HierarchyPickerModal({
   onConfirm,
 }: HierarchyPickerModalProps) {
   const [draftValue, setDraftValue] = useState<string[]>([]);
-  const [expandedParentId, setExpandedParentId] = useState<string | null>(null);
   const [localItems, setLocalItems] = useState<HierarchyItem[]>(items);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [frequentCategories, setFrequentCategories] = useState<HierarchyItem[]>([]);
+  const [search, setSearch] = useState('');
+  const [categoryViewMode, setCategoryViewMode] = useState<CategoryViewMode>('topLevelGrid');
+  const [expandedCategoryId, setExpandedCategoryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setDraftValue(Array.isArray(value) ? value : value ? [value] : []);
-    setExpandedParentId(null);
+    setSearch('');
+    setCategoryViewMode('topLevelGrid');
+    setExpandedCategoryId(null);
   }, [open, value]);
 
   useEffect(() => {
     setLocalItems(items);
   }, [items]);
 
-  // 分离一级和二级分类
-  const { groups, singles, orphans } = useMemo(() => {
-    const topLevel = localItems.filter((item) => !item.parent_id);
-    const withChildren = topLevel.map((parent) => ({
-      parent,
-      children: localItems.filter((item) => item.parent_id === parent.id),
-    }));
-    const childIds = new Set(localItems.filter((item) => item.parent_id).map((item) => item.id));
-    const ungroupedTopLevel = topLevel.filter(
-      (item) => !withChildren.some((group) => group.parent.id === item.id && group.children.length > 0),
-    );
-    const orphanChildren = localItems.filter(
-      (item) => item.parent_id && !localItems.some((candidate) => candidate.id === item.parent_id),
-    );
+  const isTagMode = title.includes('标签');
+  const canCreateCategory = enableCreate && !isTagMode && Boolean(bookId);
+  const searchableItems = useMemo(
+    () => localItems.filter((item) => item.is_active !== false),
+    [localItems],
+  );
 
-    return {
-      groups: withChildren.filter((group) => group.children.length > 0),
-      singles: ungroupedTopLevel.filter((item) => !childIds.has(item.id)),
-      orphans: orphanChildren,
-    };
-  }, [localItems]);
+  const groups = useMemo(() => {
+    const roots = searchableItems.filter((item) => !item.parent_id);
+    return roots
+      .map((parent) => ({
+        parent,
+        children: searchableItems.filter((item) => item.parent_id === parent.id),
+      }))
+      .sort((left, right) => left.parent.name.localeCompare(right.parent.name, 'zh-CN'));
+  }, [searchableItems]);
 
-  const isTagMode = multiple || title.includes('标签');
-  const canCreateCategory = enableCreate && !isTagMode && !multiple && Boolean(bookId);
-  const shouldShowFrequentCategories = !isTagMode && !multiple;
+  const singles = useMemo(
+    () =>
+      groups
+        .filter((group) => group.children.length === 0)
+        .map((group) => group.parent)
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
+    [groups],
+  );
+
+  const groupedParents = useMemo(
+    () => groups.filter((group) => group.children.length > 0),
+    [groups],
+  );
+  const topLevelCategories = useMemo(
+    () => groups.map((group) => group.parent),
+    [groups],
+  );
+
   const defaultCategoryType = useMemo(() => {
-    const categoryTypes = Array.from(
-      new Set(localItems.map((item) => item.category_type).filter(Boolean))
-    );
+    const categoryTypes = Array.from(new Set(localItems.map((item) => item.category_type).filter(Boolean)));
     return categoryTypes.length === 1 && categoryTypes[0] === 'income' ? 'income' : 'expense';
   }, [localItems]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!bookId || !shouldShowFrequentCategories) {
+    if (!bookId || isTagMode) {
       setFrequentCategories([]);
       return;
     }
@@ -117,312 +163,276 @@ export function HierarchyPickerModal({
           Array.isArray(data)
             ? data.filter(
                 (item) =>
-                  item?.parent_id && // only level-2 categories
                   item?.is_active !== false &&
-                  item?.category_type === defaultCategoryType // match current expense/income type
+                  item?.category_type === defaultCategoryType,
               )
-            : []
+            : [],
         );
       })
       .catch(() => {
-        if (!cancelled) {
-          setFrequentCategories([]);
-        }
+        if (!cancelled) setFrequentCategories([]);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [bookId, shouldShowFrequentCategories]);
+  }, [bookId, defaultCategoryType, isTagMode]);
 
-  // 切换展开状态（仅一级分类触发）
-  const toggleExpand = (parentId: string) => {
-    setExpandedParentId(expandedParentId === parentId ? null : parentId);
-  };
+  const selectedSet = useMemo(() => new Set(draftValue), [draftValue]);
+  const searchKeyword = search.trim().toLowerCase();
 
-  // 切换选中状态
-  const toggleSelect = (id: string, options?: { isLeafOption?: boolean }) => {
-    const isLeafOption = options?.isLeafOption === true;
-    if (multiple) {
-      // 多选模式（标签）- 只有点击二级标签才切换选中状态
-      if (isLeafOption) {
-        setDraftValue((current) =>
-          current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+  const visibleFrequentCategories = useMemo(() => {
+    if (isTagMode) return [];
+    return frequentCategories.filter((item) => {
+      if (!searchKeyword) return true;
+      return getHierarchyPathLabel(searchableItems, item).toLowerCase().includes(searchKeyword);
+    });
+  }, [frequentCategories, isTagMode, searchKeyword, searchableItems]);
+
+  const visibleGroupedParents = useMemo(() => {
+    return groupedParents
+      .map((group) => {
+        if (!searchKeyword) return group;
+
+        const parentMatches = group.parent.name.toLowerCase().includes(searchKeyword);
+        const nextChildren = group.children.filter((child) =>
+          getHierarchyPathLabel(searchableItems, child).toLowerCase().includes(searchKeyword),
         );
-      } else {
-        // 点击一级标签只展开/收起，不选中
-        toggleExpand(id);
-      }
-    } else {
-      // 单选模式（分类）- 只有点击二级分类才选中并关闭
-      if (isLeafOption) {
-        setDraftValue([id]);
-        onConfirm(id);
-      } else {
-        // 点击一级分类只展开/收起
-        toggleExpand(id);
-      }
+
+        if (parentMatches) return group;
+        return { ...group, children: nextChildren };
+      })
+      .filter((group) => group.children.length > 0 || group.parent.name.toLowerCase().includes(searchKeyword));
+  }, [groupedParents, searchKeyword, searchableItems]);
+
+  const visibleSingles = useMemo(() => {
+    if (!searchKeyword) return singles;
+    return singles.filter((item) => item.name.toLowerCase().includes(searchKeyword));
+  }, [searchKeyword, singles]);
+
+  const selectedLabels = useMemo(
+    () =>
+      draftValue
+        .map((itemId) => getHierarchyPathLabel(searchableItems, itemId))
+        .filter(Boolean),
+    [draftValue, searchableItems],
+  );
+
+  const hasVisibleContent =
+    visibleFrequentCategories.length > 0 ||
+    visibleGroupedParents.length > 0 ||
+    visibleSingles.length > 0;
+
+  const visibleTopLevelCategories = useMemo(() => {
+    if (!searchKeyword) return topLevelCategories;
+    return groups
+      .filter((group) => {
+        if (group.parent.name.toLowerCase().includes(searchKeyword)) return true;
+        return group.children.some((child) =>
+          getHierarchyPathLabel(searchableItems, child).toLowerCase().includes(searchKeyword),
+        );
+      })
+      .map((group) => group.parent);
+  }, [groups, searchKeyword, searchableItems, topLevelCategories]);
+
+  const expandedCategoryGroup = useMemo(() => {
+    if (!expandedCategoryId) return null;
+    return groups.find((group) => group.parent.id === expandedCategoryId) ?? null;
+  }, [expandedCategoryId, groups]);
+
+  const visibleExpandedChildren = useMemo(() => {
+    if (!expandedCategoryGroup) return [];
+    if (!searchKeyword) return expandedCategoryGroup.children;
+    return expandedCategoryGroup.children.filter((child) =>
+      getHierarchyPathLabel(searchableItems, child).toLowerCase().includes(searchKeyword),
+    );
+  }, [expandedCategoryGroup, searchKeyword, searchableItems]);
+
+  const isCategoryMode = !isTagMode;
+
+  const toggleSelect = (id: string) => {
+    if (!multiple) {
+      setDraftValue([id]);
+      onConfirm(id);
+      return;
     }
+
+    setDraftValue((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
   };
 
-  // 渲染一级分类卡片
-  const renderParentCard = (item: HierarchyItem, isExpanded: boolean, hasChildren: boolean) => {
-    const isSelected = draftValue.includes(item.id);
-    const tagColor = item.color || 'blue';
-    const selectableLevelOne = !isTagMode && !hasChildren;
-    
+  const openExpandedCategory = (categoryId: string) => {
+    setExpandedCategoryId(categoryId);
+    setCategoryViewMode('expandedCategory');
+  };
+
+  const renderTagModeContent = () => {
     return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => toggleSelect(item.id, { isLeafOption: selectableLevelOne })}
-        style={{
-          flex: '1 1 0',
-          minWidth: 0,
-          padding: '10px 8px',
-          border: isSelected ? `1.5px solid ${isTagMode ? tagColor : 'var(--accent-color)'}` : '1px solid var(--border-color)',
-          borderRadius: '12px',
-          background: isSelected ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)') : 'var(--bg-elevated)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer',
-          fontSize: 13,
-          fontWeight: 600,
-          transition: 'all 0.2s ease',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-        }}
-      >
-        {isTagMode && (
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
-        )}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-        {hasChildren ? (
-          <span style={{ fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0 }}>
-            {isExpanded ? '▼' : '▶'}
-          </span>
+      <>
+        {!hasVisibleContent ? (
+          <div
+            style={{
+              border: '1px dashed var(--border-color)',
+              borderRadius: 16,
+              padding: '28px 16px',
+              textAlign: 'center',
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-elevated)',
+            }}
+          >
+            {searchKeyword ? '没有匹配的选项' : emptyText}
+          </div>
         ) : null}
-      </button>
-    );
-  };
 
-  // 渲染二级分类卡片
-  const renderChildCard = (item: HierarchyItem, options?: { isLevelOneOption?: boolean }) => {
-    const isSelected = draftValue.includes(item.id);
-    const tagColor = item.color || 'blue';
-    const isLevelOneOption = options?.isLevelOneOption === true;
-    
-    return (
-      <button
-        key={item.id}
-        type="button"
-        onClick={() => toggleSelect(item.id, { isLeafOption: true })}
-        style={{
-          minWidth: '70px',
-          padding: '8px 12px',
-          border: isSelected ? `1.5px solid ${isTagMode ? tagColor : 'var(--accent-color)'}` : '1px solid var(--border-color)',
-          borderRadius: '10px',
-          background: isSelected
-            ? (isTagMode ? `${tagColor}15` : 'rgba(22, 119, 255, 0.12)')
-            : isLevelOneOption
-              ? 'var(--bg-elevated)'
-              : 'var(--bg-card)',
-          color: 'var(--text-primary)',
-          cursor: 'pointer',
-          fontSize: 12,
-          fontWeight: isLevelOneOption ? 600 : 500,
-          transition: 'all 0.2s ease',
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 4,
-        }}
-      >
-        {isSelected && (
-          <span style={{ color: isTagMode ? tagColor : 'var(--accent-color)', fontSize: 10, fontWeight: 'bold' }}>✓</span>
-        )}
-        {isTagMode && (
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: tagColor, flexShrink: 0 }} />
-        )}
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-        {isLevelOneOption && (
-          <span style={{ color: 'var(--text-tertiary)', fontSize: 11, flexShrink: 0 }}>
-            （一级）
-          </span>
-        )}
-      </button>
-    );
-  };
+        {visibleGroupedParents.map((group) => (
+          <section
+            key={group.parent.id}
+            style={{
+              border: '1px solid var(--border-light)',
+              borderRadius: 14,
+              padding: 12,
+              background: 'var(--bg-card)',
+            }}
+          >
+            <div style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+              {group.parent.name}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <SelectionPill
+                label={`${group.parent.name}（一级）`}
+                selected={selectedSet.has(group.parent.id)}
+                onClick={() => toggleSelect(group.parent.id)}
+                tone="parent"
+              />
+              {group.children.map((child) => (
+                <SelectionPill
+                  key={child.id}
+                  label={child.name}
+                  selected={selectedSet.has(child.id)}
+                  onClick={() => toggleSelect(child.id)}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
 
-  // 将有二级的一级分类按每3个一组分组
-  const groupedRows = useMemo(() => {
-    return chunkArray(groups, 3);
-  }, [groups]);
-
-  // 检查某个parentId是否在当前行中
-  const isParentInRow = (row: typeof groups, parentId: string) => {
-    return row.some(g => g.parent.id === parentId);
-  };
-
-  // 渲染内容
-  const renderContent = () => {
-    if (groups.length === 0 && singles.length === 0 && orphans.length === 0) {
-      return (
-        <div
-          style={{
-            border: '1px dashed var(--border-color)',
-            borderRadius: '16px',
-            padding: '28px 16px',
-            textAlign: 'center',
-            color: 'var(--text-secondary)',
-            background: 'var(--bg-elevated)',
-          }}
-        >
-          {emptyText}
-        </div>
-      );
-    }
-
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {shouldShowFrequentCategories && (
+        {visibleSingles.length > 0 ? (
           <section
             style={{
               border: '1px solid var(--border-light)',
-              background: 'var(--bg-elevated)',
               borderRadius: 14,
               padding: 12,
+              background: 'var(--bg-card)',
             }}
           >
-            <div
-              style={{
-                color: 'var(--text-tertiary)',
-                fontSize: 12,
-                fontWeight: 600,
-                marginBottom: 10,
-              }}
-            >
-              常用分类
+            <div style={{ color: 'var(--text-primary)', fontSize: 13, fontWeight: 700, marginBottom: 10 }}>
+              其他可选项
             </div>
-            {frequentCategories.length === 0 ? (
-              <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>常用分类会在此展示</div>
-            ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 8,
-                  paddingBottom: 2,
-                }}
-              >
-                {frequentCategories.map((item) => {
-                  const isSelected = draftValue.includes(item.id);
-                  return (
-                    <button
-                      key={`frequent-${item.id}`}
-                      type="button"
-                      onClick={() => {
-                        setDraftValue([item.id]);
-                        onConfirm(item.id);
-                      }}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        border: isSelected
-                          ? '1.5px solid var(--accent-color)'
-                          : '1px solid var(--border-color)',
-                        borderRadius: 999,
-                        background: isSelected ? 'rgba(22, 119, 255, 0.12)' : 'var(--bg-card)',
-                        color: 'var(--text-primary)',
-                        padding: '7px 12px',
-                        fontSize: 12,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span>{item.icon || '📁'}</span>
-                      <span>{item.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {visibleSingles.map((item) => (
+                <SelectionPill
+                  key={item.id}
+                  label={item.name}
+                  selected={selectedSet.has(item.id)}
+                  onClick={() => toggleSelect(item.id)}
+                  tone="parent"
+                />
+              ))}
+            </div>
           </section>
-        )}
+        ) : null}
+      </>
+    );
+  };
 
-        {/* 有二级的一级分类 - 每3个一行 */}
-        {groupedRows.map((row, rowIdx) => {
-          const hasExpandedInRow = row.some(g => g.parent.id === expandedParentId);
-          
-          return (
-            <div key={`row-${rowIdx}`}>
-              {/* 一级分类行 */}
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                }}
-              >
-                {row.map(({ parent, children }) => 
-                  renderParentCard(parent, expandedParentId === parent.id, children.length > 0)
-                )}
-              </div>
-              
-              {/* 展开的二级分类容器 - 出现在包含展开项的行下方 */}
-              {hasExpandedInRow && expandedParentId && (
-                <div
+  const renderCategoryTopLevelGrid = () => {
+    return (
+      <>
+        {visibleTopLevelCategories.length === 0 ? (
+          <div
+            style={{
+              border: '1px dashed var(--border-color)',
+              borderRadius: 16,
+              padding: '28px 16px',
+              textAlign: 'center',
+              color: 'var(--text-secondary)',
+              background: 'var(--bg-elevated)',
+            }}
+          >
+            {searchKeyword ? '没有匹配的分类' : emptyText}
+          </div>
+        ) : (
+          <section
+            aria-label="顶级分类网格"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+              gap: 10,
+            }}
+          >
+            {visibleTopLevelCategories.map((item) => {
+              const isLastExpanded = expandedCategoryId === item.id;
+              const childCount = searchableItems.filter((candidate) => candidate.parent_id === item.id).length;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-label={`展开分类 ${item.name}`}
+                  onClick={() => openExpandedCategory(item.id)}
                   style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
+                    border: isLastExpanded ? '1.5px solid var(--accent-color)' : '1px solid var(--border-color)',
+                    borderRadius: 16,
+                    background: isLastExpanded ? 'rgba(22, 119, 255, 0.10)' : 'var(--bg-card)',
+                    padding: '14px 12px',
+                    minHeight: 92,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    display: 'grid',
                     gap: 8,
-                    padding: 12,
-                    background: 'var(--bg-card)',
-                    borderRadius: 12,
-                    marginTop: 8,
-                    border: '1px solid var(--border-light)',
-                    animation: 'fadeIn 0.2s ease',
+                    alignContent: 'space-between',
                   }}
                 >
-                  {!isTagMode && (() => {
-                    const expandedGroup = groups.find(g => g.parent.id === expandedParentId);
-                    if (!expandedGroup) return null;
-                    return renderChildCard(expandedGroup.parent, { isLevelOneOption: true });
-                  })()}
-                  {groups
-                    .find(g => g.parent.id === expandedParentId)
-                    ?.children.map(child => renderChildCard(child))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        {/* 无二级的一级分类 - 每3个一行 */}
-        {singles.length > 0 && (() => {
-          const singleRows = chunkArray(singles, 3);
-          return singleRows.map((row, rowIdx) => (
-            <div key={`single-${rowIdx}`} style={{ display: 'flex', gap: 8 }}>
-              {row.map(item => renderParentCard(item, false, false))}
-            </div>
-          ));
-        })()}
-
-        {/* 未分组的二级标签 */}
-        {orphans.length > 0 && isTagMode && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {orphans.map(item => renderChildCard(item))}
-          </div>
+                  <span style={{ fontSize: 24, lineHeight: 1 }}>{item.icon || '📁'}</span>
+                  <span style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 700 }}>{item.name}</span>
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>
+                    {isLastExpanded ? '上次展开' : childCount > 0 ? `${childCount} 个子分类` : '进入详情'}
+                  </span>
+                </button>
+              );
+            })}
+          </section>
         )}
+      </>
+    );
+  };
 
-        {canCreateCategory && (
-          <div style={{ marginTop: 6 }}>
+  const renderExpandedCategoryView = () => {
+    if (!expandedCategoryGroup) {
+      return renderCategoryTopLevelGrid();
+    }
+
+    const { parent } = expandedCategoryGroup;
+    const canSelectParent = expandedCategoryGroup.children.length === 0;
+
+    return (
+      <section
+        aria-label="展开分类视图"
+        style={{
+          border: '1px solid var(--border-light)',
+          borderRadius: 16,
+          background: 'var(--bg-card)',
+          padding: 14,
+          display: 'grid',
+          gap: 14,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <div style={{ display: 'grid', gap: 6 }}>
             <button
               type="button"
-              onClick={() => setCreateModalOpen(true)}
+              aria-label="返回顶级分类"
+              onClick={() => setCategoryViewMode('topLevelGrid')}
               style={{
                 border: 'none',
                 background: 'transparent',
@@ -431,13 +441,61 @@ export function HierarchyPickerModal({
                 fontSize: 13,
                 fontWeight: 700,
                 cursor: 'pointer',
+                textAlign: 'left',
               }}
             >
-              {createButtonText}
+              ← 返回分类网格
             </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 26, lineHeight: 1 }}>{parent.icon || '📁'}</span>
+              <div>
+                <div style={{ color: 'var(--text-primary)', fontSize: 16, fontWeight: 800 }}>{parent.name}</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                  {expandedCategoryGroup.children.length > 0 ? '请选择下一级分类' : '当前分类没有下级，可直接选择'}
+                </div>
+              </div>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: 10 }}>
+          {canSelectParent ? (
+            <SelectionPill
+              label={`${parent.name}（选择此分类）`}
+              selected={selectedSet.has(parent.id)}
+              onClick={() => toggleSelect(parent.id)}
+              tone="parent"
+            />
+          ) : null}
+
+          {visibleExpandedChildren.length > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {visibleExpandedChildren.map((child) => (
+                <SelectionPill
+                  key={child.id}
+                  label={child.name}
+                  selected={selectedSet.has(child.id)}
+                  onClick={() => toggleSelect(child.id)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {!canSelectParent && visibleExpandedChildren.length === 0 ? (
+            <div
+              style={{
+                border: '1px dashed var(--border-color)',
+                borderRadius: 12,
+                padding: '20px 14px',
+                color: 'var(--text-secondary)',
+                background: 'var(--bg-elevated)',
+              }}
+            >
+              {searchKeyword ? '没有匹配的子分类' : '当前分类暂无可选子分类'}
+            </div>
+          ) : null}
+        </div>
+      </section>
     );
   };
 
@@ -446,12 +504,11 @@ export function HierarchyPickerModal({
       title={title}
       open={open}
       onCancel={onCancel}
+      width={460}
       footer={
         multiple ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-              已选 {draftValue.length} 项
-            </span>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>已选 {draftValue.length} 项</span>
             <div>
               <Button onClick={onCancel}>取消</Button>
               <Button type="primary" onClick={() => onConfirm(draftValue)} style={{ marginLeft: 8 }}>
@@ -461,19 +518,88 @@ export function HierarchyPickerModal({
           </div>
         ) : null
       }
-      width={440}
       closable={!multiple}
       maskClosable={!multiple}
+      destroyOnHidden
     >
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(-8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-      <div style={{ maxHeight: '50vh', overflowY: 'auto', padding: '8px 0' }}>
-        {renderContent()}
+      <div style={{ display: 'grid', gap: 12 }}>
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={isTagMode ? '搜索标签' : '搜索分类'}
+          style={{
+            width: '100%',
+            border: '1px solid var(--border-color)',
+            borderRadius: 10,
+            background: 'var(--bg-elevated)',
+            color: 'var(--text-primary)',
+            padding: '9px 12px',
+            fontSize: 13,
+            outline: 'none',
+          }}
+        />
+
+        {selectedLabels.length > 0 ? (
+          <div
+            style={{
+              border: '1px solid var(--border-light)',
+              borderRadius: 12,
+              padding: 12,
+              background: 'var(--bg-elevated)',
+            }}
+          >
+            <div style={{ color: 'var(--text-tertiary)', fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              当前已选
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {selectedLabels.map((label) => (
+                <span
+                  key={label}
+                  style={{
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 999,
+                    padding: '5px 10px',
+                    fontSize: 12,
+                    background: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ maxHeight: '52vh', overflowY: 'auto', display: 'grid', gap: 12, paddingRight: 2 }}>
+          {isCategoryMode
+            ? categoryViewMode === 'expandedCategory'
+              ? renderExpandedCategoryView()
+              : renderCategoryTopLevelGrid()
+            : renderTagModeContent()}
+
+          {canCreateCategory ? (
+            <div>
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(true)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  color: 'var(--accent-color)',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {createButtonText}
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
+
       <CategoryCreateModal
         open={createModalOpen}
         bookId={bookId}
@@ -492,13 +618,7 @@ export function HierarchyPickerModal({
             : [...localItems, nextItem];
           setLocalItems(nextItems);
           onItemsUpdated?.(nextItems);
-          // 预高亮新分类（不触发关闭）
           setDraftValue([nextItem.id]);
-          if (nextItem.parent_id) {
-            setExpandedParentId(nextItem.parent_id);
-          }
-          // 不关闭 CategoryCreateModal，也不关闭/选中父弹窗
-          // 由用户手动关闭创建弹窗
         }}
       />
     </Modal>

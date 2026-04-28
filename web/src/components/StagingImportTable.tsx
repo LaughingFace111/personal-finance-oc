@@ -6,6 +6,7 @@ import { HierarchyPickerModal } from './HierarchyPickerModal';
 import { TagMultiSelect } from './TagMultiSelect';
 import { getDefaultBookId, TagOption } from '../pages/transactionFormSupport';
 import { clearImportDraft, loadImportDraft, saveImportDraft } from '../utils/importDraftStorage';
+import { getHierarchyPathLabel } from '../utils/hierarchySelection';
 
 type Account = {
   id: string;
@@ -434,7 +435,7 @@ const StagingImportRow = React.memo(
               }}
             >
               <span style={{ color: row.categoryId ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                {row.categoryId ? categoryById.get(row.categoryId)?.name || '未分类' : '点击选择类别'}
+                {row.categoryId ? getHierarchyPathLabel(Array.from(categoryById.values()), row.categoryId) || '未分类' : '点击选择类别'}
               </span>
               <span style={{ color: 'var(--text-tertiary)' }}>›</span>
             </button>
@@ -483,7 +484,7 @@ const StagingImportRow = React.memo(
             金额：¥{Number(row.amount || 0).toFixed(2)}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-            当前账户：{row.matchedAccountName || row.rawAccountName || '-'} | 当前类别：{row.categoryName || row.tradeCategory || '-'}
+            当前账户：{row.matchedAccountName || row.rawAccountName || '-'} | 当前类别：{row.categoryId ? getHierarchyPathLabel(Array.from(categoryById.values()), row.categoryId) : row.tradeCategory || '-'}
           </div>
         </div>
 

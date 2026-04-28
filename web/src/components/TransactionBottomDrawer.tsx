@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { Drawer, Button, Input, message, Spin } from 'antd'
 import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api'
-import { HierarchyPickerModal } from './HierarchyPickerModal'
+import { CategorySelector } from './CategorySelector'
 import { TagMultiSelect } from './TagMultiSelect'
 import TransferPage from '../pages/TransferPage'
 import OtherTransactionPage from '../pages/OtherTransactionPage'
@@ -79,9 +79,6 @@ export function TransactionBottomDrawer({
   const [specialFormLoading, setSpecialFormLoading] = useState(false)
   const [transferInitialValues, setTransferInitialValues] = useState<TransferFormInitialValues | null>(null)
 
-  // 弹窗状态
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false)
-
   const isTransferTransaction = transaction?.transaction_type === 'transfer'
   const isRepaymentTransaction = transaction?.transaction_type === 'repayment_credit_card'
   const isSpecialTransaction = isTransferTransaction || isRepaymentTransaction
@@ -91,7 +88,6 @@ export function TransactionBottomDrawer({
     if (!visible) {
       // 弹窗关闭时重置标签状态
       setSelectedTagIds([])
-      setCategoryModalOpen(false)
     }
   }, [visible])
 
@@ -245,17 +241,6 @@ export function TransactionBottomDrawer({
       return c.category_type === 'expense' || c.category_type === 'income_expense'
     })
   }, [form.type, localCategories])
-
-  // 获取分类显示名称
-  const getCategoryLabel = (categoryId: string) => {
-    const cat = localCategories.find((c: CategoryOption) => c.id === categoryId)
-    if (!cat) return ''
-    if (cat.parent_id) {
-      const parent = localCategories.find((c: CategoryOption) => c.id === cat.parent_id)
-      return parent ? `${parent.name} / ${cat.name}` : cat.name
-    }
-    return cat.name
-  }
 
   const validate = () => {
     const errs: Record<string, string> = {}
@@ -546,22 +531,14 @@ export function TransactionBottomDrawer({
             {/* 分类选择 - 弹窗选择 */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>类别</div>
-              <button
-                type="button"
-                onClick={() => setCategoryModalOpen(true)}
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid var(--border-color)', fontSize: 15,
-                  background: 'var(--bg-input)', color: 'var(--text-primary)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  cursor: 'pointer', textAlign: 'left'
-                }}
-              >
-                <span style={{ color: form.category_id ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                  {form.category_id ? getCategoryLabel(form.category_id) : '点击选择类别'}
-                </span>
-                <span style={{ color: 'var(--text-tertiary)' }}>›</span>
-              </button>
+              <CategorySelector
+                categories={filteredCategories as any}
+                value={form.category_id}
+                onChange={(value) => setForm(f => ({ ...f, category_id: value }))}
+                bookId={bookId}
+                onCategoriesUpdated={(nextItems) => setLocalCategories(nextItems as CategoryOption[])}
+                placeholder="点击选择类别"
+              />
             </div>
 
             {/* 日期选择 */}
@@ -634,30 +611,6 @@ export function TransactionBottomDrawer({
             >保存</Button>
           </div>
           ) : null}
-
-          {/* 分类选择弹窗 */}
-          {!isSpecialTransaction ? <HierarchyPickerModal
-            open={categoryModalOpen}
-            title="选择类别"
-            items={filteredCategories as any}
-            value={form.category_id}
-            emptyText="暂无可选类别"
-            bookId={bookId}
-            enableCreate
-            createButtonText="[+ 新建分类]"
-            onItemsUpdated={(nextItems) =>
-              setLocalCategories((current) => {
-                const merged = new Map(current.map((item) => [item.id, item]));
-                (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
-                return Array.from(merged.values());
-              })
-            }
-            onCancel={() => setCategoryModalOpen(false)}
-            onConfirm={(nextValue) => {
-              setForm(f => ({ ...f, category_id: typeof nextValue === 'string' ? nextValue : '' }))
-              setCategoryModalOpen(false)
-            }}
-          /> : null}
 
         </>
       )}

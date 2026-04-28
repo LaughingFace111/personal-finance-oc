@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { CategorySelector } from '../components/CategorySelector';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
   TransactionFormLayout,
@@ -14,7 +15,6 @@ import {
   CategoryOption,
   TagOption,
   getAccountOptionLabel,
-  getCategoryLabel,
   getDefaultBookId,
   loadTransactionFormData,
   OtherTransactionFormInitialValues,
@@ -376,18 +376,14 @@ export default function OtherTransactionPage({
 
       <div>
         <label className={transactionFormLabelClass}>分类</label>
-        <select
+        <CategorySelector
+          categories={installmentCategories as any}
           value={categoryId}
-          onChange={(e) => setCategoryId(e.target.value)}
-          className={transactionFormFieldClass}
-        >
-          <option value="">选择分类</option>
-          {installmentCategories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {getCategoryLabel(categories, category.id)}
-            </option>
-          ))}
-        </select>
+          onChange={setCategoryId}
+          bookId={bookId || null}
+          onCategoriesUpdated={(nextItems) => setCategories(nextItems as CategoryOption[])}
+          placeholder="点击选择分类"
+        />
       </div>
 
       <div>

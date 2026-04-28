@@ -5,6 +5,7 @@ import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutl
 import { useState, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
 import { HierarchyPickerModal } from './components/HierarchyPickerModal'
+import { CategorySelector } from './components/CategorySelector'
 import { TagMultiSelect } from './components/TagMultiSelect'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
@@ -3062,12 +3063,9 @@ const MatchRulesPage = () => {
 
   useEffect(() => { loadData() }, [bookId])
 
-  const targetOptions =
-    form.target_type === 'account'
-      ? accounts
-      : form.target_type === 'category'
-        ? categories
-        : tags
+  const targetOptions = form.target_type === 'account' ? accounts : []
+  const filteredRuleCategories = categories
+  const activeRuleTags = tags.filter((item: any) => item?.is_active !== false && item?.is_deleted !== true)
 
   const renderFormContent = () => (
     <div style={{ display: 'grid', gap: 12 }}>
@@ -3085,14 +3083,36 @@ const MatchRulesPage = () => {
           { value: 'tag', label: '标签匹配' },
         ]}
       />
-      <Select
-        placeholder="选择替换值"
-        value={form.target_id || undefined}
-        onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
-        options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
-        showSearch
-        optionFilterProp="label"
-      />
+      {form.target_type === 'account' ? (
+        <Select
+          placeholder="选择替换值"
+          value={form.target_id || undefined}
+          onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+          options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
+          showSearch
+          optionFilterProp="label"
+        />
+      ) : null}
+      {form.target_type === 'category' ? (
+        <CategorySelector
+          categories={filteredRuleCategories as any}
+          value={form.target_id}
+          onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+          bookId={bookId}
+          onCategoriesUpdated={setCategories}
+          placeholder="选择分类"
+        />
+      ) : null}
+      {form.target_type === 'tag' ? (
+        <TagMultiSelect
+          tags={activeRuleTags}
+          value={form.target_id ? [form.target_id] : []}
+          onChange={([value]) => setForm(prev => ({ ...prev, target_id: value || '' }))}
+          bookId={bookId}
+          maxSelect={1}
+          placeholder="选择标签"
+        />
+      ) : null}
       <InputNumber
         min={0}
         value={form.priority}
@@ -3229,14 +3249,36 @@ const MatchRulesPage = () => {
               { value: 'tag', label: '标签匹配' },
             ]}
           />
-          <Select
-            placeholder="选择替换值"
-            value={form.target_id || undefined}
-            onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
-            options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
-            showSearch
-            optionFilterProp="label"
-          />
+          {form.target_type === 'account' ? (
+            <Select
+              placeholder="选择替换值"
+              value={form.target_id || undefined}
+              onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+              options={targetOptions.map((item: any) => ({ value: item.id, label: item.name }))}
+              showSearch
+              optionFilterProp="label"
+            />
+          ) : null}
+          {form.target_type === 'category' ? (
+            <CategorySelector
+              categories={filteredRuleCategories as any}
+              value={form.target_id}
+              onChange={value => setForm(prev => ({ ...prev, target_id: value }))}
+              bookId={bookId}
+              onCategoriesUpdated={setCategories}
+              placeholder="选择分类"
+            />
+          ) : null}
+          {form.target_type === 'tag' ? (
+            <TagMultiSelect
+              tags={activeRuleTags}
+              value={form.target_id ? [form.target_id] : []}
+              onChange={([value]) => setForm(prev => ({ ...prev, target_id: value || '' }))}
+              bookId={bookId}
+              maxSelect={1}
+              placeholder="选择标签"
+            />
+          ) : null}
           <InputNumber
             min={0}
             value={form.priority}

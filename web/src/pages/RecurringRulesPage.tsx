@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Card, Empty, Form, Input, InputNumber, List, Modal, Popconfirm, Select, Space, Spin, Switch, Tag, message } from 'antd'
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
+import { CategorySelector } from '../components/CategorySelector'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api'
 import { getDefaultBookId } from './transactionFormSupport'
 
@@ -253,12 +254,9 @@ export default function RecurringRulesPage() {
   const periodType = Form.useWatch('period_type', form)
   const direction = Form.useWatch('direction', form)
 
-  const categoryOptions = categories
-    .filter((category) => !direction || category.category_type === (direction === 'in' ? 'income' : 'expense'))
-    .map((category) => ({
-      value: category.id,
-      label: getCategoryLabel(categories, category.id),
-    }))
+  const filteredCategories = categories.filter(
+    (category) => !direction || category.category_type === (direction === 'in' ? 'income' : 'expense'),
+  )
 
   return (
     <div>
@@ -355,7 +353,14 @@ export default function RecurringRulesPage() {
             />
           </Form.Item>
           <Form.Item name="category_id" label="类别">
-            <Select allowClear showSearch optionFilterProp="label" options={categoryOptions} placeholder="可选" />
+            <CategorySelector
+              categories={filteredCategories as any}
+              value={form.getFieldValue('category_id') || ''}
+              onChange={(value) => form.setFieldValue('category_id', value || undefined)}
+              bookId={bookId || null}
+              onCategoriesUpdated={(nextItems) => setCategories(nextItems as CategoryOption[])}
+              placeholder="可选"
+            />
           </Form.Item>
           <Form.Item name="period_type" label="周期类型" rules={[{ required: true, message: '请选择周期类型' }]}>
             <Select

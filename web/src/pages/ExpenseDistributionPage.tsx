@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { Card, Button, Spin, Empty, Select } from 'antd'
 import { LeftOutlined, RightOutlined, HomeOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
+import { CategoryMultiSelect } from '../components/CategoryMultiSelect'
+import { TagMultiSelect } from '../components/TagMultiSelect'
 import { apiGet, getExpenseByCategory } from '../services/api'
 import { useAuth } from '../App'
 import PeriodComparison, { type PeriodComparisonData } from '../components/PeriodComparison'
 import type { CategoryOption, TagOption } from './transactionFormSupport'
-import { getCategoryLabel } from './transactionFormSupport'
 
 export default function ExpenseDistributionPage() {
   const { user } = useAuth()
@@ -134,16 +135,6 @@ export default function ExpenseDistributionPage() {
   if (!bookId) return <div style={{ padding: 16 }}>加载中...</div>
 
   const monthOptions = getMonthOptions()
-  const categoryOptions = categories.map((category) => ({
-    value: category.id,
-    label: getCategoryLabel(categories, category.id),
-  }))
-  const tagOptions = tags
-    .filter((tag) => tag.is_active !== false && !tag.is_deleted)
-    .map((tag) => ({
-      value: tag.id,
-      label: tag.name,
-    }))
 
   return (
     <div style={{ paddingBottom: 80 }}>
@@ -216,26 +207,23 @@ export default function ExpenseDistributionPage() {
         marginBottom: 16,
         flexWrap: 'wrap'
       }}>
-        <Select
-          mode="multiple"
-          allowClear
-          placeholder="排除分类"
-          value={excludedCategoryIds}
-          onChange={setExcludedCategoryIds}
-          options={categoryOptions}
-          optionFilterProp="label"
-          style={{ flex: 1, minWidth: 180 }}
-        />
-        <Select
-          mode="multiple"
-          allowClear
-          placeholder="排除标签"
-          value={excludedTagIds}
-          onChange={setExcludedTagIds}
-          options={tagOptions}
-          optionFilterProp="label"
-          style={{ flex: 1, minWidth: 180 }}
-        />
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <CategoryMultiSelect
+            categories={categories}
+            value={excludedCategoryIds}
+            onChange={setExcludedCategoryIds}
+            placeholder="排除分类"
+          />
+        </div>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <TagMultiSelect
+            tags={tags.filter((tag) => tag.is_active !== false && !tag.is_deleted)}
+            value={excludedTagIds}
+            onChange={setExcludedTagIds}
+            bookId={bookId}
+            placeholder="排除标签"
+          />
+        </div>
         <Button onClick={() => {
           setExcludedCategoryIds([])
           setExcludedTagIds([])

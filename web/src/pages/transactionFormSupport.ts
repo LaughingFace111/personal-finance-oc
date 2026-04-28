@@ -1,4 +1,5 @@
 import { apiGet } from '../services/api';
+import { getHierarchyPathLabel } from '../utils/hierarchySelection';
 
 export interface AccountOption {
   id: string;
@@ -141,15 +142,7 @@ export function mapTagNamesToIds(allTags: TagOption[], tagNames: string[]) {
 }
 
 export function getCategoryLabel(categories: CategoryOption[], categoryId: string) {
-  const category = categories.find((item) => item.id === categoryId);
-  if (!category) return '';
-
-  if (!category.parent_id) {
-    return category.name;
-  }
-
-  const parent = categories.find((item) => item.id === category.parent_id);
-  return parent ? `${parent.name}-${category.name}` : category.name;
+  return getHierarchyPathLabel(categories, categoryId);
 }
 
 export function getAccountOptionLabel(account: AccountOption) {

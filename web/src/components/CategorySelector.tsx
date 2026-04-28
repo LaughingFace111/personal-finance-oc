@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { HierarchyPickerModal } from './HierarchyPickerModal';
 import { apiGet } from '../services/api';
+import { getHierarchyPathLabel } from '../utils/hierarchySelection';
 
 export interface CategoryOption {
   id: string;
@@ -69,8 +70,7 @@ export function CategorySelector({
   // 获取选中分类的显示名称
   const selectedLabel = useMemo(() => {
     if (!value) return '';
-    const cat = validCategories.find(c => c.id === value);
-    return cat?.name || '';
+    return getHierarchyPathLabel(validCategories, value);
   }, [value, validCategories]);
 
   return (

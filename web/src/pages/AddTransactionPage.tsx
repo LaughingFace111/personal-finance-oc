@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { HierarchyPickerModal } from '../components/HierarchyPickerModal';
+import { CategorySelector } from '../components/CategorySelector';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
   TransactionFormLayout,
@@ -41,8 +41,6 @@ export default function AddTransactionPage() {
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [categoryModalOpen, setCategoryModalOpen] = useState(false);
-
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -80,7 +78,6 @@ export default function AddTransactionPage() {
     }
   }, [categoryId, filteredCategories]);
 
-  const selectedCategoryLabel = categoryId ? getCategoryLabel(categories, categoryId) : '';
   const selectedTagLabels = useMemo(
     () =>
       tagIds
@@ -192,22 +189,14 @@ export default function AddTransactionPage() {
 
           <div>
             <label className={transactionFormLabelClass}>类别 *</label>
-            <button
-              type="button"
-              onClick={() => setCategoryModalOpen(true)}
-              className={transactionFormFieldClass}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                textAlign: 'left',
-              }}
-            >
-              <span style={{ color: selectedCategoryLabel ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
-                {selectedCategoryLabel || '点击选择类别'}
-              </span>
-              <span style={{ color: 'var(--text-tertiary)' }}>›</span>
-            </button>
+            <CategorySelector
+              categories={filteredCategories}
+              value={categoryId}
+              onChange={setCategoryId}
+              bookId={bookId}
+              onCategoriesUpdated={setCategories}
+              placeholder="点击选择类别"
+            />
           </div>
 
           <div>
@@ -320,29 +309,6 @@ export default function AddTransactionPage() {
           </button>
         </div>
       </form>
-
-      <HierarchyPickerModal
-        open={categoryModalOpen}
-        title="选择类别"
-        items={filteredCategories}
-        value={categoryId}
-        emptyText="暂无可选类别"
-        bookId={bookId}
-        enableCreate={Boolean(bookId)}
-        createButtonText="[+ 新建分类]"
-        onItemsUpdated={(nextItems) =>
-          setCategories((current) => {
-            const merged = new Map(current.map((item) => [item.id, item]));
-            (nextItems as CategoryOption[]).forEach((item) => merged.set(item.id, item));
-            return Array.from(merged.values());
-          })
-        }
-        onCancel={() => setCategoryModalOpen(false)}
-        onConfirm={(nextValue) => {
-          setCategoryId(typeof nextValue === 'string' ? nextValue : '');
-          setCategoryModalOpen(false);
-        }}
-      />
     </TransactionFormLayout>
   );
 }
