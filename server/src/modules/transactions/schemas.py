@@ -134,6 +134,7 @@ class RefundCreate(BaseModel):
     refund_account_id: str  # 退款入账账户
     amount: Decimal = Field(..., gt=0)
     note: Optional[str] = None
+    reason: Optional[str] = None
 
 
 # Transaction list filter

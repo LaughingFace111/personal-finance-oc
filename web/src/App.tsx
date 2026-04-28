@@ -7,6 +7,8 @@ import { StagingImportTable } from './components/StagingImportTable'
 import { HierarchyPickerModal } from './components/HierarchyPickerModal'
 import { CategorySelector } from './components/CategorySelector'
 import { TagMultiSelect } from './components/TagMultiSelect'
+import TransactionListComponent from './components/TransactionList'
+import { TransactionDetailModal } from './components/TransactionDetailModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
 import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
@@ -749,7 +751,23 @@ const DateDetailPage = () => {
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [summary, setSummary] = useState({ income: 0, expense: 0 })
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const bookId = user?.default_book_id
+
+  const applyDateTransactions = (items: any[]) => {
+    setTransactions(items)
+
+    let income = 0
+    let expense = 0
+    items.forEach((tx: any) => {
+      const amt = Number(tx.amount)
+      if (isNeutralTransactionType(tx.transaction_type)) return
+      if (tx.direction === 'in' || tx.transaction_type === 'refund') income += amt
+      else expense += amt
+    })
+    setSummary({ income, expense })
+  }
 
   useEffect(() => {
     if (!bookId || !date) return
@@ -757,22 +775,7 @@ const DateDetailPage = () => {
     
     apiGet(`/api/transactions?book_id=${bookId}&date_from=${date}&date_to=${date}&page_size=100`)
       .then(data => {
-        const items = data?.items || []
-        setTransactions(items)
-        
-        let income = 0, expense = 0
-        items.forEach((tx: any) => {
-          const amt = Number(tx.amount)
-          if (isNeutralTransactionType(tx.transaction_type)) {
-            return
-          }
-          if (tx.direction === 'in' || tx.transaction_type === 'refund') {
-            income += amt
-          } else {
-            expense += amt
-          }
-        })
-        setSummary({ income, expense })
+        applyDateTransactions(data?.items || [])
       })
       .catch((error) => {
         console.error("Request failed:", error)
@@ -841,16 +844,32 @@ const DateDetailPage = () => {
           items={transactions}
           loading={loading}
           emptyDescription="当日无记录"
+          onItemClick={(item) => {
+            setSelectedTransaction(item)
+            setDetailOpen(true)
+          }}
         />
       </div>
+
+      <TransactionDetailModal
+        open={detailOpen}
+        transaction={selectedTransaction}
+        bookId={bookId}
+        onClose={() => setDetailOpen(false)}
+        onRefresh={() => {
+          if (!bookId || !date) return
+          setLoading(true)
+          apiGet(`/api/transactions?book_id=${bookId}&date_from=${date}&date_to=${date}&page_size=100`)
+            .then(data => applyDateTransactions(data?.items || []))
+            .catch((error) => {
+              console.error("Request failed:", error)
+            })
+            .finally(() => setLoading(false))
+        }}
+      />
     </div>
   )
 }
-
-
-import { TransactionBottomDrawer } from './components/TransactionBottomDrawer'
-import TransactionListComponent from './components/TransactionList'
-
 // 🛡️ L: 简化后的 TransactionsPage — 过滤器 + TransactionList + Drawer
 const TransactionsPage = () => {
   const { user } = useAuth()
@@ -877,34 +896,13 @@ const TransactionsPage = () => {
       })
   }, [bookId])
 
-  // 加载分类、账户和标签（供 Drawer 使用）
-  const [categories, setCategories] = useState<any[]>([])
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [tags, setTags] = useState<any[]>([])
-
-  useEffect(() => {
-    if (!bookId) return
-    Promise.all([
-      apiGet(`/api/categories?book_id=${bookId}`),
-      apiGet(`/api/accounts?book_id=${bookId}`),
-      apiGet(`/api/tags?book_id=${bookId}`)
-    ]).then(([c, a, t]) => {
-      setCategories(c || [])
-      setAccounts(a || [])
-      setTags(t || [])
-    }).catch((error) => {
-      console.error("Request failed:", error)
-    })
-  }, [bookId])
-
-  // 抽屉状态
-  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const [listRefreshToken, setListRefreshToken] = useState(0)
 
   const handleItemClick = (item: any) => {
     setSelectedTransaction(item)
-    setDrawerVisible(true)
+    setDetailOpen(true)
   }
 
   // 生成年份选项
@@ -958,16 +956,12 @@ const TransactionsPage = () => {
         refreshToken={listRefreshToken}
       />
 
-      {/* 底部编辑Drawer */}
-      <TransactionBottomDrawer
-        visible={drawerVisible}
+      <TransactionDetailModal
+        open={detailOpen}
         transaction={selectedTransaction}
-        onClose={() => setDrawerVisible(false)}
-        onRefresh={() => setListRefreshToken((value) => value + 1)}
-        accounts={accounts}
-        categories={categories}
-        tags={tags}
         bookId={bookId}
+        onClose={() => setDetailOpen(false)}
+        onRefresh={() => setListRefreshToken((value) => value + 1)}
       />
     </div>
   )
@@ -1422,14 +1416,11 @@ const AccountDetailPage = () => {
   
   const [account, setAccount] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
-  const [categories, setCategories] = useState<any[]>([])
-  const [accounts, setAccounts] = useState<any[]>([])
-  const [tags, setTags] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [balanceTrendData, setBalanceTrendData] = useState<any[]>([])
   const [adjustModalVisible, setAdjustModalVisible] = useState(false)
   const [limitModalVisible, setLimitModalVisible] = useState(false)
-  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const [limitForm] = Form.useForm()
   const [limitSubmitting, setLimitSubmitting] = useState(false)
@@ -1471,26 +1462,6 @@ const AccountDetailPage = () => {
     } catch {
       message.error('加载失败')
       navigate('/accounts')
-    }
-  }
-
-  const loadDrawerReferenceData = async () => {
-    if (!bookId) return
-
-    try {
-      const [categoryData, accountData, tagData] = await Promise.all([
-        apiGet(`/api/categories?book_id=${bookId}`),
-        apiGet(`/api/accounts?book_id=${bookId}`),
-        apiGet(`/api/tags?book_id=${bookId}`)
-      ])
-      setCategories(categoryData || [])
-      setAccounts(accountData || [])
-      setTags(tagData || [])
-    } catch (error) {
-      console.error("Request failed:", error)
-      setCategories([])
-      setAccounts([])
-      setTags([])
     }
   }
 
@@ -1545,10 +1516,6 @@ const AccountDetailPage = () => {
   }, [bookId, accountId])
 
   useEffect(() => {
-    loadDrawerReferenceData()
-  }, [bookId])
-
-  useEffect(() => {
     loadBalanceTrend()
   }, [accountId, month])
 
@@ -1574,7 +1541,7 @@ const AccountDetailPage = () => {
 
   const handleTransactionClick = (item: any) => {
     setSelectedTransaction(item)
-    setDrawerVisible(true)
+    setDetailOpen(true)
   }
   
   // 余额调整（合规平账操作）
@@ -1954,15 +1921,12 @@ const AccountDetailPage = () => {
         onItemClick={handleTransactionClick}
       />
 
-      <TransactionBottomDrawer
-        visible={drawerVisible}
+      <TransactionDetailModal
+        open={detailOpen}
         transaction={selectedTransaction}
-        onClose={() => setDrawerVisible(false)}
-        onRefresh={() => { void refreshAccountDetail({ includeTransactions: true }) }}
-        accounts={accounts}
-        categories={categories}
-        tags={tags}
         bookId={bookId}
+        onClose={() => setDetailOpen(false)}
+        onRefresh={() => { void refreshAccountDetail({ includeTransactions: true }) }}
       />
     </div>
   )

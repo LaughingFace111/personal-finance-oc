@@ -21,7 +21,7 @@ interface TransactionBottomDrawerProps {
   accounts: any[]
   categories: any[]
   tags: any[]
-  bookId: string
+  bookId?: string
 }
 
 interface TransferEditContextResponse {
@@ -191,16 +191,19 @@ export function TransactionBottomDrawer({
     if (!visible || !activeTransaction) return
 
     const scrollY = window.scrollY
+    const previousTouchAction = document.body.style.touchAction
     document.body.style.overflow = 'hidden'
     document.body.style.position = 'fixed'
     document.body.style.width = '100%'
     document.body.style.top = `-${scrollY}px`
+    document.body.style.touchAction = 'none'
 
     return () => {
       document.body.style.overflow = ''
       document.body.style.position = ''
       document.body.style.width = ''
       document.body.style.top = ''
+      document.body.style.touchAction = previousTouchAction
       window.scrollTo(0, scrollY)
     }
   }, [activeTransaction, visible])
@@ -381,12 +384,15 @@ export function TransactionBottomDrawer({
   if (!transaction) return null
 
   const tagsForDetail = parseTagLabels(activeTransaction?.tags)
-  const refundSummaryVisible = activeTransaction?.transaction_type === 'expense'
+  const hasLinkedRefunds = Array.isArray(activeTransaction?.linked_refunds) && activeTransaction.linked_refunds.length > 0
+  const hasRefundProgress = Boolean(activeTransaction?.has_refund) || hasLinkedRefunds
+  const refundSummaryVisible =
+    activeTransaction?.transaction_type === 'expense' &&
+    hasRefundProgress &&
+    hasLinkedRefunds
   const refundProgressLabel = activeTransaction?.is_fully_refunded
     ? '已全额退款'
-    : activeTransaction?.is_partially_refunded
-      ? '部分已退款'
-      : '未退款'
+    : '部分退款'
 
   return (
     <>
@@ -401,6 +407,7 @@ export function TransactionBottomDrawer({
           body: {
             maxHeight: '78vh',
             overflowY: 'auto',
+            overscrollBehavior: 'contain',
             padding: 20,
           },
         }}
@@ -648,18 +655,20 @@ export function TransactionBottomDrawer({
                     {formatCurrency(activeTransaction?.amount)}
                   </div>
                 </div>
-                <div
-                  style={{
-                    padding: '6px 10px',
-                    borderRadius: 999,
-                    background: activeTransaction?.is_fully_refunded ? '#dcfce7' : activeTransaction?.is_partially_refunded ? '#fef3c7' : 'var(--bg-elevated)',
-                    color: activeTransaction?.is_fully_refunded ? '#166534' : activeTransaction?.is_partially_refunded ? '#92400e' : 'var(--text-secondary)',
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  {refundProgressLabel}
-                </div>
+                {hasRefundProgress ? (
+                  <div
+                    style={{
+                      padding: '6px 10px',
+                      borderRadius: 999,
+                      background: activeTransaction?.is_fully_refunded ? '#dcfce7' : '#fef3c7',
+                      color: activeTransaction?.is_fully_refunded ? '#166534' : '#92400e',
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {refundProgressLabel}
+                  </div>
+                ) : null}
               </div>
 
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>

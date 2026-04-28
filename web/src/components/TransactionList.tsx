@@ -179,7 +179,7 @@ export default function TransactionList({
   }
 
   const getCategoryMeta = (item: TransactionItem) => {
-    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
+    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type ?? '')
     const isIncome = item.direction === 'in'
     const category = item.category_id ? categoryMap.get(item.category_id) : undefined
     const label = category?.name || '未分类'
@@ -207,7 +207,7 @@ export default function TransactionList({
       // 未勾选计入收支 → 灰色中性
       return { prefix: item.direction === 'in' ? '+' : '-', color: '#999' }
     }
-    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
+    const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type ?? '')
     const isIncome = item.direction === 'in'
     return {
       prefix: isNeutral ? '' : (isIncome ? '+' : '-'),
@@ -384,7 +384,7 @@ export default function TransactionList({
 
             <div>
               {items.map((item: TransactionItem, index) => {
-                const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type)
+                const isNeutral = NEUTRAL_TRANSACTION_TYPES.has(item.transaction_type ?? '')
                 const categoryMeta = getCategoryMeta(item)
                 const amountMeta = getAmountMeta(item)
                 const tags = getTagList(item)
@@ -541,6 +541,14 @@ export default function TransactionList({
                             whiteSpace: 'nowrap'
                           }}>
                             {noteText}
+                          </div>
+                        )}
+
+                        {(isFullyRefunded || isPartiallyRefunded) && (
+                          <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+                            原始 ¥{Number(item.original_amount ?? item.amount).toFixed(2)}
+                            {' · '}已退款 ¥{Number(item.refunded_amount ?? 0).toFixed(2)}
+                            {' · '}剩余 ¥{Number(item.remaining_refundable_amount ?? 0).toFixed(2)}
                           </div>
                         )}
                       </div>

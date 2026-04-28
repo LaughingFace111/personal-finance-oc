@@ -908,11 +908,12 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
     ).all()
 
     refunded_sum = sum(t.amount for t in total_refunded)
-    if refunded_sum + data.amount > original.amount:
+    remaining_refundable_amount = max(original.amount - refunded_sum, Decimal("0"))
+    if data.amount > remaining_refundable_amount:
         raise AppException(
             status_code=400,
             code=ErrorCode.INVALID_PARAMS,
-            message=f"Refund amount exceeds remaining refundable amount. Original: {original.amount}, Already refunded: {refunded_sum}"
+            message=f"退款金额不能超过剩余可退款金额（剩余 ¥{remaining_refundable_amount}）"
         )
 
     # Determine cashflow based on refund account type
@@ -920,6 +921,8 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         include_cashflow = True
     else:
         include_cashflow = False
+
+    refund_note = data.note if data.note is not None else data.reason
 
     # Create refund transaction
     refund_txn = Transaction(
@@ -934,7 +937,7 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         category_id=original.category_id,
         merchant=original.merchant,
         # 退款交易的备注由前端显示前缀,后端只保留用户输入的备注
-        note=data.note if data.note else None,
+        note=refund_note if refund_note else None,
         related_transaction_id=data.original_transaction_id,
         business_key=f"refund:{data.original_transaction_id}:{datetime.now(timezone.utc).timestamp()}",
         source_type=SourceType.MANUAL.value,
