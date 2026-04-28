@@ -1420,10 +1420,15 @@ const AccountDetailPage = () => {
   
   const [account, setAccount] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
+  const [categories, setCategories] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [tags, setTags] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [balanceTrendData, setBalanceTrendData] = useState<any[]>([])
   const [adjustModalVisible, setAdjustModalVisible] = useState(false)
   const [limitModalVisible, setLimitModalVisible] = useState(false)
+  const [drawerVisible, setDrawerVisible] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const [limitForm] = Form.useForm()
   const [limitSubmitting, setLimitSubmitting] = useState(false)
   const [adjustForm] = Form.useForm()
@@ -1464,6 +1469,26 @@ const AccountDetailPage = () => {
     } catch {
       message.error('加载失败')
       navigate('/accounts')
+    }
+  }
+
+  const loadDrawerReferenceData = async () => {
+    if (!bookId) return
+
+    try {
+      const [categoryData, accountData, tagData] = await Promise.all([
+        apiGet(`/api/categories?book_id=${bookId}`),
+        apiGet(`/api/accounts?book_id=${bookId}`),
+        apiGet(`/api/tags?book_id=${bookId}`)
+      ])
+      setCategories(categoryData || [])
+      setAccounts(accountData || [])
+      setTags(tagData || [])
+    } catch (error) {
+      console.error("Request failed:", error)
+      setCategories([])
+      setAccounts([])
+      setTags([])
     }
   }
 
@@ -1518,6 +1543,10 @@ const AccountDetailPage = () => {
   }, [bookId, accountId])
 
   useEffect(() => {
+    loadDrawerReferenceData()
+  }, [bookId])
+
+  useEffect(() => {
     loadBalanceTrend()
   }, [accountId, month])
 
@@ -1540,6 +1569,11 @@ const AccountDetailPage = () => {
       ? '收盘剩余本金'
       : '收盘余额'
   const trendColor = isCreditAccount ? '#52c41a' : isLoanAccount ? '#fa8c16' : '#1890ff'
+
+  const handleTransactionClick = (item: any) => {
+    setSelectedTransaction(item)
+    setDrawerVisible(true)
+  }
   
   // 余额调整（合规平账操作）
   const handleBalanceAdjust = async (values: any) => {
@@ -1911,29 +1945,23 @@ const AccountDetailPage = () => {
       </div>
 
       {/* 流水列表 */}
-      {loading ? <Spin /> : transactions.length === 0 ? 
-        <Empty description="该月无流水" /> : 
-        <List 
-          size="small" 
-          dataSource={transactions} 
-          renderItem={item => (
-            (() => {
-              const amountMeta = getTransactionAmountMeta(item)
-              return (
-                <List.Item>
-                  <div style={{ flex: 1 }}>
-                    <div>{item.merchant || item.note || '-'}</div>
-                    <div style={{ fontSize: 12, color: '#999' }}>{new Date(item.occurred_at).toLocaleDateString()}</div>
-                  </div>
-                  <div style={{ color: amountMeta.color, fontWeight: 500 }}>
-                    {amountMeta.prefix}¥{Number(item.amount).toFixed(2)}
-                  </div>
-                </List.Item>
-              )
-            })()
-          )}
-        />
-      }
+      <TransactionListComponent
+        items={transactions}
+        loading={loading}
+        emptyDescription="该月无流水"
+        onItemClick={handleTransactionClick}
+      />
+
+      <TransactionBottomDrawer
+        visible={drawerVisible}
+        transaction={selectedTransaction}
+        onClose={() => setDrawerVisible(false)}
+        onRefresh={() => { void refreshAccountDetail({ includeTransactions: true }) }}
+        accounts={accounts}
+        categories={categories}
+        tags={tags}
+        bookId={bookId}
+      />
     </div>
   )
 }
