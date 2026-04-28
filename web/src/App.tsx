@@ -900,6 +900,7 @@ const TransactionsPage = () => {
   // 抽屉状态
   const [drawerVisible, setDrawerVisible] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
+  const [listRefreshToken, setListRefreshToken] = useState(0)
 
   const handleItemClick = (item: any) => {
     setSelectedTransaction(item)
@@ -954,6 +955,7 @@ const TransactionsPage = () => {
       <TransactionListComponent
         onItemClick={handleItemClick}
         selectedMonth={selectedMonth}
+        refreshToken={listRefreshToken}
       />
 
       {/* 底部编辑Drawer */}
@@ -961,7 +963,7 @@ const TransactionsPage = () => {
         visible={drawerVisible}
         transaction={selectedTransaction}
         onClose={() => setDrawerVisible(false)}
-        onRefresh={() => {}}
+        onRefresh={() => setListRefreshToken((value) => value + 1)}
         accounts={accounts}
         categories={categories}
         tags={tags}

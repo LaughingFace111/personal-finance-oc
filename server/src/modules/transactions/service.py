@@ -24,6 +24,7 @@ from .schemas import (
     TransferCreate,
     CreditCardRepaymentCreate,
     TransferEditResponse,
+    LinkedRefundTransaction,
 )
 from src.modules.accounts.service import (
     calculate_credit_statement_info,
@@ -217,6 +218,71 @@ def _load_transactions_for_response(db: Session, transaction_ids: List[str]) -> 
     order = {transaction_id: index for index, transaction_id in enumerate(transaction_ids)}
     items.sort(key=lambda item: order.get(item.id, len(order)))
     return items
+
+
+def _annotate_refund_status(
+    db: Session,
+    book_id: str,
+    transactions: List[Transaction],
+) -> List[Transaction]:
+    """Attach refund summary metadata used by list and detail UIs."""
+    if not transactions:
+        return transactions
+
+    original_ids = [
+        txn.id
+        for txn in transactions
+        if txn.transaction_type == TransactionType.EXPENSE.value
+    ]
+
+    refund_rows = []
+    if original_ids:
+        refund_rows = db.query(Transaction).filter(
+            Transaction.book_id == book_id,
+            Transaction.related_transaction_id.in_(original_ids),
+            Transaction.transaction_type == TransactionType.REFUND.value,
+            Transaction.status == TransactionStatus.CONFIRMED.value,
+        ).order_by(
+            Transaction.occurred_at.asc(),
+            Transaction.created_at.asc(),
+            Transaction.id.asc(),
+        ).all()
+
+    refunds_by_original: dict[str, List[Transaction]] = {}
+    for refund_txn in refund_rows:
+        refunds_by_original.setdefault(refund_txn.related_transaction_id, []).append(refund_txn)
+
+    for txn in transactions:
+        linked_refunds = refunds_by_original.get(txn.id, [])
+        refunded_amount = sum((refund.amount for refund in linked_refunds), Decimal("0"))
+
+        txn.has_refund = refunded_amount > 0
+        txn.refunded_amount = refunded_amount
+        txn.linked_refunds = [
+            LinkedRefundTransaction(
+                id=refund.id,
+                occurred_at=refund.occurred_at,
+                amount=refund.amount,
+                currency=refund.currency,
+                account_id=refund.account_id,
+                note=refund.note,
+                status=refund.status,
+            )
+            for refund in linked_refunds
+        ]
+
+        if txn.transaction_type == TransactionType.EXPENSE.value:
+            txn.original_amount = txn.amount
+            txn.remaining_refundable_amount = max(txn.amount - refunded_amount, Decimal("0"))
+            txn.is_fully_refunded = refunded_amount >= txn.amount and refunded_amount > 0
+            txn.is_partially_refunded = refunded_amount > 0 and refunded_amount < txn.amount
+        else:
+            txn.original_amount = None
+            txn.remaining_refundable_amount = Decimal("0")
+            txn.is_fully_refunded = False
+            txn.is_partially_refunded = False
+
+    return transactions
 
 
 def _calculate_include_flags(transaction_type: TransactionType, account_type: str) -> Tuple[bool, bool, bool]:
@@ -822,6 +888,13 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
     if not original:
         raise NotFoundException("Original transaction not found")
 
+    if original.transaction_type != TransactionType.EXPENSE.value or original.direction != TransactionDirection.OUT.value:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Only expense transactions can be refunded",
+        )
+
     # Check refund account
     refund_account = get_account(db, data.refund_account_id, book_id)
     if not refund_account:
@@ -839,7 +912,7 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
         raise AppException(
             status_code=400,
             code=ErrorCode.INVALID_PARAMS,
-            message=f"Refund amount exceeds remaining. Original: {original.amount}, Already refunded: {refunded_sum}"
+            message=f"Refund amount exceeds remaining refundable amount. Original: {original.amount}, Already refunded: {refunded_sum}"
         )
 
     # Determine cashflow based on refund account type
@@ -875,23 +948,10 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
 
     db.add(refund_txn)
 
-    # Update original transaction note to indicate refund
-    if original.note:
-        if "<已退款>" not in original.note:
-            original.note = original.note + " <已退款>"
-    else:
-        original.note = "<已退款>"
-
-    # Set refund transaction note with "<退款>" prefix
-    if refund_txn.note:
-        refund_txn.note = "<退款> " + refund_txn.note
-    else:
-        refund_txn.note = "<退款>"
-
     db.commit()
     db.refresh(refund_txn)
     clear_overview_cache()  # 🛡️ L
-    return refund_txn
+    return _annotate_refund_status(db, book_id, [refund_txn])[0]
 
 
 
@@ -964,33 +1024,22 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
     page_transaction_ids = visible_transaction_ids[start:end]
 
     transactions = _load_transactions_for_response(db, page_transaction_ids)
-
-    # 🛡️ L: 优化 - 使用单次子查询获取所有已退款ID,避免 N+1
-    if transactions:
-        ids = [t.id for t in transactions]
-        refunded_ids = set(
-            row[0] for row in db.query(Transaction.related_transaction_id).filter(
-                Transaction.related_transaction_id.in_(ids),
-                Transaction.transaction_type == TransactionType.REFUND.value,
-                Transaction.status == TransactionStatus.CONFIRMED.value
-            ).all()
-        )
-        # 为每个交易添加 has_refund 标记
-        for t in transactions:
-            t.has_refund = t.id in refunded_ids
-    else:
-        for t in transactions:
-            t.has_refund = False
-
-    return transactions, total
+    return _annotate_refund_status(db, book_id, transactions), total
 
 
 def get_transaction(db: Session, transaction_id: str, book_id: str) -> Optional[Transaction]:
     """Get transaction by ID"""
-    return db.query(Transaction).filter(
+    txn = db.query(Transaction).options(
+        selectinload(Transaction.account),
+        selectinload(Transaction.counterparty_account),
+        selectinload(Transaction.category),
+    ).filter(
         Transaction.id == transaction_id,
         Transaction.book_id == book_id
     ).first()
+    if not txn:
+        return None
+    return _annotate_refund_status(db, book_id, [txn])[0]
 
 
 def _reverse_transaction_effects(db: Session, txn: Transaction):

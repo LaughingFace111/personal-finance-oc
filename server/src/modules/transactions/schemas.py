@@ -58,6 +58,16 @@ class TransactionUpdate(BaseModel):
     tags: Optional[str] = None
 
 
+class LinkedRefundTransaction(BaseModel):
+    id: str
+    occurred_at: datetime
+    amount: Decimal
+    currency: str
+    account_id: str
+    note: Optional[str] = None
+    status: TransactionStatus = TransactionStatus.CONFIRMED
+
+
 class TransactionResponse(TransactionBase):
     id: str
     book_id: str
@@ -69,6 +79,12 @@ class TransactionResponse(TransactionBase):
     updated_at: datetime
     has_refund: bool = False  # 是否已有退款
     is_hidden: bool = False  # 🛡️ L: 隐身账单标记（列表展示用）
+    refunded_amount: Decimal = Decimal("0")
+    remaining_refundable_amount: Decimal = Decimal("0")
+    original_amount: Optional[Decimal] = None
+    is_partially_refunded: bool = False
+    is_fully_refunded: bool = False
+    linked_refunds: List[LinkedRefundTransaction] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

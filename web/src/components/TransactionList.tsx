@@ -12,6 +12,7 @@ interface TransactionListProps {
   items?: TransactionItem[]
   loading?: boolean
   emptyDescription?: string
+  refreshToken?: number
 }
 
 interface TransactionItem {
@@ -64,7 +65,8 @@ export default function TransactionList({
   selectedMonth,
   items,
   loading: externalLoading,
-  emptyDescription = '暂无交易记录'
+  emptyDescription = '暂无交易记录',
+  refreshToken,
 }: TransactionListProps) {
   const { user } = useAuth()
   const bookId = user?.default_book_id
@@ -132,7 +134,7 @@ export default function TransactionList({
     setPage(1)
     setHasMore(true)
     loadPage(1)
-  }, [isControlled, loadPage])
+  }, [isControlled, loadPage, refreshToken])
 
   const categoryMap = useMemo(() => {
     return new Map(categories.map((category) => [category.id, category]))
@@ -394,6 +396,8 @@ export default function TransactionList({
                   ? getFlowAccountLabel(item)
                   : (accountMap.get(item.account_id)?.name || '未知账户')
                 const formattedAmount = Number(isNeutral ? Math.abs(Number(item.amount)) : item.amount).toFixed(2)
+                const isFullyRefunded = item.transaction_type === 'expense' && item.is_fully_refunded
+                const isPartiallyRefunded = item.transaction_type === 'expense' && item.is_partially_refunded
 
                 return (
                   <div
@@ -404,7 +408,8 @@ export default function TransactionList({
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'flex-start',
-                      gap: 14
+                      gap: 14,
+                      opacity: isFullyRefunded ? 0.6 : 1,
                     }}
                     onClick={() => onItemClick?.(item)}
                   >
@@ -452,6 +457,38 @@ export default function TransactionList({
                           }}>
                             {primaryTitle}
                           </div>
+
+                          {isFullyRefunded ? (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                padding: '2px 8px',
+                                borderRadius: 999,
+                                background: '#dcfce7',
+                                color: '#166534',
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              已全额退款
+                            </span>
+                          ) : null}
+
+                          {!isFullyRefunded && isPartiallyRefunded ? (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                padding: '2px 8px',
+                                borderRadius: 999,
+                                background: '#fef3c7',
+                                color: '#92400e',
+                                fontSize: 11,
+                                fontWeight: 700,
+                              }}
+                            >
+                              已退 {Number(item.refunded_amount || 0).toFixed(2)}
+                            </span>
+                          ) : null}
 
                           {tags.length > 0 && (
                             <div

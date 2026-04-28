@@ -1,8 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Drawer, Button, Input, message, Spin } from 'antd'
-import { DeleteOutlined, UndoOutlined, CopyOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useState } from 'react'
+import { Button, Modal, Spin, message } from 'antd'
+import { CopyOutlined, DeleteOutlined, EditOutlined, UndoOutlined } from '@ant-design/icons'
 import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api'
-import { CategorySelector } from './CategorySelector'
 import { TagMultiSelect } from './TagMultiSelect'
 import TransferPage from '../pages/TransferPage'
 import OtherTransactionPage from '../pages/OtherTransactionPage'
@@ -25,22 +24,6 @@ interface TransactionBottomDrawerProps {
   bookId: string
 }
 
-interface CategoryOption {
-  id: string
-  name: string
-  icon?: string
-  parent_id?: string
-  category_type?: string
-  color?: string
-}
-
-interface TagOption {
-  id: string
-  name: string
-  parent_id?: string
-  color?: string
-}
-
 interface TransferEditContextResponse {
   transaction_id: string
   occurred_at: string
@@ -53,6 +36,35 @@ interface TransferEditContextResponse {
   fee_account_id?: string | null
 }
 
+type ViewMode = 'detail' | 'edit'
+type RefundMode = 'partial' | 'full'
+
+const formatCurrency = (value: number | string | null | undefined) =>
+  `¥${Number(value || 0).toFixed(2)}`
+
+const formatDate = (value?: string | null) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+const parseTagLabels = (rawTags: unknown) => {
+  if (!rawTags) return [] as string[]
+
+  let parsedTags = rawTags
+  if (typeof rawTags === 'string') {
+    try {
+      parsedTags = JSON.parse(rawTags)
+    } catch {
+      parsedTags = rawTags.split(/[,\s]+/).map((tag) => tag.trim()).filter(Boolean)
+    }
+  }
+
+  if (!Array.isArray(parsedTags)) return []
+  return parsedTags.map((tag) => String(tag).trim()).filter(Boolean)
+}
+
 export function TransactionBottomDrawer({
   visible,
   transaction,
@@ -61,133 +73,150 @@ export function TransactionBottomDrawer({
   accounts,
   categories,
   tags,
-  bookId
+  bookId,
 }: TransactionBottomDrawerProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('detail')
+  const [detailTransaction, setDetailTransaction] = useState<any>(transaction)
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [specialFormLoading, setSpecialFormLoading] = useState(false)
+  const [transferInitialValues, setTransferInitialValues] = useState<TransferFormInitialValues | null>(null)
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [refundModalOpen, setRefundModalOpen] = useState(false)
+  const [refundMode, setRefundMode] = useState<RefundMode>('partial')
+  const [refundForm, setRefundForm] = useState({ amount: '', note: '', occurred_at: '' })
   const [form, setForm] = useState({
     type: 'expense',
     amount: '',
     account_id: '',
     category_id: '',
     note: '',
-    occurred_at: ''
+    occurred_at: '',
   })
-  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
-  const [localCategories, setLocalCategories] = useState<CategoryOption[]>(categories as CategoryOption[])
-  const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [specialFormLoading, setSpecialFormLoading] = useState(false)
-  const [transferInitialValues, setTransferInitialValues] = useState<TransferFormInitialValues | null>(null)
 
-  const isTransferTransaction = transaction?.transaction_type === 'transfer'
-  const isRepaymentTransaction = transaction?.transaction_type === 'repayment_credit_card'
+  const activeTransaction = detailTransaction || transaction
+  const isTransferTransaction = activeTransaction?.transaction_type === 'transfer'
+  const isRepaymentTransaction = activeTransaction?.transaction_type === 'repayment_credit_card'
   const isSpecialTransaction = isTransferTransaction || isRepaymentTransaction
+  const remainingRefundableAmount = Number(activeTransaction?.remaining_refundable_amount || 0)
+  const canRefund =
+    activeTransaction?.transaction_type === 'expense' &&
+    activeTransaction?.direction === 'out' &&
+    remainingRefundableAmount > 0
 
-  // 🛡️ L: Bug 2 修复 - 强制清理标签状态，防止跨交易泄漏
+  const repaymentInitialValues = useMemo<OtherTransactionFormInitialValues | null>(() => {
+    if (!isRepaymentTransaction || !activeTransaction) return null
+    return {
+      transactionId: activeTransaction.id,
+      subType: 'repay',
+      accountId: activeTransaction.account_id || '',
+      creditCardAccountId: activeTransaction.counterparty_account_id || '',
+      amount: String(activeTransaction.amount ?? ''),
+      memo: activeTransaction.note || '',
+      tagIds: mapTagNamesToIds(tags as any, parseTransactionTagNames(activeTransaction.tags)),
+      date: toDateInputValue(activeTransaction.occurred_at),
+    }
+  }, [activeTransaction, isRepaymentTransaction, tags])
+
+  const filteredCategories = useMemo(() => {
+    return categories.filter((category: any) => {
+      if (form.type === 'income') {
+        return category.category_type === 'income' || category.category_type === 'income_expense'
+      }
+      return category.category_type === 'expense' || category.category_type === 'income_expense'
+    })
+  }, [categories, form.type])
+
+  const selectedTagLabels = useMemo(() => {
+    return selectedTagIds
+      .map((id) => {
+        const tag = tags.find((item: any) => item.id === id)
+        if (!tag) return ''
+        if (!tag.parent_id) return tag.name
+        const parent = tags.find((item: any) => item.id === tag.parent_id)
+        return parent ? `${parent.name} / ${tag.name}` : tag.name
+      })
+      .filter(Boolean)
+  }, [selectedTagIds, tags])
+
+  useEffect(() => {
+    if (!visible || !transaction?.id || !bookId) return
+
+    let cancelled = false
+    setViewMode('detail')
+    setLoading(true)
+    apiGet(`/api/transactions/${transaction.id}?book_id=${bookId}`)
+      .then((data) => {
+        if (cancelled) return
+        setDetailTransaction(data)
+      })
+      .catch((error: any) => {
+        if (cancelled) return
+        message.error(error?.message || '加载交易详情失败')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [bookId, transaction?.id, visible])
+
   useEffect(() => {
     if (!visible) {
-      // 弹窗关闭时重置标签状态
+      setDetailTransaction(transaction)
+      setTransferInitialValues(null)
       setSelectedTagIds([])
+      setErrors({})
+      setRefundModalOpen(false)
+      return
     }
-  }, [visible])
 
-  useEffect(() => {
-    setLocalCategories(categories as CategoryOption[])
-  }, [categories])
+    if (!activeTransaction || isSpecialTransaction) return
 
-  // 🛡️ L: Bug 2 修复 - 交易切换时立即清理状态
-  useEffect(() => {
-    if (!transaction || !visible) return
-    if (isSpecialTransaction) return
     setForm({
-      type: transaction.direction === 'in' ? 'income' : 'expense',
-      amount: String(transaction.amount),
-      account_id: transaction.account_id || '',
-      category_id: transaction.category_id || '',
-      note: transaction.note || '',
-      occurred_at: transaction.occurred_at ? transaction.occurred_at.split('T')[0] : ''
+      type: activeTransaction.direction === 'in' ? 'income' : 'expense',
+      amount: String(activeTransaction.amount ?? ''),
+      account_id: activeTransaction.account_id || '',
+      category_id: activeTransaction.category_id || '',
+      note: activeTransaction.note || '',
+      occurred_at: activeTransaction.occurred_at ? activeTransaction.occurred_at.split('T')[0] : '',
     })
-    // 🛡️ L: 先清理再加载，防止残留
-    setSelectedTagIds([])
-    // 解析标签
-    if (transaction.tags) {
-      try {
-        const tagNames = typeof transaction.tags === 'string' ? JSON.parse(transaction.tags) : transaction.tags
-        if (Array.isArray(tagNames)) {
-          setSelectedTagIds(mapTagNamesToIds(tags as any, tagNames.map(String)))
-        }
-      } catch (error) {
-        console.error("Request failed:", error)
-      }
-    }
-  }, [isSpecialTransaction, transaction?.id, visible, tags])  // 依赖 transaction.id 而不是整个 transaction 对象
-
-  // Body滚动锁定 - 防止滚动穿透
-  useEffect(() => {
-    if (visible) {
-      // 记录滚动位置
-      const scrollY = window.scrollY
-      // 锁定body滚动
-      document.body.style.overflow = 'hidden'
-      document.body.style.position = 'fixed'
-      document.body.style.width = '100%'
-      document.body.style.top = `-${scrollY}px`
-      
-      return () => {
-        // 恢复滚动
-        document.body.style.overflow = ''
-        document.body.style.position = ''
-        document.body.style.width = ''
-        document.body.style.top = ''
-        window.scrollTo(0, scrollY)
-      }
-    }
-  }, [visible])
-
-  // 加载交易数据
-  useEffect(() => {
-    if (!transaction || !visible) return
-    if (isSpecialTransaction) return
-    setForm({
-      type: transaction.direction === 'in' ? 'income' : 'expense',
-      amount: String(transaction.amount),
-      account_id: transaction.account_id || '',
-      category_id: transaction.category_id || '',
-      note: transaction.note || '',
-      occurred_at: transaction.occurred_at ? transaction.occurred_at.split('T')[0] : ''
-    })
-    // 解析标签
-    if (transaction.tags) {
-      try {
-        const tagNames = typeof transaction.tags === 'string' ? JSON.parse(transaction.tags) : transaction.tags
-        if (Array.isArray(tagNames)) {
-          setSelectedTagIds(mapTagNamesToIds(tags as any, tagNames.map(String)))
-        }
-      } catch (error) {
-        console.error("Request failed:", error)
-      }
-    }
-  }, [isSpecialTransaction, transaction, visible, tags])
+    setSelectedTagIds(mapTagNamesToIds(tags as any, parseTransactionTagNames(activeTransaction.tags)))
+  }, [activeTransaction, isSpecialTransaction, tags, transaction, visible])
 
   useEffect(() => {
-    if (!transaction || !visible) {
+    if (!visible || !activeTransaction) return
+
+    const scrollY = window.scrollY
+    document.body.style.overflow = 'hidden'
+    document.body.style.position = 'fixed'
+    document.body.style.width = '100%'
+    document.body.style.top = `-${scrollY}px`
+
+    return () => {
+      document.body.style.overflow = ''
+      document.body.style.position = ''
+      document.body.style.width = ''
+      document.body.style.top = ''
+      window.scrollTo(0, scrollY)
+    }
+  }, [activeTransaction, visible])
+
+  useEffect(() => {
+    if (!visible || !activeTransaction?.id || !bookId || !isTransferTransaction) {
       setTransferInitialValues(null)
       setSpecialFormLoading(false)
       return
     }
 
-    if (!isTransferTransaction) {
-      setTransferInitialValues(null)
-      setSpecialFormLoading(false)
-      return
-    }
-
-    let isCancelled = false
+    let cancelled = false
     setSpecialFormLoading(true)
-    apiGet<TransferEditContextResponse>(`/api/transactions/transfer/${transaction.id}/edit?book_id=${bookId}`)
+    apiGet<TransferEditContextResponse>(`/api/transactions/transfer/${activeTransaction.id}/edit?book_id=${bookId}`)
       .then((context) => {
-        if (isCancelled) return
-        const tagIds = mapTagNamesToIds(tags as any, parseTransactionTagNames(context.tags))
+        if (cancelled) return
         setTransferInitialValues({
           transactionId: context.transaction_id,
           fromAccountId: context.from_account_id,
@@ -196,165 +225,154 @@ export function TransactionBottomDrawer({
           feeAmount: String(context.fee_amount ?? 0),
           feeAccountId: context.fee_account_id ?? '',
           memo: context.note ?? '',
-          tagIds,
+          tagIds: mapTagNamesToIds(tags as any, parseTransactionTagNames(context.tags)),
           occurredAt: toDateInputValue(context.occurred_at),
         })
       })
-      .catch((err: any) => {
-        if (!isCancelled) {
+      .catch((error: any) => {
+        if (!cancelled) {
           setTransferInitialValues(null)
-          message.error(err?.message || '加载转账编辑数据失败')
+          message.error(error?.message || '加载转账编辑数据失败')
         }
       })
       .finally(() => {
-        if (!isCancelled) {
-          setSpecialFormLoading(false)
-        }
+        if (!cancelled) setSpecialFormLoading(false)
       })
 
     return () => {
-      isCancelled = true
+      cancelled = true
     }
-  }, [bookId, isTransferTransaction, tags, transaction, visible])
+  }, [activeTransaction?.id, bookId, isTransferTransaction, tags, visible])
 
-  const repaymentInitialValues = useMemo<OtherTransactionFormInitialValues | null>(() => {
-    if (!isRepaymentTransaction || !transaction) return null
-    const tagIds = mapTagNamesToIds(tags as any, parseTransactionTagNames(transaction.tags))
-    return {
-      transactionId: transaction.id,
-      subType: 'repay',
-      accountId: transaction.account_id || '',
-      creditCardAccountId: transaction.counterparty_account_id || '',
-      amount: String(transaction.amount ?? ''),
-      memo: transaction.note || '',
-      tagIds,
-      date: toDateInputValue(transaction.occurred_at),
-    }
-  }, [isRepaymentTransaction, tags, transaction])
-
-  // 过滤分类
-  const filteredCategories = useMemo(() => {
-    return localCategories.filter((c: CategoryOption) => {
-      if (form.type === 'income') {
-        return c.category_type === 'income' || c.category_type === 'income_expense'
-      }
-      return c.category_type === 'expense' || c.category_type === 'income_expense'
-    })
-  }, [form.type, localCategories])
-
-  const validate = () => {
-    const errs: Record<string, string> = {}
-    if (!form.amount || Number(form.amount) <= 0) errs.amount = '请输入金额'
-    if (!form.account_id) errs.account_id = '请选择账户'
-    setErrors(errs)
-    return Object.keys(errs).length === 0
+  const refreshDetail = async () => {
+    if (!activeTransaction?.id || !bookId) return
+    const fresh = await apiGet(`/api/transactions/${activeTransaction.id}?book_id=${bookId}`)
+    setDetailTransaction(fresh)
+    return fresh
   }
 
-  // 保存修改
+  const validateEditForm = () => {
+    const nextErrors: Record<string, string> = {}
+    if (!form.amount || Number(form.amount) <= 0) nextErrors.amount = '请输入金额'
+    if (!form.account_id) nextErrors.account_id = '请选择账户'
+    setErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
   const handleSave = async () => {
-    if (!validate() || !transaction) return
+    if (!activeTransaction || !validateEditForm()) return
     setSubmitting(true)
     try {
       const tagsJson = selectedTagIds.length > 0
-        ? JSON.stringify(selectedTagIds.map(id => tags.find((t: any) => t.id === id)?.name || '').filter(Boolean))
+        ? JSON.stringify(selectedTagIds.map((id) => tags.find((tag: any) => tag.id === id)?.name || '').filter(Boolean))
         : null
-      // 只发送 TransactionUpdate schema 中允许的字段，确保类型正确
-      const payload = {
+      await apiPatch(`/api/transactions/${activeTransaction.id}?book_id=${bookId}`, {
         amount: parseFloat(form.amount),
         account_id: form.account_id,
         category_id: form.category_id || null,
         note: form.note || null,
         occurred_at: form.occurred_at ? new Date(form.occurred_at).toISOString() : new Date().toISOString(),
-        tags: tagsJson
-      }
-      console.log('PATCH payload:', JSON.stringify(payload))
-      await apiPatch(`/api/transactions/${transaction.id}?book_id=${bookId}`, payload)
+        tags: tagsJson,
+      })
       message.success('更新成功')
+      await refreshDetail()
       onRefresh()
-      onClose()
-    } catch (err: any) {
-      console.error('更新失败详细:', err, window.__lastError)
-      const errMsg = err?.message || err?.detail || window.__lastError?.detail || (typeof err === 'object' ? JSON.stringify(err) : String(err)) || '更新失败'
-      message.error('更新失败: ' + errMsg)
+      setViewMode('detail')
+    } catch (error: any) {
+      message.error(error?.message || '更新失败')
     } finally {
       setSubmitting(false)
     }
   }
 
-  // 删除交易
   const handleDelete = async () => {
-    if (!transaction) return
+    if (!activeTransaction) return
     if (!confirm('确定要删除这条交易吗？')) return
-    setLoading(true)
+    setSubmitting(true)
     try {
-      await apiDelete(`/api/transactions/${transaction.id}?book_id=${bookId}`)
+      await apiDelete(`/api/transactions/${activeTransaction.id}?book_id=${bookId}`)
       message.success('删除成功')
       onRefresh()
       onClose()
-    } catch (err: any) {
-      console.error('删除失败详细:', err)
-      message.error('删除失败: ' + (err?.message || err?.detail || '未知错误'))
+    } catch (error: any) {
+      message.error(error?.message || '删除失败')
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
-  // 退款
-  const handleRefund = async () => {
-    if (!transaction) return
-    if (transaction.direction !== 'out') {
-      message.info('只能对支出交易发起退款')
-      return
-    }
-    if (!confirm(`确定要退款 ¥${Number(transaction.amount).toFixed(2)} 吗？`)) return
-    setLoading(true)
-    try {
-      await apiPost('/api/transactions/refund', {
-        book_id: bookId,
-        original_transaction_id: transaction.id,
-        refund_account_id: transaction.account_id,
-        amount: transaction.amount,
-        occurred_at: new Date().toISOString()
-      })
-      message.success('退款成功')
-      onRefresh()
-      onClose()
-    } catch (err: any) {
-      console.error('退款失败详细:', err)
-      message.error('退款失败: ' + (err?.message || err?.detail || '未知错误'))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // 复制到今天（新增）
   const handleCopyToToday = async () => {
-    if (!validate() || !transaction) return
+    if (!activeTransaction || isSpecialTransaction || !validateEditForm()) return
     setSubmitting(true)
     try {
       const tagsJson = selectedTagIds.length > 0
-        ? JSON.stringify(selectedTagIds.map(id => tags.find((t: any) => t.id === id)?.name || '').filter(Boolean))
+        ? JSON.stringify(selectedTagIds.map((id) => tags.find((tag: any) => tag.id === id)?.name || '').filter(Boolean))
         : null
-      const payload = {
+      await apiPost(`/api/transactions?book_id=${bookId}`, {
         transaction_type: form.type === 'income' ? 'income' : 'expense',
         direction: form.type === 'income' ? 'in' : 'out',
         amount: parseFloat(form.amount),
         account_id: form.account_id,
         category_id: form.category_id || null,
-        note: form.note,
+        note: form.note || null,
         occurred_at: new Date().toISOString(),
-        include_in_expense: true,
-        include_in_income: true,
-        include_in_cashflow: true,
-        tags: tagsJson
-      }
-      await apiPost('/api/transactions?book_id=' + bookId, payload)
+        tags: tagsJson,
+      })
       message.success('已复制到今天')
       onRefresh()
       onClose()
-    } catch (err: any) {
-      console.error('复制失败详细:', err)
-      message.error('复制失败: ' + (err?.message || err?.detail || '未知错误'))
+    } catch (error: any) {
+      message.error(error?.message || '复制失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const openRefundModal = (mode: RefundMode) => {
+    const today = new Date().toISOString().split('T')[0]
+    setRefundMode(mode)
+    setRefundForm({
+      amount: mode === 'full' ? String(remainingRefundableAmount.toFixed(2)) : '',
+      note: '',
+      occurred_at: today,
+    })
+    setRefundModalOpen(true)
+  }
+
+  const handleRefundSubmit = async () => {
+    if (!activeTransaction) return
+    const amount = Number(refundForm.amount)
+
+    if (!refundForm.amount || Number.isNaN(amount) || amount <= 0) {
+      message.error('请输入有效退款金额')
+      return
+    }
+
+    if (amount > remainingRefundableAmount) {
+      message.error(`退款金额不能超过剩余可退 ${formatCurrency(remainingRefundableAmount)}`)
+      return
+    }
+
+    if (!refundForm.occurred_at) {
+      message.error('请选择退款日期')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await apiPost('/api/transactions/refund', {
+        original_transaction_id: activeTransaction.id,
+        refund_account_id: activeTransaction.account_id,
+        amount,
+        note: refundForm.note || null,
+        occurred_at: new Date(refundForm.occurred_at).toISOString(),
+      })
+      message.success(refundMode === 'full' ? '退款完成' : '部分退款已记录')
+      setRefundModalOpen(false)
+      await refreshDetail()
+      onRefresh()
+    } catch (error: any) {
+      message.error(error?.message || '退款失败')
     } finally {
       setSubmitting(false)
     }
@@ -362,258 +380,498 @@ export function TransactionBottomDrawer({
 
   if (!transaction) return null
 
-  const isExpense = form.type === 'expense'
-  const accentColor = isExpense ? '#ff4d4f' : '#52c41a'
-  const canRefund = transaction.direction === 'out'
-  const canCopyToToday = !isSpecialTransaction
+  const tagsForDetail = parseTagLabels(activeTransaction?.tags)
+  const refundSummaryVisible = activeTransaction?.transaction_type === 'expense'
+  const refundProgressLabel = activeTransaction?.is_fully_refunded
+    ? '已全额退款'
+    : activeTransaction?.is_partially_refunded
+      ? '部分已退款'
+      : '未退款'
 
   return (
-    <Drawer
-      open={visible}
-      onClose={onClose}
-      placement="bottom"
-      height="80vh"
-      styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
-      onOpenChange={(open) => !open && onClose()}
-      // 禁止左右滑动，只能上下滑动
-      push={{ distance: 0 }}
-      motion={null}
-    >
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-      ) : (
-        <>
-          {/* Header 区域 - 固定不滚动 */}
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center',
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--border-light)',
-            flexShrink: 0
-          }}>
-            <span style={{ fontWeight: 500 }}>编辑交易</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button 
-                size="small" 
-                danger 
-                icon={<DeleteOutlined />} 
-                onClick={handleDelete}
-              >删除</Button>
-              <Button 
-                size="small" 
-                icon={<UndoOutlined />} 
-                onClick={handleRefund}
-                disabled={!canRefund || isSpecialTransaction}
-              >退款</Button>
-              <Button 
-                size="small" 
-                icon={<CopyOutlined />} 
-                onClick={handleCopyToToday}
-                disabled={!canCopyToToday}
-              >复制到今天</Button>
-            </div>
-          </div>
-
-          {/* Body 滚动区域 - 自适应高度 */}
-          <div style={{ 
-            flex: 1, 
-            overflowX: 'hidden', 
+    <>
+      <Modal
+        open={visible}
+        onCancel={onClose}
+        footer={null}
+        centered
+        width={isSpecialTransaction && viewMode === 'edit' ? 980 : 860}
+        destroyOnHidden
+        styles={{
+          body: {
+            maxHeight: '78vh',
             overflowY: 'auto',
-            padding: 16,
-            paddingBottom: 24
-          }}>
-            {isTransferTransaction ? (
-              specialFormLoading ? (
-                <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-              ) : transferInitialValues ? (
-                <TransferPage
-                  embedded
-                  isEditMode
-                  initialValues={transferInitialValues}
-                  onCancel={onClose}
-                  onSuccess={() => {
-                    message.success('更新成功')
-                    onRefresh()
-                    onClose()
-                  }}
-                />
-              ) : null
-            ) : isRepaymentTransaction ? (
-              repaymentInitialValues ? (
-                <OtherTransactionPage
-                  embedded
-                  isEditMode
-                  initialSubType="repay"
-                  initialValues={repaymentInitialValues}
-                  onCancel={onClose}
-                  onSuccess={() => {
-                    message.success('更新成功')
-                    onRefresh()
-                    onClose()
-                  }}
-                />
-              ) : null
-            ) : (
-              <>
-            {/* 支出/收入切换 */}
-            <div style={{ display: 'flex', justifyContent: 'center', background: 'var(--border-light)', borderRadius: 20, padding: 3, marginBottom: 16 }}>
-              <div
-                onClick={() => { setForm(f => ({ ...f, type: 'expense' })); setErrors({}) }}
-                style={{
-                  padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
-                  background: isExpense ? 'var(--accent-red)' : 'transparent',
-                  color: isExpense ? '#fff' : 'var(--text-secondary)',
-                  fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
+            padding: 20,
+          },
+        }}
+        title={viewMode === 'detail' ? '交易详情' : '编辑交易'}
+      >
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <Spin />
+          </div>
+        ) : viewMode === 'edit' ? (
+          isTransferTransaction ? (
+            specialFormLoading ? (
+              <div style={{ textAlign: 'center', padding: 48 }}><Spin /></div>
+            ) : transferInitialValues ? (
+              <TransferPage
+                embedded
+                isEditMode
+                initialValues={transferInitialValues}
+                onCancel={() => setViewMode('detail')}
+                onSuccess={async () => {
+                  message.success('更新成功')
+                  await refreshDetail()
+                  onRefresh()
+                  setViewMode('detail')
                 }}
-              >支出</div>
-              <div
-                onClick={() => { setForm(f => ({ ...f, type: 'income' })); setErrors({}) }}
-                style={{
-                  padding: '6px 24px', borderRadius: 18, cursor: 'pointer',
-                  background: !isExpense ? 'var(--accent-green)' : 'transparent',
-                  color: !isExpense ? '#fff' : 'var(--text-secondary)',
-                  fontWeight: 500, fontSize: 15, transition: 'all 0.2s',
+              />
+            ) : null
+          ) : isRepaymentTransaction ? (
+            repaymentInitialValues ? (
+              <OtherTransactionPage
+                embedded
+                isEditMode
+                initialSubType="repay"
+                initialValues={repaymentInitialValues}
+                onCancel={() => setViewMode('detail')}
+                onSuccess={async () => {
+                  message.success('更新成功')
+                  await refreshDetail()
+                  onRefresh()
+                  setViewMode('detail')
                 }}
-              >收入</div>
-            </div>
-
-            {/* 金额输入 */}
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '16px', 
-              marginBottom: 16,
-              background: `linear-gradient(135deg, ${accentColor}08, ${accentColor}15)`,
-              borderRadius: 12,
-              border: errors.amount ? `2px solid ${accentColor}` : '2px solid transparent'
-            }}>
-              <div style={{ fontSize: 14, color: '#999', marginBottom: 8 }}>
-                {isExpense ? '支出金额' : '收入金额'}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center' }}>
-                <span style={{ fontSize: 28, color: accentColor, fontWeight: 300, marginRight: 4 }}>¥</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={form.amount}
-                  onChange={e => { setForm(f => ({ ...f, amount: e.target.value })); setErrors(prev => ({ ...prev, amount: '' })) }}
+              />
+            ) : null
+          ) : (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 20 }}>
+                <div
+                  onClick={() => {
+                    setForm((current) => ({ ...current, type: 'expense' }))
+                    setErrors({})
+                  }}
                   style={{
-                    fontSize: 36, fontWeight: 600, color: accentColor,
-                    border: 'none', background: 'transparent', outline: 'none',
-                    width: '50%', textAlign: 'left',
+                    padding: '8px 18px',
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                    background: form.type === 'expense' ? 'var(--accent-red)' : 'var(--bg-elevated)',
+                    color: form.type === 'expense' ? '#fff' : 'var(--text-secondary)',
+                    fontWeight: 600,
                   }}
-                />
+                >
+                  支出
+                </div>
+                <div
+                  onClick={() => {
+                    setForm((current) => ({ ...current, type: 'income' }))
+                    setErrors({})
+                  }}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 999,
+                    cursor: 'pointer',
+                    background: form.type === 'income' ? 'var(--accent-green)' : 'var(--bg-elevated)',
+                    color: form.type === 'income' ? '#fff' : 'var(--text-secondary)',
+                    fontWeight: 600,
+                  }}
+                >
+                  收入
+                </div>
               </div>
-              {errors.amount && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 8 }}>{errors.amount}</div>}
+
+              <div style={{ display: 'grid', gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>金额</div>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={form.amount}
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, amount: event.target.value }))
+                      setErrors((current) => ({ ...current, amount: '' }))
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: errors.amount ? '1px solid #ff4d4f' : '1px solid var(--border-color)',
+                      background: 'var(--bg-input)',
+                    }}
+                  />
+                  {errors.amount ? <div style={{ color: '#ff4d4f', marginTop: 6, fontSize: 12 }}>{errors.amount}</div> : null}
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>账户</div>
+                  <select
+                    value={form.account_id}
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, account_id: event.target.value }))
+                      setErrors((current) => ({ ...current, account_id: '' }))
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: errors.account_id ? '1px solid #ff4d4f' : '1px solid var(--border-color)',
+                      background: 'var(--bg-input)',
+                    }}
+                  >
+                    <option value="">请选择账户</option>
+                    {accounts.map((account: any) => (
+                      <option key={account.id} value={account.id}>{account.name}</option>
+                    ))}
+                  </select>
+                  {errors.account_id ? <div style={{ color: '#ff4d4f', marginTop: 6, fontSize: 12 }}>{errors.account_id}</div> : null}
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>分类</div>
+                  <select
+                    value={form.category_id}
+                    onChange={(event) => setForm((current) => ({ ...current, category_id: event.target.value }))}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-input)',
+                    }}
+                  >
+                    <option value="">不设置分类</option>
+                    {filteredCategories.map((category: any) => (
+                      <option key={category.id} value={category.id}>
+                        {category.icon ? `${category.icon} ` : ''}{category.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>日期</div>
+                  <input
+                    type="date"
+                    value={form.occurred_at}
+                    onChange={(event) => setForm((current) => ({ ...current, occurred_at: event.target.value }))}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-input)',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>标签</div>
+                  <TagMultiSelect
+                    allTags={tags}
+                    value={selectedTagIds}
+                    onChange={setSelectedTagIds}
+                    onTagsUpdated={() => {}}
+                    bookId={bookId}
+                    placeholder="搜索、选择或创建标签"
+                  />
+                  {selectedTagLabels.length > 0 ? (
+                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {selectedTagLabels.map((label) => (
+                        <span
+                          key={label}
+                          style={{
+                            padding: '4px 10px',
+                            borderRadius: 999,
+                            border: '1px solid var(--border-light)',
+                            background: 'var(--bg-elevated)',
+                            fontSize: 12,
+                          }}
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>备注</div>
+                  <textarea
+                    value={form.note}
+                    onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))}
+                    rows={4}
+                    style={{
+                      width: '100%',
+                      padding: '12px 14px',
+                      borderRadius: 10,
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-input)',
+                      resize: 'vertical',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 20 }}>
+                <Button onClick={() => setViewMode('detail')}>取消</Button>
+                <Button type="primary" loading={submitting} onClick={handleSave}>保存修改</Button>
+              </div>
+            </div>
+          )
+        ) : (
+          <div style={{ display: 'grid', gap: 20 }}>
+            <div
+              style={{
+                padding: 18,
+                borderRadius: 16,
+                background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.04), rgba(15, 23, 42, 0.01))',
+                border: '1px solid var(--border-light)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+                    {activeTransaction?.merchant || activeTransaction?.note || '交易记录'}
+                  </div>
+                  <div
+                    style={{
+                      marginTop: 8,
+                      fontSize: 30,
+                      fontWeight: 700,
+                      color: activeTransaction?.direction === 'in' || activeTransaction?.transaction_type === 'refund'
+                        ? 'var(--accent-green)'
+                        : 'var(--accent-red)',
+                    }}
+                  >
+                    {activeTransaction?.direction === 'in' || activeTransaction?.transaction_type === 'refund' ? '+' : '-'}
+                    {formatCurrency(activeTransaction?.amount)}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 999,
+                    background: activeTransaction?.is_fully_refunded ? '#dcfce7' : activeTransaction?.is_partially_refunded ? '#fef3c7' : 'var(--bg-elevated)',
+                    color: activeTransaction?.is_fully_refunded ? '#166534' : activeTransaction?.is_partially_refunded ? '#92400e' : 'var(--text-secondary)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {refundProgressLabel}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 16 }}>
+                <Button icon={<EditOutlined />} onClick={() => setViewMode('edit')}>编辑</Button>
+                <Button
+                  icon={<UndoOutlined />}
+                  onClick={() => openRefundModal('partial')}
+                  disabled={!canRefund}
+                >
+                  部分退款
+                </Button>
+                <Button
+                  onClick={() => openRefundModal('full')}
+                  disabled={!canRefund}
+                >
+                  退款剩余全部
+                </Button>
+                <Button
+                  icon={<CopyOutlined />}
+                  onClick={handleCopyToToday}
+                  disabled={isSpecialTransaction}
+                >
+                  复制到今天
+                </Button>
+                <Button danger icon={<DeleteOutlined />} onClick={handleDelete}>删除</Button>
+              </div>
             </div>
 
-            {/* 账户选择 */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>账户 *</div>
-              <select
-                value={form.account_id}
-                onChange={e => { setForm(f => ({ ...f, account_id: e.target.value })); setErrors(prev => ({ ...prev, account_id: '' })) }}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+              <DetailCard label="日期" value={formatDate(activeTransaction?.occurred_at)} />
+              <DetailCard label="账户" value={accounts.find((account: any) => account.id === activeTransaction?.account_id)?.name || activeTransaction?.account_id || '-'} />
+              <DetailCard label="分类" value={categories.find((category: any) => category.id === activeTransaction?.category_id)?.name || '-'} />
+              <DetailCard label="交易类型" value={activeTransaction?.transaction_type || '-'} />
+            </div>
+
+            {refundSummaryVisible ? (
+              <section
                 style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: errors.account_id ? '1px solid #ff4d4f' : '1px solid var(--border-color)',
-                  fontSize: 15, background: 'var(--bg-input)', color: 'var(--text-primary)',
+                  padding: 16,
+                  borderRadius: 16,
+                  border: '1px solid var(--border-light)',
+                  background: 'var(--bg-card)',
                 }}
               >
-                <option value="">选择账户</option>
-                {accounts.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-              {errors.account_id && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{errors.account_id}</div>}
-            </div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>退款信息</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+                  <DetailCard label="原始金额" value={formatCurrency(activeTransaction?.original_amount ?? activeTransaction?.amount)} />
+                  <DetailCard label="已退款" value={formatCurrency(activeTransaction?.refunded_amount)} />
+                  <DetailCard label="剩余可退" value={formatCurrency(activeTransaction?.remaining_refundable_amount)} />
+                </div>
 
-            {/* 分类选择 - 弹窗选择 */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>类别</div>
-              <CategorySelector
-                categories={filteredCategories as any}
-                value={form.category_id}
-                onChange={(value) => setForm(f => ({ ...f, category_id: value }))}
-                bookId={bookId}
-                onCategoriesUpdated={(nextItems) => setLocalCategories(nextItems as CategoryOption[])}
-                placeholder="点击选择类别"
-              />
-            </div>
+                {Array.isArray(activeTransaction?.linked_refunds) && activeTransaction.linked_refunds.length > 0 ? (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>关联退款记录</div>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {activeTransaction.linked_refunds.map((refund: any) => (
+                        <div
+                          key={refund.id}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '12px 14px',
+                            borderRadius: 12,
+                            background: 'var(--bg-elevated)',
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 600 }}>{formatDate(refund.occurred_at)}</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                              {refund.note || '无退款原因'}
+                            </div>
+                          </div>
+                          <div style={{ color: 'var(--accent-green)', fontWeight: 700 }}>
+                            +{formatCurrency(refund.amount)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
-            {/* 日期选择 */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>日期</div>
-              <input
-                type="date"
-                value={form.occurred_at}
-                onChange={e => setForm(f => ({ ...f, occurred_at: e.target.value }))}
-                style={{
-                  width: '100%', padding: '10px 12px', borderRadius: 8,
-                  border: '1px solid var(--border-color)', fontSize: 15,
-                  background: 'var(--bg-input)', color: 'var(--text-primary)',
-                }}
-              />
-            </div>
-
-            {/* 标签选择 */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>标签</div>
-              <TagMultiSelect
-                allTags={tags}
-                value={selectedTagIds}
-                onChange={setSelectedTagIds}
-                bookId={bookId}
-                placeholder="搜索、选择或创建标签"
-              />
-            </div>
-
-            {/* 备注输入 */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 6 }}>备注（可选）</div>
-              <Input
-                placeholder="添加备注"
-                value={form.note}
-                onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
-              />
-            </div>
-              </>
-            )}
-          </div>
-
-          {/* Footer 区域 - 固定不滚动 */}
-          {!isSpecialTransaction ? (
-          <div style={{ 
-            display: 'flex', 
-            gap: 12, 
-            padding: 16, 
-            borderTop: '1px solid var(--border-light)',
-            flexShrink: 0,
-            background: 'var(--bg-primary)'
-          }}>
-            <Button 
-              size="large" 
-              style={{ flex: 1, height: 48, borderRadius: 12 }} 
-              onClick={onClose}
-            >取消</Button>
-            <Button
-              type="primary"
-              size="large"
-              loading={submitting}
-              style={{ 
-                flex: 2, 
-                height: 48, 
-                borderRadius: 12, 
-                background: accentColor, 
-                borderColor: accentColor 
+            <section
+              style={{
+                padding: 16,
+                borderRadius: 16,
+                border: '1px solid var(--border-light)',
+                background: 'var(--bg-card)',
               }}
-              onClick={handleSave}
-            >保存</Button>
-          </div>
-          ) : null}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>备注</div>
+              <div style={{ color: activeTransaction?.note ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                {activeTransaction?.note || '暂无备注'}
+              </div>
+            </section>
 
-        </>
-      )}
-    </Drawer>
+            {tagsForDetail.length > 0 ? (
+              <section
+                style={{
+                  padding: 16,
+                  borderRadius: 16,
+                  border: '1px solid var(--border-light)',
+                  background: 'var(--bg-card)',
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>标签</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {tagsForDetail.map((tag) => (
+                    <span
+                      key={tag}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        background: 'var(--bg-elevated)',
+                        color: 'var(--text-primary)',
+                        fontSize: 12,
+                      }}
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={refundModalOpen}
+        title={refundMode === 'full' ? '退款剩余全部' : '部分退款'}
+        onCancel={() => setRefundModalOpen(false)}
+        onOk={handleRefundSubmit}
+        okText="确认退款"
+        cancelText="取消"
+        confirmLoading={submitting}
+      >
+        <div style={{ display: 'grid', gap: 14 }}>
+          <div style={{ padding: 12, borderRadius: 12, background: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+            当前剩余可退：<strong style={{ color: 'var(--text-primary)' }}>{formatCurrency(remainingRefundableAmount)}</strong>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>退款金额</div>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={refundForm.amount}
+              onChange={(event) => setRefundForm((current) => ({ ...current, amount: event.target.value }))}
+              placeholder={refundMode === 'partial' ? '请输入退款金额' : ''}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-input)',
+              }}
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>退款日期</div>
+            <input
+              type="date"
+              value={refundForm.occurred_at}
+              onChange={(event) => setRefundForm((current) => ({ ...current, occurred_at: event.target.value }))}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-input)',
+              }}
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>退款原因（可选）</div>
+            <textarea
+              rows={3}
+              value={refundForm.note}
+              onChange={(event) => setRefundForm((current) => ({ ...current, note: event.target.value }))}
+              style={{
+                width: '100%',
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-input)',
+                resize: 'vertical',
+              }}
+            />
+          </div>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+function DetailCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 14,
+        background: 'var(--bg-card)',
+        border: '1px solid var(--border-light)',
+      }}
+    >
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>{label}</div>
+      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
+    </div>
   )
 }
