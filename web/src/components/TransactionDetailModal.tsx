@@ -16,7 +16,6 @@ import {
 } from '../pages/transactionFormSupport';
 
 type DetailMode = 'detail' | 'edit';
-type RefundMode = 'partial' | 'full';
 
 interface TransactionDetailModalProps {
   open: boolean;
@@ -69,7 +68,6 @@ export function TransactionDetailModal({
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<DetailMode>('detail');
   const [refundOpen, setRefundOpen] = useState(false);
-  const [refundMode, setRefundMode] = useState<RefundMode>('partial');
   const [refundSubmitting, setRefundSubmitting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -221,12 +219,6 @@ export function TransactionDetailModal({
   const remainingRefundableAmount = Number(detail?.remaining_refundable_amount || 0);
   const canShowRefundActions =
     isOriginalExpense && !detail?.is_fully_refunded && remainingRefundableAmount > 0;
-  const showFullRefundButton =
-    canShowRefundActions && Math.abs(remainingRefundableAmount - originalAmount) < 0.005;
-  const showPartialRefundButton =
-    canShowRefundActions &&
-    remainingRefundableAmount > 0 &&
-    remainingRefundableAmount < originalAmount - 0.005;
   const detailTags = useMemo(() => {
     const parsedTagNames = parseTransactionTagNames(detail?.tags);
 
@@ -259,13 +251,9 @@ export function TransactionDetailModal({
     });
   }, [detail?.tags, tags, tagsById]);
 
-  const openRefundModal = (nextRefundMode: RefundMode) => {
-    setRefundMode(nextRefundMode);
+  const openRefundModal = () => {
     refundForm.setFieldsValue({
-      amount:
-        nextRefundMode === 'full'
-          ? Number(Number(detail?.remaining_refundable_amount || 0).toFixed(2))
-          : undefined,
+      amount: Number(originalAmount.toFixed(2)),
       reason: '',
       occurred_at: toDateInputValue(new Date().toISOString()),
       refund_account_id: detail?.account_id,
@@ -366,23 +354,6 @@ export function TransactionDetailModal({
             <div style={{ marginTop: 6, color: 'var(--text-secondary)', fontSize: 13 }}>
               {toDateInputValue(detail?.occurred_at)} · {accountMap.get(detail?.account_id)?.name || '未知账户'}
             </div>
-            <div
-              style={{
-                marginTop: 10,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '6px 10px',
-                borderRadius: 999,
-                background: 'rgba(15, 23, 42, 0.06)',
-                color: 'var(--text-primary)',
-                fontSize: 12,
-                fontWeight: 600,
-              }}
-            >
-              <span>{categoryDisplay.icon || '•'}</span>
-              <span>{categoryDisplay.label}</span>
-            </div>
           </div>
           <div style={{ textAlign: 'right' }}>
             <div
@@ -402,19 +373,9 @@ export function TransactionDetailModal({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <Button onClick={() => setMode('edit')}>编辑</Button>
-        {showFullRefundButton && (
-          <Button
-            onClick={() => openRefundModal('full')}
-          >
-            全额退款
-          </Button>
-        )}
-        {showPartialRefundButton && (
-          <Button
-            type="primary"
-            onClick={() => openRefundModal('partial')}
-          >
-            部分退款
+        {canShowRefundActions && (
+          <Button type="primary" onClick={() => openRefundModal()}>
+            退款
           </Button>
         )}
         <Popconfirm title="确认删除这笔交易？" onConfirm={() => void handleDelete()}>
@@ -691,7 +652,7 @@ export function TransactionDetailModal({
       <Modal
         centered
         open={refundOpen}
-        title={refundMode === 'full' ? '全额退款' : '部分退款'}
+        title="退款"
         onCancel={() => {
           setRefundOpen(false);
           refundForm.resetFields();
@@ -722,8 +683,7 @@ export function TransactionDetailModal({
               style={{ width: '100%' }}
               min={0.01}
               precision={2}
-              disabled={refundMode === 'full'}
-              placeholder={refundMode === 'partial' ? '请输入退款金额' : ''}
+              placeholder="请输入退款金额"
             />
           </Form.Item>
           <Form.Item
