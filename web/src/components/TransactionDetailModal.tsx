@@ -35,26 +35,12 @@ function formatMoney(value?: string | number | null) {
   return Number(value || 0).toFixed(2);
 }
 
-function getTransactionTitle(detail: any, categories: any[]) {
-  if (detail?.merchant?.trim()) return detail.merchant.trim();
-  if (detail?.category_id) return getCategoryLabel(categories, detail.category_id) || '交易详情';
+function getLeafCategoryDisplay(categories: any[], category: any | null) {
+  if (!category) return { label: '未分类', icon: '' };
 
-  switch (detail?.transaction_type) {
-    case 'refund':
-      return '退款';
-    case 'transfer':
-      return '转账';
-    case 'repayment_credit_card':
-      return '信用卡还款';
-    case 'repayment_loan':
-      return '贷款还款';
-    case 'installment_purchase':
-      return '分期消费';
-    case 'fee':
-      return '手续费';
-    default:
-      return '交易详情';
-  }
+  const fullLabel = getHierarchyPathLabel(categories, category) || category.name || '未分类';
+  const label = fullLabel.split(' / ').pop() || fullLabel || '未分类';
+  return { label, icon: category.icon || '' };
 }
 
 function getTransactionTypeLabel(transactionType?: string | null) {
@@ -217,16 +203,11 @@ export function TransactionDetailModal({
     () => new Map(tags.map((tag) => [String(tag.id), tag])),
     [tags],
   );
-  const isRefundable =
-    detail?.transaction_type === REFUNDABLE_TRANSACTION_TYPE &&
-    detail?.direction === 'out' &&
-    Number(detail?.remaining_refundable_amount || 0) > 0;
   const isOriginalExpense =
     detail?.transaction_type === REFUNDABLE_TRANSACTION_TYPE && detail?.direction === 'out';
   const linkedRefunds = Array.isArray(detail?.linked_refunds) ? detail.linked_refunds : [];
   const hasLinkedRefunds = linkedRefunds.length > 0;
   const hasRefundProgress = Boolean(detail?.has_refund) || hasLinkedRefunds;
-  const title = useMemo(() => getTransactionTitle(detail, categories), [categories, detail]);
   const filteredCategories = useMemo(() => {
     const isIncome = detail?.direction === 'in' && detail?.transaction_type !== 'refund';
     const allowed = isIncome ? INCOME_CATEGORY_TYPES : EXPENSE_CATEGORY_TYPES;
@@ -234,12 +215,18 @@ export function TransactionDetailModal({
   }, [categories, detail?.direction, detail?.transaction_type]);
   const categoryDisplay = useMemo(() => {
     const category = detail?.category_id ? categoriesById.get(String(detail.category_id)) : null;
-    if (!category) return { label: '未分类', icon: '' };
-
-    const fullLabel = getHierarchyPathLabel(categories, category) || category.name || '未分类';
-    const label = fullLabel.split(' / ').pop() || fullLabel;
-    return { label, icon: category.icon || '' };
+    return getLeafCategoryDisplay(categories, category);
   }, [categories, categoriesById, detail?.category_id]);
+  const originalAmount = Number(detail?.original_amount ?? detail?.amount ?? 0);
+  const remainingRefundableAmount = Number(detail?.remaining_refundable_amount || 0);
+  const canShowRefundActions =
+    isOriginalExpense && !detail?.is_fully_refunded && remainingRefundableAmount > 0;
+  const showFullRefundButton =
+    canShowRefundActions && Math.abs(remainingRefundableAmount - originalAmount) < 0.005;
+  const showPartialRefundButton =
+    canShowRefundActions &&
+    remainingRefundableAmount > 0 &&
+    remainingRefundableAmount < originalAmount - 0.005;
   const detailTags = useMemo(() => {
     const parsedTagNames = parseTransactionTagNames(detail?.tags);
 
@@ -373,7 +360,9 @@ export function TransactionDetailModal({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start' }}>
           <div>
-            <div style={{ fontSize: 20, fontWeight: 700 }}>{title}</div>
+            <div style={{ fontSize: 20, fontWeight: 700 }}>
+              {categoryDisplay.icon ? `${categoryDisplay.icon} ${categoryDisplay.label}` : categoryDisplay.label}
+            </div>
             <div style={{ marginTop: 6, color: 'var(--text-secondary)', fontSize: 13 }}>
               {toDateInputValue(detail?.occurred_at)} · {accountMap.get(detail?.account_id)?.name || '未知账户'}
             </div>
@@ -413,14 +402,14 @@ export function TransactionDetailModal({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <Button onClick={() => setMode('edit')}>编辑</Button>
-        {isRefundable && (
+        {showFullRefundButton && (
           <Button
             onClick={() => openRefundModal('full')}
           >
             全额退款
           </Button>
         )}
-        {isRefundable && (
+        {showPartialRefundButton && (
           <Button
             type="primary"
             onClick={() => openRefundModal('partial')}
