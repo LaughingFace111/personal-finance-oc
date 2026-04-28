@@ -14,6 +14,7 @@ const items = [
 
 function Harness() {
   const [value, setValue] = React.useState('');
+  const [open, setOpen] = React.useState(false);
 
   return (
     <div
@@ -33,15 +34,23 @@ function Harness() {
       }}
     >
       <div data-testid="selected-value">{value || '未选择'}</div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{ marginTop: 16, padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db' }}
+      >
+        打开分类选择器
+      </button>
       <HierarchyPickerModal
-        open
+        open={open}
         title="选择类别"
         items={[...items]}
         value={value}
         emptyText="暂无可选类别"
-        onCancel={() => {}}
+        onCancel={() => setOpen(false)}
         onConfirm={(nextValue) => {
           setValue(typeof nextValue === 'string' ? nextValue : nextValue[0] ?? '');
+          setOpen(false);
         }}
       />
     </div>

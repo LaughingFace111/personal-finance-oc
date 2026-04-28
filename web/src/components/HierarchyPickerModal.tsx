@@ -249,9 +249,10 @@ export function HierarchyPickerModal({
   }, [expandedCategoryGroup, searchKeyword, searchableItems]);
 
   const isCategoryMode = !isTagMode;
+  const isTagMultiSelectMode = isTagMode && multiple;
 
   const toggleSelect = (id: string) => {
-    if (!multiple) {
+    if (!isTagMultiSelectMode) {
       setDraftValue([id]);
       onConfirm(id);
       return;
@@ -506,7 +507,7 @@ export function HierarchyPickerModal({
       onCancel={onCancel}
       width={460}
       footer={
-        multiple ? (
+        isTagMultiSelectMode ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>已选 {draftValue.length} 项</span>
             <div>
@@ -518,8 +519,8 @@ export function HierarchyPickerModal({
           </div>
         ) : null
       }
-      closable={!multiple}
-      maskClosable={!multiple}
+      closable={!isTagMultiSelectMode}
+      maskClosable={!isTagMultiSelectMode}
       destroyOnHidden
     >
       <div style={{ display: 'grid', gap: 12 }}>
@@ -539,7 +540,7 @@ export function HierarchyPickerModal({
           }}
         />
 
-        {selectedLabels.length > 0 ? (
+        {isTagMultiSelectMode && selectedLabels.length > 0 ? (
           <div
             style={{
               border: '1px solid var(--border-light)',

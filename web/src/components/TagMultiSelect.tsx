@@ -30,6 +30,7 @@ interface TagMultiSelectProps<T extends TagId> {
 }
 
 const DEFAULT_TAG_COLOR = '#3b82f6';
+const UNGROUPED_COLOR = '#94a3b8';
 
 export function hexToRgba(color: string | undefined, alpha: number) {
   if (!color || typeof color !== 'string') return `rgba(59, 130, 246, ${alpha})`;
@@ -105,7 +106,18 @@ function TagPill({
   );
 }
 
-function isUsableTag<T extends TagId>(tag: TagItem<T> | null | undefined): tag is TagItem<T> {
+type GroupableTag<T extends TagId> = {
+  id: T;
+  name: string;
+  color?: string;
+  parent_id?: T | string | null;
+};
+
+function getTagKey(tagId: TagId | null | undefined) {
+  return tagId === null || tagId === undefined ? '' : String(tagId);
+}
+
+function isUsableTag<T extends TagId>(tag: GroupableTag<T> | null | undefined): tag is GroupableTag<T> {
   return Boolean(
     tag &&
       tag.id !== undefined &&
@@ -113,6 +125,86 @@ function isUsableTag<T extends TagId>(tag: TagItem<T> | null | undefined): tag i
       typeof tag.name === 'string' &&
       tag.name.trim().length > 0
   );
+}
+
+type TagGroup<T extends TagId, U extends GroupableTag<T> = TagItem<T>> = {
+  key: string;
+  label: string;
+  color: string;
+  parent?: U;
+  tags: U[];
+};
+
+export function buildGroups<T extends TagId, U extends GroupableTag<T> = GroupableTag<T>>(tags: U[]) {
+  const safeTags = Array.isArray(tags) ? tags.filter(isUsableTag) : [];
+  const byId = new Map(safeTags.map((tag) => [String(tag.id), tag]));
+  const groupsByRoot = new Map<string, U[]>();
+
+  const resolveRoot = (tag: U) => {
+    let current: U | undefined = tag;
+    const visited = new Set<string>();
+    while (current?.parent_id) {
+      const parentKey = String(current.parent_id);
+      if (visited.has(parentKey)) break;
+      visited.add(parentKey);
+      const parent = byId.get(parentKey);
+      if (!parent) break;
+      current = parent;
+    }
+    return current ?? tag;
+  };
+
+  for (const tag of safeTags) {
+    const root = resolveRoot(tag);
+    const rootKey = String(root.id);
+    const list = groupsByRoot.get(rootKey) ?? [];
+    list.push(tag);
+    groupsByRoot.set(rootKey, list);
+  }
+
+  const groups: TagGroup<T, U>[] = [];
+  for (const [rootKey, groupTags] of groupsByRoot.entries()) {
+    const parent = byId.get(rootKey);
+    if (!parent) {
+      groups.push({
+        key: 'group-ungrouped',
+        label: '其他标签',
+        color: UNGROUPED_COLOR,
+        tags: groupTags,
+      });
+      continue;
+    }
+
+    groups.push({
+      key: `group-${rootKey}`,
+      label: parent.name,
+      color: parent.color || DEFAULT_TAG_COLOR,
+      parent,
+      tags: groupTags,
+    });
+  }
+
+  if (groups.length === 0 && safeTags.length > 0) {
+    groups.push({
+      key: 'group-ungrouped',
+      label: '其他标签',
+      color: UNGROUPED_COLOR,
+      tags: safeTags,
+    });
+  }
+
+  return groups
+    .map((group) => ({
+      ...group,
+      tags: [...group.tags].sort((left, right) => {
+        const leftIsParent = group.parent && String(left.id) === String(group.parent.id);
+        const rightIsParent = group.parent && String(right.id) === String(group.parent.id);
+        if (leftIsParent && !rightIsParent) return -1;
+        if (!leftIsParent && rightIsParent) return 1;
+        return String(left.name).localeCompare(String(right.name), 'zh-CN');
+      }),
+    }))
+    .sort((left, right) => String(left.label).localeCompare(String(right.label), 'zh-CN'));
 }
 
 export function TagMultiSelect<T extends TagId>({
@@ -142,10 +234,12 @@ export function TagMultiSelect<T extends TagId>({
   const [search, setSearch] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [draftValue, setDraftValue] = useState<T[]>(value ?? []);
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const [isCreatingInline, setIsCreatingInline] = useState(false);
   const [createDraft, setCreateDraft] = useState('');
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [modalInitialName, setModalInitialName] = useState('');
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setLocalTags(resolvedTags);
@@ -191,12 +285,15 @@ export function TagMultiSelect<T extends TagId>({
   useEffect(() => {
     if (modalVisible) {
       setDraftValue(value ?? []);
+      setIsSummaryExpanded(false);
       return;
     }
 
     setSearch('');
     setCreateDraft('');
     setIsCreatingInline(false);
+    setIsSummaryExpanded(false);
+    setCollapsedGroups({});
   }, [modalVisible, value]);
 
   const selectedSet = useMemo(() => new Set((value ?? []).map((item) => String(item))), [value]);
@@ -207,6 +304,49 @@ export function TagMultiSelect<T extends TagId>({
   const searchKeyword = useMemo(() => search.trim().toLowerCase(), [search]);
   const isSearchActive = searchKeyword.length > 0;
   const draftSelectionCount = useMemo(() => (draftValue ?? []).length, [draftValue]);
+  const draftSelectedTags = useMemo(
+    () => localTags.filter((tag) => draftSelectedSet.has(String(tag.id))),
+    [draftSelectedSet, localTags]
+  );
+  const draftSelectedTagLabels = useMemo(
+    () => draftSelectedTags.map((tag) => getHierarchyPathLabel(localTags, tag) || tag.name),
+    [draftSelectedTags, localTags]
+  );
+  const tagsById = useMemo(
+    () => new Map(localTags.map((tag) => [getTagKey(tag.id), tag])),
+    [localTags]
+  );
+
+  const resolveRootTag = (tag: TagItem<T>) => {
+    let current: TagItem<T> | undefined = tag;
+    const visited = new Set<string>();
+
+    while (current?.parent_id) {
+      const parentKey = getTagKey(current.parent_id);
+      if (!parentKey || visited.has(parentKey)) break;
+      visited.add(parentKey);
+      const parent = tagsById.get(parentKey);
+      if (!parent) break;
+      current = parent;
+    }
+
+    return current ?? tag;
+  };
+
+  const groupedTags = useMemo(() => {
+    const groups = buildGroups<T, TagItem<T>>(localTags);
+    return groups.map((group) => ({
+      ...group,
+      tags: group.tags.map((tag) => {
+        const rootTag = resolveRootTag(tag);
+        return {
+          ...tag,
+          color: rootTag.color || tag.color || DEFAULT_TAG_COLOR,
+        };
+      }),
+      color: group.parent ? resolveRootTag(group.parent).color || group.color : group.color,
+    }));
+  }, [localTags, tagsById]);
 
   const frequentTagIds = useMemo(
     () => new Set(frequentTags.map((tag) => String(tag.id))),
@@ -237,6 +377,10 @@ export function TagMultiSelect<T extends TagId>({
       getHierarchyPathLabel(localTags, tag).toLowerCase().includes(searchKeyword)
     );
   }, [isSearchActive, localTags, modalVisible, searchKeyword, sortedFlatTags]);
+  const visibleGroups = useMemo(() => {
+    if (!modalVisible || isSearchActive) return [];
+    return groupedTags;
+  }, [groupedTags, isSearchActive, modalVisible]);
 
   const visibleFrequentTags = useMemo(() => {
     if (isSearchActive) return [];
@@ -262,6 +406,13 @@ export function TagMultiSelect<T extends TagId>({
     }
 
     setDraftValue((current) => [...current, tagId]);
+  };
+
+  const toggleGroup = (groupKey: string) => {
+    setCollapsedGroups((current) => ({
+      ...current,
+      [groupKey]: !current[groupKey],
+    }));
   };
 
   const openCreateModal = () => {
@@ -494,7 +645,97 @@ export function TagMultiSelect<T extends TagId>({
                 >
                   全部标签
                 </div>
-                {visibleFlatTags.length === 0 ? (
+                {!isSearchActive && visibleGroups.length > 0 ? (
+                  <div style={{ display: 'grid', gap: '10px' }}>
+                    {visibleGroups.map((group) => {
+                      const groupKey = group.parent ? getTagKey(group.parent.id) : group.key;
+                      const isCollapsed = Boolean(collapsedGroups[groupKey]);
+                      const groupTags = group.tags.filter((tag) =>
+                        group.parent ? getTagKey(tag.id) !== getTagKey(group.parent.id) : true
+                      );
+                      const renderedTags = group.parent ? [group.parent, ...groupTags] : groupTags;
+
+                      return (
+                        <section
+                          key={group.key}
+                          aria-label={`标签分组-${group.label}`}
+                          style={{
+                            border: `1px solid ${hexToRgba(group.color, 0.18)}`,
+                            background: hexToRgba(group.color, 0.05),
+                            borderRadius: '14px',
+                            overflow: 'hidden',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            aria-expanded={!isCollapsed}
+                            aria-label={`${group.label}分组`}
+                            onClick={() => toggleGroup(groupKey)}
+                            style={{
+                              width: '100%',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '12px',
+                              border: 'none',
+                              background: 'transparent',
+                              color: 'var(--text-primary)',
+                              padding: '12px 14px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span
+                                style={{
+                                  width: '10px',
+                                  height: '10px',
+                                  borderRadius: '999px',
+                                  background: group.color,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <span style={{ fontSize: '13px', fontWeight: 700 }}>{group.label}</span>
+                            </span>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>
+                              {isCollapsed ? '展开' : '收起'}
+                            </span>
+                          </button>
+
+                          {!isCollapsed ? (
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                gap: '8px',
+                                padding: '0 14px 14px',
+                              }}
+                            >
+                              {renderedTags.map((tag) => {
+                                const selected = draftSelectedSet.has(String(tag.id));
+                                const maxReached = Boolean(
+                                  maxSelect && (draftValue ?? []).length >= maxSelect && !selected
+                                );
+                                const isParentTag =
+                                  Boolean(group.parent) &&
+                                  getTagKey(tag.id) === getTagKey(group.parent?.id);
+                                return (
+                                  <TagPill
+                                    key={String(tag.id)}
+                                    label={isParentTag ? tag.name : tag.name}
+                                    color={tag.color || group.color || DEFAULT_TAG_COLOR}
+                                    selected={selected}
+                                    disabled={disabled || maxReached || tag.is_active === false}
+                                    onClick={() => toggleTag(tag.id)}
+                                  />
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </section>
+                      );
+                    })}
+                  </div>
+                ) : visibleFlatTags.length === 0 ? (
                   <div
                     style={{
                       border: '1px dashed var(--border-color)',
@@ -517,7 +758,7 @@ export function TagMultiSelect<T extends TagId>({
                         <TagPill
                           key={String(tag.id)}
                           label={getHierarchyPathLabel(localTags, tag)}
-                          color={tag.color || DEFAULT_TAG_COLOR}
+                          color={(resolveRootTag(tag).color || tag.color || DEFAULT_TAG_COLOR)}
                           selected={selected}
                           disabled={disabled || maxReached || tag.is_active === false}
                           onClick={() => toggleTag(tag.id)}
@@ -593,15 +834,87 @@ export function TagMultiSelect<T extends TagId>({
               flexShrink: 0,
               position: 'sticky',
               bottom: 0,
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '8px',
+              display: 'grid',
+              gap: '10px',
               paddingTop: '12px',
               marginTop: '4px',
               borderTop: '1px solid var(--border-color)',
               background: 'var(--bg-card)',
             }}
           >
+            <div
+              aria-label="标签完成栏"
+              style={{
+                border: '1px solid var(--border-light)',
+                borderRadius: '14px',
+                background: 'var(--bg-elevated)',
+                padding: '12px',
+                display: 'grid',
+                gap: '10px',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  gap: '12px',
+                }}
+              >
+                <div
+                  aria-label="标签完成计数"
+                  style={{ color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 600 }}
+                >
+                  {draftSelectionHint}
+                </div>
+                <button
+                  type="button"
+                  aria-expanded={isSummaryExpanded}
+                  aria-label={isSummaryExpanded ? '收起已选标签' : '展开已选标签'}
+                  onClick={() => setIsSummaryExpanded((current) => !current)}
+                  style={{
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                    borderRadius: '999px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {isSummaryExpanded ? '收起' : '展开'}
+                </button>
+              </div>
+
+              {isSummaryExpanded ? (
+                draftSelectedTags.length > 0 ? (
+                  <div
+                    aria-label="已选标签列表"
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}
+                  >
+                    {draftSelectedTags.map((tag, index) => (
+                      <TagPill
+                        key={`summary-${String(tag.id)}`}
+                        label={draftSelectedTagLabels[index] || tag.name}
+                        color={tag.color || DEFAULT_TAG_COLOR}
+                        selected
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: '12px' }}>暂未选择标签</div>
+                )
+              ) : null}
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '8px',
+              }}
+            >
             <button
               type="button"
               onClick={() => setModalVisible(false)}
@@ -636,6 +949,7 @@ export function TagMultiSelect<T extends TagId>({
             >
               确定
             </button>
+            </div>
           </div>
         </div>
       </Modal>
@@ -665,7 +979,8 @@ export function TagMultiSelect<T extends TagId>({
           }
 
           setCreateDraft('');
-          setSearch(createdTag.name);
+          setSearch('');
+          setIsCreatingInline(false);
           setCreateModalOpen(false);
         }}
       />

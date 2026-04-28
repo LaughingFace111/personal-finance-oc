@@ -221,7 +221,7 @@ type StagingImportRowProps = {
   bookId: string | null;
   onToggleSelect: (tempId: string, selected: boolean) => void;
   onUpdateRow: (tempId: string, patch: Partial<ParsedItem> | ((row: ParsedItem) => Partial<ParsedItem>)) => void;
-  onTagsUpdated: (nextTags: SelectTagOption[]) => void;
+  onTagsUpdated: (nextTags: TagOption[]) => void;
   onOpenCategoryPicker: (tempId: string) => void;
 };
 
@@ -868,7 +868,7 @@ export function StagingImportTable() {
     );
   }, [bookId]);
 
-  const handleTagsUpdated = useCallback((nextTags: SelectTagOption[]) => {
+  const handleTagsUpdated = useCallback((nextTags: TagOption[]) => {
     const normalizedTags = nextTags.map((tag) => {
       const parent = nextTags.find((item) => item.id === tag.parent_id);
       return {

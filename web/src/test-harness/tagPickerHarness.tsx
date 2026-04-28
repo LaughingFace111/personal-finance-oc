@@ -4,13 +4,13 @@ import { TagMultiSelect } from '../components/TagMultiSelect';
 
 const tags = [
   { id: 'groceries', name: '买菜', color: '#16a34a' },
-  { id: 'breakfast', name: '早餐', parent_id: 'groceries', color: '#16a34a' },
-  { id: 'dinner', name: '晚餐', parent_id: 'groceries', color: '#16a34a' },
+  { id: 'breakfast', name: '早餐', parent_id: 'groceries', color: '#f97316' },
+  { id: 'dinner', name: '晚餐', parent_id: 'groceries', color: '#f97316' },
   { id: 'transport', name: '交通', color: '#2563eb' },
-  { id: 'subway', name: '地铁', parent_id: 'transport', color: '#2563eb' },
-  { id: 'taxi', name: '打车', parent_id: 'transport', color: '#2563eb' },
+  { id: 'subway', name: '地铁', parent_id: 'transport', color: '#dc2626' },
+  { id: 'taxi', name: '打车', parent_id: 'transport', color: '#dc2626' },
   { id: 'fun', name: '娱乐', color: '#db2777' },
-  { id: 'movie', name: '电影', parent_id: 'fun', color: '#db2777' },
+  { id: 'movie', name: '电影', parent_id: 'fun', color: '#111827' },
 ] as const;
 
 const frequentTags = [
@@ -27,6 +27,31 @@ window.fetch = async (input, init) => {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  if (url.includes('/api/tags/first-level')) {
+    return new Response(
+      JSON.stringify(tags.filter((tag) => !('parent_id' in tag)).map(({ id, name, color }) => ({ id, name, color }))),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+
+  if (url.endsWith('/api/tags') && (init?.method || 'GET').toUpperCase() === 'POST') {
+    const payload = init?.body ? JSON.parse(String(init.body)) : {};
+    return new Response(
+      JSON.stringify({
+        id: `created-${payload.name}`,
+        name: payload.name,
+        parent_id: payload.parent_id,
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   return originalFetch(input, init);
