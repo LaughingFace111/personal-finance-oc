@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, usePa
 import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
-import { useState, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react'
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
 import { HierarchyPickerModal } from './components/HierarchyPickerModal'
 import { CategorySelector } from './components/CategorySelector'
@@ -10,7 +10,7 @@ import { TagMultiSelect } from './components/TagMultiSelect'
 import TransactionListComponent from './components/TransactionList'
 import { TransactionDetailModal } from './components/TransactionDetailModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
-import { apiGet, apiPost, apiDelete, apiPatch, apiDownload } from './services/api'
+import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
@@ -42,6 +42,7 @@ const BudgetDetailPage = lazy(() => import('./pages/BudgetDetailPage'))
 const SettingsPageView = lazy(() => import('./pages/SettingsPage'))
 const ImportsPageView = lazy(() => import('./pages/ImportsPage'))
 const TransferPage = lazy(() => import('./pages/TransferPage'))
+const ExportPage = lazy(() => import('./pages/ExportPage'))
 
 export { useAuth }
 
@@ -52,23 +53,6 @@ const LoadingFallback = () => (
     加载中...
   </div>
 )
-
-type ExportDateRange = {
-  start_date: string
-  end_date: string
-}
-
-type ExportRangeBuilder = (() => ExportDateRange) | null
-
-type ExportModalContextValue = {
-  openExportModal: () => void
-  registerDefaultExportRangeBuilder: (builder: ExportRangeBuilder) => void
-}
-
-const ExportModalContext = createContext<ExportModalContextValue>({
-  openExportModal: () => {},
-  registerDefaultExportRangeBuilder: () => {},
-})
 
 const LoginPage = () => {
   const [username, setUsername] = useState('')
@@ -203,11 +187,12 @@ const menuItems = [
   { key: '/budgets', icon: <CalendarOutlined />, label: '预算' },
   { key: '/assets', icon: <AccountBookOutlined />, label: '日均成本' },
   { key: '/imports', icon: <UploadOutlined />, label: '导入' },
+  { key: '/export', icon: <FileTextOutlined />, label: '导出' },
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
 const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/subscriptions': '固定账单中心', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
-    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
+    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/export': '导出', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
   const year = value.getFullYear()
@@ -253,105 +238,9 @@ function AppShell() {
   const { user, logout } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [fabMenuOpen, setFabMenuOpen] = useState(false)
-  const [books, setBooks] = useState<Array<{ id: string; name: string }>>([])
-  const [exportAccounts, setExportAccounts] = useState<Array<{ id: string; name: string }>>([])
-  const [exportModalOpen, setExportModalOpen] = useState(false)
-  const [exportSubmitting, setExportSubmitting] = useState(false)
-  const [defaultExportRangeBuilder, setDefaultExportRangeBuilder] = useState<ExportRangeBuilder>(null)
-  const defaultBookId = user?.default_book_id || ''
-  const [exportFilters, setExportFilters] = useState({
-    book_id: defaultBookId,
-    account_id: '',
-    start_date: '',
-    end_date: '',
-  })
   const currentTitle = pageTitles[location.pathname] || '个人记账'
 
   useEffect(() => { setDrawerOpen(false) }, [location.pathname])
-
-  useEffect(() => {
-    setExportFilters((prev) => ({ ...prev, book_id: defaultBookId || prev.book_id || '' }))
-  }, [defaultBookId])
-
-  useEffect(() => {
-    if (!defaultBookId) return
-    apiGet<Array<{ id: string; name: string }>>('/api/books')
-      .then((res) => {
-        setBooks(Array.isArray(res) ? res : [])
-      })
-      .catch(() => setBooks([]))
-  }, [defaultBookId])
-
-  useEffect(() => {
-    if (!exportModalOpen || !exportFilters.book_id) {
-      setExportAccounts([])
-      return
-    }
-
-    apiGet<Array<{ id: string; name: string }>>(`/api/accounts?book_id=${exportFilters.book_id}`)
-      .then((res) => {
-        setExportAccounts(Array.isArray(res) ? res : [])
-      })
-      .catch(() => setExportAccounts([]))
-  }, [exportModalOpen, exportFilters.book_id])
-
-  const buildShellDefaultExportRange = () => {
-    const now = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), 1)
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    return {
-      start_date: formatLocalDate(start),
-      end_date: formatLocalDate(end),
-    }
-  }
-
-  const openExportModal = () => {
-    const range = defaultExportRangeBuilder?.() ?? buildShellDefaultExportRange()
-    setExportFilters({
-      book_id: defaultBookId,
-      account_id: '',
-      start_date: range.start_date,
-      end_date: range.end_date,
-    })
-    setExportModalOpen(true)
-    setDrawerOpen(false)
-  }
-
-  const handleExport = async () => {
-    if (!exportFilters.book_id) {
-      message.error('请选择账本')
-      return
-    }
-
-    const params = new URLSearchParams({ book_id: exportFilters.book_id })
-    if (exportFilters.account_id) params.set('account_id', exportFilters.account_id)
-    if (exportFilters.start_date) params.set('start_date', exportFilters.start_date)
-    if (exportFilters.end_date) params.set('end_date', exportFilters.end_date)
-
-    setExportSubmitting(true)
-    try {
-      const { blob, filename } = await apiDownload(`/api/export/transactions?${params.toString()}`)
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = filename || 'transactions-export.csv'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(downloadUrl)
-      message.success('CSV 导出已开始')
-      setExportModalOpen(false)
-    } catch (error) {
-      console.error('Export failed:', error)
-    } finally {
-      setExportSubmitting(false)
-    }
-  }
-
-  const exportModalContextValue = useMemo<ExportModalContextValue>(() => ({
-    openExportModal,
-    registerDefaultExportRangeBuilder: setDefaultExportRangeBuilder,
-  }), [defaultExportRangeBuilder, defaultBookId])
 
   const handleFabClick = (action: string) => {
     setFabMenuOpen(false)
@@ -410,7 +299,6 @@ function AppShell() {
 const showHeader = !hideHeaderPaths.some(p => location.pathname.startsWith(p));
 
 return (
-    <ExportModalContext.Provider value={exportModalContextValue}>
     <Layout style={{ minHeight: '100vh' }}>
       {showHeader && (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: 'var(--bg-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', padding: '0 16px', zIndex: 100 }}>
@@ -444,9 +332,6 @@ return (
           <Menu mode="inline" selectedKeys={[location.pathname]} items={menuItems} onClick={({ key }) => navigate(key)} style={{ border: 'none' }} />
           </div>
         <div style={{ padding: 16, borderTop: '1px solid #f0f0f0', background: 'var(--bg-card)' }}>
-          <Button block icon={<FileTextOutlined />} onClick={openExportModal} style={{ marginBottom: 12 }}>
-            导出 CSV
-          </Button>
           <Button block onClick={logout} icon={<SettingOutlined />}>退出登录</Button>
         </div>
         </div>
@@ -473,6 +358,7 @@ return (
             <Route path="/loans" element={<LoansPage />} />
             <Route path="/loans/new" element={<LoanFormPage />} />
             <Route path="/imports" element={<Suspense fallback={<LoadingFallback />}><ImportsPageView /></Suspense>} />
+            <Route path="/export" element={<Suspense fallback={<LoadingFallback />}><ExportPage /></Suspense>} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/reports/home" element={<Suspense fallback={<LoadingFallback />}><ReportsHomePage /></Suspense>} />
             <Route path="/reports/monthly-summary" element={<Suspense fallback={<LoadingFallback />}><MonthlySummaryPage /></Suspense>} />
@@ -577,67 +463,7 @@ return (
           </button>
         </div>
       )}
-      <Modal
-        title="导出交易"
-        open={exportModalOpen}
-        onCancel={() => setExportModalOpen(false)}
-        onOk={() => { void handleExport() }}
-        okText="下载 CSV"
-        confirmLoading={exportSubmitting}
-      >
-        <div style={{ display: 'grid', gap: 16 }}>
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账本</div>
-            <Select
-              value={exportFilters.book_id || undefined}
-              onChange={(value) => setExportFilters((prev) => ({ ...prev, book_id: value, account_id: '' }))}
-              style={{ width: '100%' }}
-              placeholder="选择账本"
-            >
-              {books.map((book) => (
-                <Select.Option key={book.id} value={book.id}>{book.name}</Select.Option>
-              ))}
-            </Select>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账户</div>
-            <Select
-              value={exportFilters.account_id || undefined}
-              onChange={(value) => setExportFilters((prev) => ({ ...prev, account_id: value || '' }))}
-              style={{ width: '100%' }}
-              placeholder="全部账户"
-              allowClear
-            >
-              {exportAccounts.map((account) => (
-                <Select.Option key={account.id} value={account.id}>{account.name}</Select.Option>
-              ))}
-            </Select>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>开始日期</div>
-            <input
-              type="date"
-              value={exportFilters.start_date}
-              onChange={(event) => setExportFilters((prev) => ({ ...prev, start_date: event.target.value }))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
-            />
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>结束日期</div>
-            <input
-              type="date"
-              value={exportFilters.end_date}
-              onChange={(event) => setExportFilters((prev) => ({ ...prev, end_date: event.target.value }))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
-            />
-          </div>
-        </div>
-      </Modal>
     </Layout>
-    </ExportModalContext.Provider>
   )
 }
 
@@ -1107,7 +933,6 @@ const DateDetailPage = () => {
 // 🛡️ L: 简化后的 TransactionsPage — 过滤器 + TransactionList + Drawer
 const TransactionsPage = () => {
   const { user } = useAuth()
-  const { registerDefaultExportRangeBuilder } = useContext(ExportModalContext)
   const bookId = user?.default_book_id
 
   // 时间筛选状态
@@ -1149,28 +974,6 @@ const TransactionsPage = () => {
   })()
 
   const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-
-  const buildDefaultExportRange = () => {
-    const fallbackYear = selectedYear ?? new Date().getFullYear()
-    if (selectedMonth) {
-      const start = new Date(fallbackYear, selectedMonth - 1, 1)
-      const end = new Date(fallbackYear, selectedMonth, 0)
-      return {
-        start_date: formatLocalDate(start),
-        end_date: formatLocalDate(end),
-      }
-    }
-
-    return {
-      start_date: `${fallbackYear}-01-01`,
-      end_date: `${fallbackYear}-12-31`,
-    }
-  }
-
-  useEffect(() => {
-    registerDefaultExportRangeBuilder(() => buildDefaultExportRange)
-    return () => registerDefaultExportRangeBuilder(null)
-  }, [registerDefaultExportRangeBuilder, selectedYear, selectedMonth])
 
   return (
     <div>
