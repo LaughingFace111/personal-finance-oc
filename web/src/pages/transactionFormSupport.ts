@@ -18,6 +18,7 @@ export interface CategoryOption {
   name: string;
   category_type: string;
   parent_id?: string;
+  icon?: string;
 }
 
 export interface TagOption {

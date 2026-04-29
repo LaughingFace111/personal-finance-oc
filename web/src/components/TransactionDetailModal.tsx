@@ -7,7 +7,6 @@ import TransferPage from '../pages/TransferPage';
 import OtherTransactionPage from '../pages/OtherTransactionPage';
 import { getHierarchyPathLabel } from '../utils/hierarchySelection';
 import {
-  getCategoryLabel,
   loadTransactionFormData,
   mapTagNamesToIds,
   parseTransactionTagNames,
@@ -15,7 +14,7 @@ import {
   toOccurredAt,
 } from '../pages/transactionFormSupport';
 
-type DetailMode = 'detail' | 'edit';
+type DetailMode = 'detail' | 'edit' | 'copy';
 
 interface TransactionDetailModalProps {
   open: boolean;
@@ -309,6 +308,57 @@ export function TransactionDetailModal({
     }
   };
 
+  const canCopyTransaction =
+    detail?.transaction_type === 'income' || detail?.transaction_type === 'expense';
+
+  const openCopyMode = () => {
+    if (!detail) return;
+    setEditValues({
+      amount: String(detail.amount ?? ''),
+      account_id: detail.account_id || '',
+      category_id: detail.category_id || '',
+      merchant: detail.merchant || '',
+      note: detail.note || '',
+      occurred_at: toDateInputValue(new Date().toISOString()),
+    });
+    setTagIds(mapTagNamesToIds(tags, parseTransactionTagNames(detail.tags)));
+    setMode('copy');
+  };
+
+  const handleCopySubmit = async () => {
+    if (!bookId || !detail?.id) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        transaction_type: detail.transaction_type,
+        direction: detail.direction,
+        amount: Number(editValues.amount),
+        account_id: editValues.account_id,
+        category_id: editValues.category_id || null,
+        merchant: editValues.merchant || null,
+        note: editValues.note || null,
+        occurred_at: toOccurredAt(editValues.occurred_at),
+        include_in_expense: true,
+        include_in_income: true,
+        include_in_cashflow: true,
+        tags:
+          tagIds.length > 0
+            ? JSON.stringify(
+                tagIds
+                  .map((id) => tags.find((tag) => tag.id === id)?.name || '')
+                  .filter(Boolean),
+              )
+            : null,
+      };
+      await apiPost(`/api/transactions?book_id=${bookId}`, payload);
+      message.success('复制成功');
+      onRefresh?.();
+      handleClose();
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleRefundSubmit = async () => {
     if (!detail || !bookId) return;
     const values = await refundForm.validateFields();
@@ -373,6 +423,7 @@ export function TransactionDetailModal({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <Button onClick={() => setMode('edit')}>编辑</Button>
+        {canCopyTransaction && <Button onClick={openCopyMode}>复制</Button>}
         {canShowRefundActions && (
           <Button type="primary" onClick={() => openRefundModal()}>
             退款
@@ -487,7 +538,7 @@ export function TransactionDetailModal({
     </div>
   );
 
-  const renderGenericEditMode = () => (
+  const renderGenericEditMode = (submitLabel: string, onSubmit: () => void) => (
     <div style={{ display: 'grid', gap: 16 }}>
       <div>
         <div style={{ marginBottom: 8, fontSize: 13, color: 'var(--text-secondary)' }}>金额</div>
@@ -561,8 +612,8 @@ export function TransactionDetailModal({
       </div>
       <Space>
         <Button onClick={() => setMode('detail')}>取消</Button>
-        <Button type="primary" loading={submitting} onClick={() => void handleGenericEditSubmit()}>
-          保存
+        <Button type="primary" loading={submitting} onClick={() => void onSubmit()}>
+          {submitLabel}
         </Button>
       </Space>
     </div>
@@ -621,7 +672,11 @@ export function TransactionDetailModal({
       );
     }
 
-    return renderGenericEditMode();
+    if (mode === 'copy') {
+      return renderGenericEditMode('创建副本', handleCopySubmit);
+    }
+
+    return renderGenericEditMode('保存', handleGenericEditSubmit);
   };
 
   return (
@@ -640,7 +695,7 @@ export function TransactionDetailModal({
             overscrollBehavior: 'contain',
           },
         }}
-        title={mode === 'detail' ? '交易详情' : '编辑交易'}
+        title={mode === 'detail' ? '交易详情' : mode === 'copy' ? '复制交易' : '编辑交易'}
       >
         {loading || !detail ? (
           <div style={{ padding: 40, textAlign: 'center' }}>

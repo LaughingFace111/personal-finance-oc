@@ -32,6 +32,7 @@ const TagDistributionPage = lazy(() => import('./pages/TagDistributionPage'))
 const TagDetailPage = lazy(() => import('./pages/TagDetailPage'))
 const TagManagementPage = lazy(() => import('./pages/TagManagementPage'))
 const ImportTemplatesPage = lazy(() => import('./pages/ImportTemplatesPage'))
+const TransactionTemplatesPage = lazy(() => import('./pages/TransactionTemplatesPage'))
 const RecurringRulesPage = lazy(() => import('./pages/RecurringRulesPage'))
 const WishlistPage = lazy(() => import('./pages/WishlistPage'))
 const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
@@ -188,7 +189,7 @@ const menuItems = [
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
 const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
-    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/recurring-rules': '周期记账' }
+    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
   const year = value.getFullYear()
@@ -381,6 +382,7 @@ return (
             <Route path="/other/repay" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="repay" /></Suspense>} />
             <Route path="/settings" element={<Suspense fallback={<LoadingFallback />}><SettingsPageView /></Suspense>} />
             <Route path="/settings/import-templates" element={<Suspense fallback={<LoadingFallback />}><ImportTemplatesPage /></Suspense>} />
+            <Route path="/settings/transaction-templates" element={<Suspense fallback={<LoadingFallback />}><TransactionTemplatesPage /></Suspense>} />
             <Route path="/settings/recurring-rules" element={<Suspense fallback={<LoadingFallback />}><RecurringRulesPage /></Suspense>} />
             <Route path="/settings/rules" element={<MatchRulesPage />} />
           </Routes>

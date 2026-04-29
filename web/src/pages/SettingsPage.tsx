@@ -8,7 +8,12 @@ export default function SettingsPage() {
   const { user, logout } = useAuth()
   const { mode, setMode } = useTheme()
   const navigate = useNavigate()
-  const { showHiddenTransactions, toggleHiddenTransactions } = useAppStore()
+  const {
+    showHiddenTransactions,
+    toggleHiddenTransactions,
+    showTemplateAmounts,
+    setShowTemplateAmounts,
+  } = useAppStore()
 
   return (
     <div>
@@ -51,6 +56,18 @@ export default function SettingsPage() {
         </div>
       </Card>
 
+      <Card title="快捷模板" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 500 }}>在首页快捷模板中显示金额</div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              关闭后，FAB 模板菜单只显示名称和分类图标
+            </div>
+          </div>
+          <Switch checked={showTemplateAmounts} onChange={setShowTemplateAmounts} />
+        </div>
+      </Card>
+
       <Card title="功能入口" style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]}>
           <Col xs={24} md={12}>
@@ -71,6 +88,13 @@ export default function SettingsPage() {
             <Card size="small" title="周期记账">
               <Button type="primary" onClick={() => navigate('/settings/recurring-rules')}>
                 进入周期记账
+              </Button>
+            </Card>
+          </Col>
+          <Col xs={24} md={12}>
+            <Card size="small" title="快捷模板管理">
+              <Button type="primary" onClick={() => navigate('/settings/transaction-templates')}>
+                进入快捷模板
               </Button>
             </Card>
           </Col>

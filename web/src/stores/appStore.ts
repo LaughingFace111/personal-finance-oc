@@ -4,6 +4,16 @@
  */
 import { create } from 'zustand'
 
+const SHOW_HIDDEN_STORAGE_KEY = 'app:show-hidden-transactions'
+const SHOW_TEMPLATE_AMOUNTS_STORAGE_KEY = 'app:show-template-amounts'
+
+const readBool = (key: string, fallback: boolean) => {
+  if (typeof window === 'undefined') return fallback
+  const raw = window.localStorage.getItem(key)
+  if (raw == null) return fallback
+  return raw === 'true'
+}
+
 interface AppStore {
   /** 全局刷新计数器 — 任何页面修改了账户数据后 +1，监听此值的页面自动重新拉取 */
   refreshVersion: number
@@ -18,6 +28,10 @@ interface AppStore {
   /** 🛡️ L: 隐身账单透视开关（默认关闭） */
   showHiddenTransactions: boolean
   toggleHiddenTransactions: () => void
+
+  /** 快捷模板金额显示开关 */
+  showTemplateAmounts: boolean
+  setShowTemplateAmounts: (value: boolean) => void
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -28,6 +42,20 @@ export const useAppStore = create<AppStore>((set) => ({
   markCreditSummaryDirty: () => set({ creditSummaryDirty: true }),
   clearCreditSummaryDirty: () => set({ creditSummaryDirty: false }),
 
-  showHiddenTransactions: false,
-  toggleHiddenTransactions: () => set((s) => ({ showHiddenTransactions: !s.showHiddenTransactions })),
+  showHiddenTransactions: readBool(SHOW_HIDDEN_STORAGE_KEY, false),
+  toggleHiddenTransactions: () => set((s) => {
+    const next = !s.showHiddenTransactions
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SHOW_HIDDEN_STORAGE_KEY, String(next))
+    }
+    return { showHiddenTransactions: next }
+  }),
+
+  showTemplateAmounts: readBool(SHOW_TEMPLATE_AMOUNTS_STORAGE_KEY, true),
+  setShowTemplateAmounts: (value: boolean) => set(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(SHOW_TEMPLATE_AMOUNTS_STORAGE_KEY, String(value))
+    }
+    return { showTemplateAmounts: value }
+  }),
 }))

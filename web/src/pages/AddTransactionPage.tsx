@@ -10,22 +10,41 @@ import {
   transactionFormTextareaClass,
   transactionFormToggleClass,
 } from '../components/TransactionFormLayout';
-import { apiPost } from '../services/api';
+import { apiGet, apiPost } from '../services/api';
 import {
   AccountOption,
   CategoryOption,
   TagOption,
-  getAccountOptionLabel,
-  getCategoryLabel,
   getDefaultBookId,
+  getAccountOptionLabel,
   loadTransactionFormData,
   toOccurredAt,
 } from './transactionFormSupport';
+
+interface TransactionTemplateRecord {
+  id: string
+  name: string
+  transaction_type: 'income' | 'expense'
+  category_id: string
+  amount?: string | number | null
+  tags?: string | null
+}
+
+function parseTemplateTagIds(value?: string | null) {
+  if (!value) return []
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : []
+  } catch {
+    return []
+  }
+}
 
 export default function AddTransactionPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialType = searchParams.get('type') === 'income' ? 'income' : 'expense';
+  const templateId = searchParams.get('template_id')
   
   const [direction, setDirection] = useState<'income' | 'expense'>(initialType);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
@@ -52,12 +71,20 @@ export default function AddTransactionPage() {
         setAccounts(formData.accounts);
         setCategories(formData.categories);
         setTags(formData.tags);
+
+        if (templateId) {
+          const template = await apiGet<TransactionTemplateRecord>(`/api/transaction-templates/${templateId}?book_id=${bookId}`)
+          setDirection(template.transaction_type)
+          setCategoryId(template.category_id || '')
+          setAmount(template.amount == null ? '' : String(template.amount))
+          setTagIds(parseTemplateTagIds(template.tags))
+        }
       } catch (err) {
         setError((err as Error).message || '加载数据失败');
       }
     };
-    loadData();
-  }, []);
+    void loadData();
+  }, [templateId]);
 
   const filteredCategories = useMemo(
     () =>

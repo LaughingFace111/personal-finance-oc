@@ -15,6 +15,7 @@ from src.modules.installments import router as installments_router
 from src.modules.loans import router as loans_router
 from src.modules.imports import router as imports_router
 from src.modules.import_templates import router as import_templates_router
+from src.modules.transaction_templates import router as transaction_templates_router
 from src.modules.rules import router as rules_router
 from src.modules.recurring_rules import router as recurring_rules_router
 from src.modules.recurring_pending import router as recurring_pending_router
@@ -30,6 +31,7 @@ from src.modules.durable_assets.models import DurableAsset  # noqa: F401
 from src.modules.account_balance_snapshots import AccountBalanceSnapshot  # noqa: F401
 from src.modules.installments.models import InstallmentStateEvent  # noqa: F401
 from src.modules.import_templates import ImportTemplate  # noqa: F401
+from src.modules.transaction_templates import TransactionTemplate  # noqa: F401
 from src.modules.recurring_rules import RecurringRule  # noqa: F401
 from src.modules.recurring_pending import PendingItem  # noqa: F401
 
@@ -67,6 +69,7 @@ app.include_router(installments_router, prefix="/api")
 app.include_router(loans_router, prefix="/api")
 app.include_router(imports_router, prefix="/api")
 app.include_router(import_templates_router, prefix="/api")
+app.include_router(transaction_templates_router, prefix="/api")
 app.include_router(rules_router, prefix="/api")
 app.include_router(recurring_rules_router, prefix="/api")
 app.include_router(recurring_pending_router, prefix="/api")

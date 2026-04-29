@@ -1,5 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiGet } from '../services/api';
+import { useAppStore } from '../stores/appStore';
+import { CategoryOption, getDefaultBookId, loadTransactionFormData } from '../pages/transactionFormSupport';
 
 interface MenuItem {
   label: string;
@@ -15,10 +18,22 @@ const menuItems: MenuItem[] = [
   { label: '其他', icon: '📋', path: '/other', color: 'bg-purple-500' },
 ];
 
+interface TransactionTemplateRecord {
+  id: string;
+  name: string;
+  transaction_type: 'income' | 'expense';
+  category_id: string;
+  amount?: string | number | null;
+  is_active: boolean;
+}
+
 export function FABMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const { showTemplateAmounts } = useAppStore();
+  const [templates, setTemplates] = useState<TransactionTemplateRecord[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
 
   // 点击外部关闭菜单
   useEffect(() => {
@@ -31,10 +46,32 @@ export function FABMenu() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    const loadQuickTemplates = async () => {
+      const bookId = await getDefaultBookId();
+      if (!bookId) return;
+
+      const [templateData, formData] = await Promise.all([
+        apiGet<TransactionTemplateRecord[]>(`/api/transaction-templates?book_id=${bookId}&is_active=true`),
+        loadTransactionFormData(bookId),
+      ]);
+
+      setTemplates(templateData ?? []);
+      setCategories(formData.categories);
+    };
+
+    void loadQuickTemplates();
+  }, []);
+
   const handleItemClick = (path: string) => {
     setIsOpen(false);
     navigate(path);
   };
+
+  const categoriesById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
+    [categories],
+  );
 
   return (
     <div ref={menuRef} className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
@@ -57,6 +94,32 @@ export function FABMenu() {
             <span className="text-base">{item.icon}</span>
           </button>
         ))}
+        {templates.map((template, index) => {
+          const category = categoriesById.get(template.category_id);
+          const amountText =
+            showTemplateAmounts && template.amount != null ? ` · ¥${Number(template.amount).toFixed(2)}` : '';
+          const path = `/add-transaction?type=${template.transaction_type}&template_id=${template.id}`;
+
+          return (
+            <button
+              key={template.id}
+              onClick={() => handleItemClick(path)}
+              className="flex min-w-[12rem] items-center justify-between gap-3 rounded-full bg-slate-800/95 px-4 py-2.5 text-sm font-medium text-white shadow-lg transition hover:scale-105 hover:shadow-xl"
+              style={{
+                transitionDelay: isOpen ? `${(menuItems.length + index) * 50}ms` : '0ms',
+              }}
+            >
+              <span className="truncate text-left">
+                {category?.icon ? `${category.icon} ` : ''}
+                {template.name}
+                {amountText}
+              </span>
+              <span className={`rounded-full px-2 py-0.5 text-xs ${template.transaction_type === 'income' ? 'bg-green-500/20 text-green-200' : 'bg-red-500/20 text-red-200'}`}>
+                {template.transaction_type === 'income' ? '收入' : '支出'}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* 主按钮 */}
