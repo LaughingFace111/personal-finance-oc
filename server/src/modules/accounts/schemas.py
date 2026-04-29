@@ -48,6 +48,7 @@ class AccountUpdate(BaseModel):
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     note: Optional[str] = None
     is_active: Optional[bool] = None
+    is_archived: Optional[bool] = None
 
 
 class AccountResponse(AccountBase):
@@ -56,6 +57,7 @@ class AccountResponse(AccountBase):
     debt_amount: Decimal = Field(default=Decimal("0"))
     frozen_amount: Decimal = Field(default=Decimal("0"))  # 🛡️ L: 冻结额度
     is_active: bool = True
+    is_archived: bool = False
     is_deleted: bool = False  # 软删除标记
     created_at: datetime
     updated_at: datetime

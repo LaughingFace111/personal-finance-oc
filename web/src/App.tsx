@@ -53,6 +53,23 @@ const LoadingFallback = () => (
   </div>
 )
 
+type ExportDateRange = {
+  start_date: string
+  end_date: string
+}
+
+type ExportRangeBuilder = (() => ExportDateRange) | null
+
+type ExportModalContextValue = {
+  openExportModal: () => void
+  registerDefaultExportRangeBuilder: (builder: ExportRangeBuilder) => void
+}
+
+const ExportModalContext = createContext<ExportModalContextValue>({
+  openExportModal: () => {},
+  registerDefaultExportRangeBuilder: () => {},
+})
+
 const LoginPage = () => {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -181,6 +198,7 @@ const menuItems = [
   { key: '/tags', icon: <TagsOutlined />, label: '标签' },
   { key: '/loans', icon: <BankOutlined />, label: '贷款' },
   { key: '/installments', icon: <ClockCircleOutlined />, label: '分期任务' },
+  { key: '/subscriptions', icon: <CalendarOutlined />, label: '固定账单' },
   { key: '/wishlist', icon: <ShoppingOutlined />, label: '愿望单' },
   { key: '/budgets', icon: <CalendarOutlined />, label: '预算' },
   { key: '/assets', icon: <AccountBookOutlined />, label: '日均成本' },
@@ -188,7 +206,7 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/subscriptions': '固定账单中心', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
     '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
@@ -235,9 +253,105 @@ function AppShell() {
   const { user, logout } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [fabMenuOpen, setFabMenuOpen] = useState(false)
+  const [books, setBooks] = useState<Array<{ id: string; name: string }>>([])
+  const [exportAccounts, setExportAccounts] = useState<Array<{ id: string; name: string }>>([])
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportSubmitting, setExportSubmitting] = useState(false)
+  const [defaultExportRangeBuilder, setDefaultExportRangeBuilder] = useState<ExportRangeBuilder>(null)
+  const defaultBookId = user?.default_book_id || ''
+  const [exportFilters, setExportFilters] = useState({
+    book_id: defaultBookId,
+    account_id: '',
+    start_date: '',
+    end_date: '',
+  })
   const currentTitle = pageTitles[location.pathname] || '个人记账'
 
   useEffect(() => { setDrawerOpen(false) }, [location.pathname])
+
+  useEffect(() => {
+    setExportFilters((prev) => ({ ...prev, book_id: defaultBookId || prev.book_id || '' }))
+  }, [defaultBookId])
+
+  useEffect(() => {
+    if (!defaultBookId) return
+    apiGet<Array<{ id: string; name: string }>>('/api/books')
+      .then((res) => {
+        setBooks(Array.isArray(res) ? res : [])
+      })
+      .catch(() => setBooks([]))
+  }, [defaultBookId])
+
+  useEffect(() => {
+    if (!exportModalOpen || !exportFilters.book_id) {
+      setExportAccounts([])
+      return
+    }
+
+    apiGet<Array<{ id: string; name: string }>>(`/api/accounts?book_id=${exportFilters.book_id}`)
+      .then((res) => {
+        setExportAccounts(Array.isArray(res) ? res : [])
+      })
+      .catch(() => setExportAccounts([]))
+  }, [exportModalOpen, exportFilters.book_id])
+
+  const buildShellDefaultExportRange = () => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), 1)
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return {
+      start_date: formatLocalDate(start),
+      end_date: formatLocalDate(end),
+    }
+  }
+
+  const openExportModal = () => {
+    const range = defaultExportRangeBuilder?.() ?? buildShellDefaultExportRange()
+    setExportFilters({
+      book_id: defaultBookId,
+      account_id: '',
+      start_date: range.start_date,
+      end_date: range.end_date,
+    })
+    setExportModalOpen(true)
+    setDrawerOpen(false)
+  }
+
+  const handleExport = async () => {
+    if (!exportFilters.book_id) {
+      message.error('请选择账本')
+      return
+    }
+
+    const params = new URLSearchParams({ book_id: exportFilters.book_id })
+    if (exportFilters.account_id) params.set('account_id', exportFilters.account_id)
+    if (exportFilters.start_date) params.set('start_date', exportFilters.start_date)
+    if (exportFilters.end_date) params.set('end_date', exportFilters.end_date)
+
+    setExportSubmitting(true)
+    try {
+      const { blob, filename } = await apiDownload(`/api/export/transactions?${params.toString()}`)
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = filename || 'transactions-export.csv'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(downloadUrl)
+      message.success('CSV 导出已开始')
+      setExportModalOpen(false)
+    } catch (error) {
+      console.error('Export failed:', error)
+    } finally {
+      setExportSubmitting(false)
+    }
+  }
+
+  const exportModalContextValue = useMemo<ExportModalContextValue>(() => ({
+    openExportModal,
+    registerDefaultExportRangeBuilder: setDefaultExportRangeBuilder,
+  }), [defaultExportRangeBuilder, defaultBookId])
 
   const handleFabClick = (action: string) => {
     setFabMenuOpen(false)
@@ -296,6 +410,7 @@ function AppShell() {
 const showHeader = !hideHeaderPaths.some(p => location.pathname.startsWith(p));
 
 return (
+    <ExportModalContext.Provider value={exportModalContextValue}>
     <Layout style={{ minHeight: '100vh' }}>
       {showHeader && (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: 56, background: 'var(--bg-card)', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', padding: '0 16px', zIndex: 100 }}>
@@ -329,6 +444,9 @@ return (
           <Menu mode="inline" selectedKeys={[location.pathname]} items={menuItems} onClick={({ key }) => navigate(key)} style={{ border: 'none' }} />
           </div>
         <div style={{ padding: 16, borderTop: '1px solid #f0f0f0', background: 'var(--bg-card)' }}>
+          <Button block icon={<FileTextOutlined />} onClick={openExportModal} style={{ marginBottom: 12 }}>
+            导出 CSV
+          </Button>
           <Button block onClick={logout} icon={<SettingOutlined />}>退出登录</Button>
         </div>
         </div>
@@ -346,6 +464,7 @@ return (
             <Route path="/accounts/new" element={<AccountFormPage />} />
             <Route path="/accounts/:id" element={<AccountDetailPage />} />
             <Route path="/accounts/:id/edit" element={<AccountEditPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/categories/new" element={<CategoryFormPage />} />
             <Route path="/categories/:id" element={<CategoryEditPage />} />
@@ -458,7 +577,67 @@ return (
           </button>
         </div>
       )}
+      <Modal
+        title="导出交易"
+        open={exportModalOpen}
+        onCancel={() => setExportModalOpen(false)}
+        onOk={() => { void handleExport() }}
+        okText="下载 CSV"
+        confirmLoading={exportSubmitting}
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账本</div>
+            <Select
+              value={exportFilters.book_id || undefined}
+              onChange={(value) => setExportFilters((prev) => ({ ...prev, book_id: value, account_id: '' }))}
+              style={{ width: '100%' }}
+              placeholder="选择账本"
+            >
+              {books.map((book) => (
+                <Select.Option key={book.id} value={book.id}>{book.name}</Select.Option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账户</div>
+            <Select
+              value={exportFilters.account_id || undefined}
+              onChange={(value) => setExportFilters((prev) => ({ ...prev, account_id: value || '' }))}
+              style={{ width: '100%' }}
+              placeholder="全部账户"
+              allowClear
+            >
+              {exportAccounts.map((account) => (
+                <Select.Option key={account.id} value={account.id}>{account.name}</Select.Option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>开始日期</div>
+            <input
+              type="date"
+              value={exportFilters.start_date}
+              onChange={(event) => setExportFilters((prev) => ({ ...prev, start_date: event.target.value }))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
+            />
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>结束日期</div>
+            <input
+              type="date"
+              value={exportFilters.end_date}
+              onChange={(event) => setExportFilters((prev) => ({ ...prev, end_date: event.target.value }))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
+            />
+          </div>
+        </div>
+      </Modal>
     </Layout>
+    </ExportModalContext.Provider>
   )
 }
 
@@ -655,8 +834,61 @@ const DashboardPage = () => {
         </div>
       </div>
 
+      <UpcomingBillsWidget />
+
       {/* 🛡️ L: 信用账户待还列表 */}
       <CreditRepaymentSummary />
+    </div>
+  )
+}
+
+const UpcomingBillsWidget = () => {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const [bills, setBills] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const bookId = user?.default_book_id
+
+  useEffect(() => {
+    if (!bookId) return
+    setLoading(true)
+    apiGet(`/api/subscriptions/upcoming?book_id=${bookId}&days=30`)
+      .then((data: any) => setBills(Array.isArray(data) ? data : []))
+      .catch(() => setBills([]))
+      .finally(() => setLoading(false))
+  }, [bookId])
+
+  if (loading || bills.length === 0) return null
+
+  return (
+    <div style={{ margin: '0 0 16px', borderRadius: 16, background: 'var(--bg-card)', overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 16, fontWeight: 600 }}>即将到期账单</span>
+          <Tag color="blue">{bills.length} 条</Tag>
+        </div>
+        <Button type="link" size="small" onClick={() => navigate('/subscriptions')}>查看全部</Button>
+      </div>
+      <div style={{ padding: '0 16px 16px' }}>
+        {bills.slice(0, 5).map((item: any, index: number) => (
+          <div
+            key={item.id}
+            style={{
+              padding: '12px 0',
+              borderBottom: index < Math.min(bills.length, 5) - 1 ? '1px solid var(--border-color)' : 'none'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <span style={{ fontWeight: 500 }}>{item.name}</span>
+              <span style={{ fontWeight: 600 }}>¥{Number(item.amount || 0).toFixed(2)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
+              <span>{item.account_name || '未绑定账户'}</span>
+              <span>{item.days_until_due === 0 ? '今天到期' : `${item.days_until_due} 天后到期`} · {item.next_due_date}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -875,17 +1107,8 @@ const DateDetailPage = () => {
 // 🛡️ L: 简化后的 TransactionsPage — 过滤器 + TransactionList + Drawer
 const TransactionsPage = () => {
   const { user } = useAuth()
+  const { registerDefaultExportRangeBuilder } = useContext(ExportModalContext)
   const bookId = user?.default_book_id
-  const [books, setBooks] = useState<Array<{ id: string; name: string }>>([])
-  const [exportAccounts, setExportAccounts] = useState<Array<{ id: string; name: string }>>([])
-  const [exportModalOpen, setExportModalOpen] = useState(false)
-  const [exportSubmitting, setExportSubmitting] = useState(false)
-  const [exportFilters, setExportFilters] = useState({
-    book_id: bookId || '',
-    account_id: '',
-    start_date: '',
-    end_date: '',
-  })
 
   // 时间筛选状态
   const [yearRange, setYearRange] = useState({ min_year: null as number | null, max_year: null as number | null })
@@ -907,28 +1130,6 @@ const TransactionsPage = () => {
         console.error("Request failed:", error)
       })
   }, [bookId])
-
-  useEffect(() => {
-    if (!bookId) return
-    apiGet<Array<{ id: string; name: string }>>('/api/books')
-      .then((res) => {
-        setBooks(Array.isArray(res) ? res : [])
-      })
-      .catch(() => setBooks([]))
-  }, [bookId])
-
-  useEffect(() => {
-    if (!exportModalOpen || !exportFilters.book_id) {
-      setExportAccounts([])
-      return
-    }
-
-    apiGet<Array<{ id: string; name: string }>>(`/api/accounts?book_id=${exportFilters.book_id}`)
-      .then((res) => {
-        setExportAccounts(Array.isArray(res) ? res : [])
-      })
-      .catch(() => setExportAccounts([]))
-  }, [exportModalOpen, exportFilters.book_id])
 
   const [detailOpen, setDetailOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
@@ -966,47 +1167,10 @@ const TransactionsPage = () => {
     }
   }
 
-  const openExportModal = () => {
-    const range = buildDefaultExportRange()
-    setExportFilters({
-      book_id: bookId || '',
-      account_id: '',
-      start_date: range.start_date,
-      end_date: range.end_date,
-    })
-    setExportModalOpen(true)
-  }
-
-  const handleExport = async () => {
-    if (!exportFilters.book_id) {
-      message.error('请选择账本')
-      return
-    }
-
-    const params = new URLSearchParams({ book_id: exportFilters.book_id })
-    if (exportFilters.account_id) params.set('account_id', exportFilters.account_id)
-    if (exportFilters.start_date) params.set('start_date', exportFilters.start_date)
-    if (exportFilters.end_date) params.set('end_date', exportFilters.end_date)
-
-    setExportSubmitting(true)
-    try {
-      const { blob, filename } = await apiDownload(`/api/export/transactions?${params.toString()}`)
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = filename || 'transactions-export.csv'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(downloadUrl)
-      message.success('CSV 导出已开始')
-      setExportModalOpen(false)
-    } catch (error) {
-      console.error('Export failed:', error)
-    } finally {
-      setExportSubmitting(false)
-    }
-  }
+  useEffect(() => {
+    registerDefaultExportRangeBuilder(() => buildDefaultExportRange)
+    return () => registerDefaultExportRangeBuilder(null)
+  }, [registerDefaultExportRangeBuilder, selectedYear, selectedMonth])
 
   return (
     <div>
@@ -1042,9 +1206,6 @@ const TransactionsPage = () => {
             ))}
           </div>
         </div>
-        <Button icon={<FileTextOutlined />} onClick={openExportModal}>
-          导出 CSV
-        </Button>
       </div>
 
       {/* 交易列表（独立组件，支持无限滚动） */}
@@ -1062,66 +1223,6 @@ const TransactionsPage = () => {
         onClose={() => setDetailOpen(false)}
         onRefresh={() => setListRefreshToken((value) => value + 1)}
       />
-
-      <Modal
-        title="导出交易"
-        open={exportModalOpen}
-        onCancel={() => setExportModalOpen(false)}
-        onOk={() => { void handleExport() }}
-        okText="下载 CSV"
-        confirmLoading={exportSubmitting}
-      >
-        <div style={{ display: 'grid', gap: 16 }}>
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账本</div>
-            <Select
-              value={exportFilters.book_id || undefined}
-              onChange={(value) => setExportFilters((prev) => ({ ...prev, book_id: value, account_id: '' }))}
-              style={{ width: '100%' }}
-              placeholder="选择账本"
-            >
-              {books.map((book) => (
-                <Select.Option key={book.id} value={book.id}>{book.name}</Select.Option>
-              ))}
-            </Select>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账户</div>
-            <Select
-              value={exportFilters.account_id || undefined}
-              onChange={(value) => setExportFilters((prev) => ({ ...prev, account_id: value || '' }))}
-              style={{ width: '100%' }}
-              placeholder="全部账户"
-              allowClear
-            >
-              {exportAccounts.map((account) => (
-                <Select.Option key={account.id} value={account.id}>{account.name}</Select.Option>
-              ))}
-            </Select>
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>开始日期</div>
-            <input
-              type="date"
-              value={exportFilters.start_date}
-              onChange={(event) => setExportFilters((prev) => ({ ...prev, start_date: event.target.value }))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
-            />
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>结束日期</div>
-            <input
-              type="date"
-              value={exportFilters.end_date}
-              onChange={(event) => setExportFilters((prev) => ({ ...prev, end_date: event.target.value }))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
-            />
-          </div>
-        </div>
-      </Modal>
     </div>
   )
 }
@@ -1504,6 +1605,7 @@ const AccountsPage = () => {
   const { user } = useAuth()
   const [data, setData] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [showArchived, setShowArchived] = useState(false)
   const bookId = user?.default_book_id
   const navigate = useNavigate()
   const typeLabels: Record<string, string> = { cash: '现金', debit_card: '借记卡', credit_card: '信用卡', loan: '贷款', ewallet: '电子钱包', credit_line: '信用账户' }
@@ -1524,15 +1626,33 @@ const AccountsPage = () => {
     return null
   }
 
-  useEffect(() => { if (!bookId) return; apiGet(`/api/accounts?book_id=${bookId}`).then(res => setData(res || [])).catch((error) => { console.error("Request failed:", error) }).finally(() => setLoading(false)) }, [bookId])
+  const loadAccounts = () => {
+    if (!bookId) return
+    setLoading(true)
+    const params = new URLSearchParams({ book_id: bookId })
+    if (showArchived) params.set('include_archived', 'true')
+    apiGet(`/api/accounts?${params.toString()}`)
+      .then(res => setData(Array.isArray(res) ? res : []))
+      .catch((error) => { console.error("Request failed:", error) })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadAccounts() }, [bookId, showArchived])
 
   return (
     <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Switch checked={showArchived} onChange={setShowArchived} />
+          <span>显示已归档账户</span>
+        </div>
+        <Button type="primary" onClick={() => navigate('/accounts/new')}>添加账户</Button>
+      </div>
       {loading ? <Spin /> : data.length === 0 ? 
         <Empty description="暂无账户" extra={<Button type="primary" onClick={() => navigate('/accounts/new')}>添加账户</Button>} /> : 
         <List 
           grid={{ gutter: 16, column: 2 }} 
-          dataSource={data} 
+          dataSource={[...data].sort((a, b) => Number(a.is_archived) - Number(b.is_archived))} 
           renderItem={item => {
             // 跳过已删除的账户
             if (item.is_deleted) return null
@@ -1542,11 +1662,43 @@ const AccountsPage = () => {
                 <Card 
                   size="small" 
                   hoverable 
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', opacity: item.is_archived ? 0.82 : 1 }}
                   onClick={() => navigate(`/accounts/${item.id}`)}
                 >
-                  <div style={{ fontWeight: 500 }}>{item.name}</div>
-                  <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span>{item.name}</span>
+                        {item.is_archived && <Tag color="default">Archived</Tag>}
+                      </div>
+                      <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
+                    </div>
+                    {item.is_archived ? (
+                      <Button
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          apiPost(`/api/accounts/${item.id}/unarchive`)
+                            .then(() => { message.success('账户已恢复'); loadAccounts() })
+                            .catch((error) => console.error('Unarchive failed:', error))
+                        }}
+                      >
+                        恢复
+                      </Button>
+                    ) : (
+                      <Button
+                        size="small"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          apiPost(`/api/accounts/${item.id}/archive`)
+                            .then(() => { message.success('账户已归档'); loadAccounts() })
+                            .catch((error) => console.error('Archive failed:', error))
+                        }}
+                      >
+                        归档
+                      </Button>
+                    )}
+                  </div>
                   {creditInfo ? (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}>可用 ¥{creditInfo.remaining.toFixed(2)}</div>
@@ -1555,6 +1707,7 @@ const AccountsPage = () => {
                   ) : (
                     <div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>¥{Number(item.current_balance || 0).toFixed(2)}</div>
                   )}
+                  {item.is_archived && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>最后余额: ¥{Number(item.current_balance || 0).toFixed(2)}</div>}
                   {item.debt_amount > 0 && !creditInfo && <div style={{ color: '#ff4d4f', fontSize: 12 }}>负债: ¥{Number(item.debt_amount).toFixed(2)}</div>}
                 </Card>
               </List.Item>
@@ -1761,12 +1914,48 @@ const AccountDetailPage = () => {
       <Card style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{account.name}</div>
+            <div style={{ fontSize: 18, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>{account.name}</span>
+              {account.is_archived && <Tag color="default">Archived</Tag>}
+            </div>
             <div style={{ color: '#666', fontSize: 14 }}>{typeLabels[account.account_type] || account.account_type}</div>
             <div style={{ fontSize: 24, fontWeight: 600, marginTop: 8 }}>¥{Number(account.current_balance || 0).toFixed(2)}</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <Button type="primary" size="small" onClick={() => navigate(`/accounts/${accountId}/edit`)}>编辑</Button>
+            {account.is_archived ? (
+              <Button
+                size="small"
+                onClick={async () => {
+                  try {
+                    await apiPost(`/api/accounts/${accountId}/unarchive`)
+                    message.success('账户已恢复')
+                    await refreshAccountDetail()
+                  } catch (error) {
+                    console.error("Request failed:", error)
+                    message.error('恢复失败')
+                  }
+                }}
+              >
+                恢复
+              </Button>
+            ) : (
+              <Button
+                size="small"
+                onClick={async () => {
+                  try {
+                    await apiPost(`/api/accounts/${accountId}/archive`)
+                    message.success('账户已归档')
+                    await refreshAccountDetail()
+                  } catch (error) {
+                    console.error("Request failed:", error)
+                    message.error('归档失败')
+                  }
+                }}
+              >
+                归档
+              </Button>
+            )}
             <Popconfirm
               title="删除账户"
               description="删除后，该账户的历史交易将被保留并标记为[已删除账户]，此操作不可逆，是否继续？"
@@ -2231,6 +2420,188 @@ const AccountEditPage = () => {
         </div>
       </Form>
     </Card>
+  )
+}
+
+const SubscriptionsPage = () => {
+  const { user } = useAuth()
+  const bookId = user?.default_book_id
+  const [subscriptions, setSubscriptions] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<any>(null)
+  const [form] = Form.useForm()
+
+  const loadData = () => {
+    if (!bookId) return
+    setLoading(true)
+    Promise.all([
+      apiGet(`/api/subscriptions?book_id=${bookId}`),
+      apiGet(`/api/accounts?book_id=${bookId}`),
+    ])
+      .then(([subscriptionRes, accountRes]) => {
+        setSubscriptions(Array.isArray(subscriptionRes) ? subscriptionRes : [])
+        setAccounts(Array.isArray(accountRes) ? accountRes : [])
+      })
+      .catch((error) => {
+        console.error("Request failed:", error)
+        setSubscriptions([])
+      })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [bookId])
+
+  const openCreateModal = () => {
+    setEditing(null)
+    form.resetFields()
+    form.setFieldsValue({
+      amount_type: 'fixed',
+      cycle_days: '30',
+      next_due_date: formatLocalDate(new Date()),
+    })
+    setModalOpen(true)
+  }
+
+  const openEditModal = (item: any) => {
+    setEditing(item)
+    form.setFieldsValue({
+      name: item.name,
+      amount_type: item.amount_type,
+      amount: Number(item.amount || 0),
+      cycle_days: item.cycle_days,
+      next_due_date: item.next_due_date,
+      account_id: item.account_id,
+    })
+    setModalOpen(true)
+  }
+
+  const handleSubmit = async (values: any) => {
+    if (!bookId) return
+    setSaving(true)
+    try {
+      if (editing) {
+        await apiPatch(`/api/subscriptions/${editing.id}?book_id=${bookId}`, values)
+        message.success('账单已更新')
+      } else {
+        await apiPost(`/api/subscriptions?book_id=${bookId}`, values)
+        message.success('账单已创建')
+      }
+      setModalOpen(false)
+      form.resetFields()
+      loadData()
+    } catch (error) {
+      console.error("Request failed:", error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>订阅 / 固定账单中心</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>支持固定金额与可变金额的周期账单</div>
+        </div>
+        <Button type="primary" onClick={openCreateModal}>新增账单</Button>
+      </div>
+
+      {loading ? (
+        <Spin />
+      ) : subscriptions.length === 0 ? (
+        <Empty description="暂无固定账单" extra={<Button type="primary" onClick={openCreateModal}>新增账单</Button>} />
+      ) : (
+        <List
+          grid={{ gutter: 16, column: 2 }}
+          dataSource={subscriptions}
+          renderItem={(item: any) => (
+            <List.Item>
+              <Card size="small">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span>{item.name}</span>
+                      <Tag color={item.amount_type === 'fixed' ? 'blue' : 'gold'}>
+                        {item.amount_type === 'fixed' ? '固定金额' : '可变金额'}
+                      </Tag>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 22, fontWeight: 700 }}>¥{Number(item.amount || 0).toFixed(2)}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Button size="small" onClick={() => openEditModal(item)}>编辑</Button>
+                    <Popconfirm
+                      title="删除账单"
+                      description="删除后不会保留该固定账单配置，是否继续？"
+                      onConfirm={async () => {
+                        try {
+                          await apiDelete(`/api/subscriptions/${item.id}?book_id=${bookId}`)
+                          message.success('账单已删除')
+                          loadData()
+                        } catch (error) {
+                          console.error("Request failed:", error)
+                        }
+                      }}
+                      okText="删除"
+                      cancelText="取消"
+                    >
+                      <Button danger size="small">删除</Button>
+                    </Popconfirm>
+                  </div>
+                </div>
+                <div style={{ marginTop: 12, display: 'grid', gap: 6, fontSize: 13, color: 'var(--text-secondary)' }}>
+                  <div>账户: {item.account_name || '未绑定账户'}</div>
+                  <div>到期日: 每 {item.cycle_days} 天</div>
+                  <div>下次付款日: {item.next_due_date}</div>
+                </div>
+              </Card>
+            </List.Item>
+          )}
+        />
+      )}
+
+      <Modal
+        title={editing ? '编辑固定账单' : '新增固定账单'}
+        open={modalOpen}
+        onCancel={() => { setModalOpen(false); form.resetFields(); setEditing(null) }}
+        footer={null}
+      >
+        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input placeholder="例如：房租 / Netflix / 电费" />
+          </Form.Item>
+          <Form.Item name="amount_type" label="金额类型" rules={[{ required: true }]}>
+            <Select>
+              <Select.Option value="fixed">固定金额</Select.Option>
+              <Select.Option value="variable">可变金额</Select.Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="amount" label="金额" rules={[{ required: true, message: '请输入金额' }]}>
+            <InputNumber style={{ width: '100%' }} min={0} precision={2} />
+          </Form.Item>
+          <Form.Item name="cycle_days" label="周期天数" rules={[{ required: true, message: '请输入周期天数' }]}>
+            <Input placeholder="例如：30" />
+          </Form.Item>
+          <Form.Item name="next_due_date" label="下次付款日" rules={[{ required: true, message: '请选择下次付款日' }]}>
+            <Input type="date" />
+          </Form.Item>
+          <Form.Item name="account_id" label="关联账户" rules={[{ required: true, message: '请选择账户' }]}>
+            <Select placeholder="选择账户">
+              {accounts.map((account: any) => (
+                <Select.Option key={account.id} value={account.id}>{account.name}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={saving}>
+            {editing ? '保存修改' : '创建账单'}
+          </Button>
+        </Form>
+      </Modal>
+    </div>
   )
 }
 

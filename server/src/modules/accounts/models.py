@@ -26,6 +26,7 @@ class Account(Base):
     frozen_amount = Column(Numeric(15, 2), default=0)  # 🛡️ L: 冻结额度（分期专用）
     currency = Column(String(3), default="CNY")
     is_active = Column(Boolean, default=True)
+    is_archived = Column(Boolean, default=False, nullable=False, index=True)
     is_deleted = Column(Boolean, default=False)  # 软删除标记
     note = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -15,7 +15,15 @@ from src.modules.auth.models import User
 from src.core import AppException, ErrorCode, NotFoundException
 
 from .schemas import AccountCreate, AccountResponse, AccountUpdate
-from .service import create_account, delete_account, get_account, get_accounts, update_account, calculate_credit_statement_info
+from .service import (
+    calculate_credit_statement_info,
+    create_account,
+    delete_account,
+    get_account,
+    get_accounts_for_management,
+    set_account_archived,
+    update_account,
+)
 from .rebuild import rebuild_account_balance, rebuild_book_accounts
 from src.modules.books.service import get_default_book
 
@@ -80,11 +88,12 @@ def list_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     book_id: str = None,
-    include_inactive: bool = False
+    include_inactive: bool = False,
+    include_archived: bool = False,
 ):
     """Get all accounts"""
     bid = get_current_book_id(current_user, db, book_id)
-    accounts = get_accounts(db, bid, include_inactive)
+    accounts = get_accounts_for_management(db, bid, include_inactive=include_inactive, include_archived=include_archived)
     
     # 🛡️ L: 为每个信用账户计算本期待还信息
     result = []
@@ -109,6 +118,7 @@ def list_accounts(
             'currency': acc.currency,
             'note': acc.note,
             'is_active': acc.is_active,
+            'is_archived': acc.is_archived,
             'is_deleted': acc.is_deleted,
             'created_at': acc.created_at,
             'updated_at': acc.updated_at,
@@ -156,6 +166,7 @@ def get(
         'currency': account.currency,
         'note': account.note,
         'is_active': account.is_active,
+        'is_archived': account.is_archived,
         'is_deleted': account.is_deleted,
         'created_at': account.created_at,
         'updated_at': account.updated_at,
@@ -177,6 +188,28 @@ def update(
     """Update account"""
     bid = get_current_book_id(current_user, db, book_id)
     return update_account(db, account_id, bid, data)
+
+
+@router.post("/{account_id}/archive", response_model=AccountResponse)
+def archive_account(
+    account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    bid = get_current_book_id(current_user, db, book_id)
+    return set_account_archived(db, account_id, bid, True)
+
+
+@router.post("/{account_id}/unarchive", response_model=AccountResponse)
+def unarchive_account(
+    account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    bid = get_current_book_id(current_user, db, book_id)
+    return set_account_archived(db, account_id, bid, False)
 
 
 @router.delete("/{account_id}")

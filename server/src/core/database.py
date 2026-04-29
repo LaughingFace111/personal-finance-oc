@@ -47,6 +47,8 @@ def init_db():
     _ensure_legacy_installment_schema(bind_engine=engine)
     _ensure_budget_schema(bind_engine=engine)
     _ensure_frequent_items_schema(bind_engine=engine)
+    _ensure_account_archive_schema(bind_engine=engine)
+    _ensure_subscription_schema(bind_engine=engine)
 
 
 def _ensure_legacy_installment_schema(bind_engine) -> None:
@@ -167,3 +169,64 @@ def _ensure_frequent_items_schema(bind_engine) -> None:
                     connection.exec_driver_sql(
                         f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"
                     )
+
+
+def _ensure_account_archive_schema(bind_engine) -> None:
+    if bind_engine.dialect.name != "sqlite":
+        return
+
+    with bind_engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("accounts"):
+            return
+
+        existing_columns = {
+            column["name"] for column in inspector.get_columns("accounts")
+        }
+        if "is_archived" not in existing_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE accounts ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT 0"
+            )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_accounts_is_archived ON accounts (is_archived)"
+        )
+
+
+def _ensure_subscription_schema(bind_engine) -> None:
+    if bind_engine.dialect.name != "sqlite":
+        return
+
+    with bind_engine.begin() as connection:
+        inspector = inspect(connection)
+        if not inspector.has_table("subscriptions"):
+            connection.exec_driver_sql(
+                """
+                CREATE TABLE subscriptions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    book_id VARCHAR(36) NOT NULL,
+                    name VARCHAR(100) NOT NULL,
+                    amount_type VARCHAR(20) NOT NULL,
+                    amount NUMERIC(15, 2) NOT NULL DEFAULT 0,
+                    cycle_days VARCHAR(20) NOT NULL,
+                    next_due_date DATE NOT NULL,
+                    account_id VARCHAR(36) NOT NULL,
+                    created_at DATETIME,
+                    updated_at DATETIME,
+                    FOREIGN KEY(book_id) REFERENCES books (id),
+                    FOREIGN KEY(account_id) REFERENCES accounts (id)
+                )
+                """
+            )
+
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_book_id ON subscriptions (book_id)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_account_id ON subscriptions (account_id)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_next_due_date ON subscriptions (next_due_date)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_book_due ON subscriptions (book_id, next_due_date)"
+        )

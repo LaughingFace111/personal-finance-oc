@@ -23,6 +23,7 @@ from src.modules.reports import router as reports_router
 from src.modules.exports import router as exports_router
 from src.modules.tags import router as tags_router
 from src.modules.bills import router as bills_router
+from src.modules.subscriptions import router as subscriptions_router
 from src.modules.budgets.router import router as budgets_router
 from src.modules.budgets.models import Budget  # noqa: F401
 from src.modules.wishlists import router as wishlists_router
@@ -35,6 +36,7 @@ from src.modules.import_templates import ImportTemplate  # noqa: F401
 from src.modules.transaction_templates import TransactionTemplate  # noqa: F401
 from src.modules.recurring_rules import RecurringRule  # noqa: F401
 from src.modules.recurring_pending import PendingItem  # noqa: F401
+from src.modules.subscriptions import Subscription  # noqa: F401
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -81,6 +83,7 @@ app.include_router(budgets_router, prefix="/api")
 app.include_router(wishlists_router, prefix="/api")
 app.include_router(durable_assets_router, prefix="/api")
 app.include_router(bills_router, prefix="/api")
+app.include_router(subscriptions_router, prefix="/api")
 
 
 @app.get("/")

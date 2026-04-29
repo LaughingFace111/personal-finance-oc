@@ -155,6 +155,24 @@ def get_accounts(db: Session, book_id: str, include_inactive: bool = False, incl
     query = db.query(Account).filter(Account.book_id == book_id)
     if not include_inactive:
         query = query.filter(Account.is_active == True)
+    query = query.filter(Account.is_archived == False)
+    if not include_deleted:
+        query = query.filter(Account.is_deleted == False)
+    return query.all()
+
+
+def get_accounts_for_management(
+    db: Session,
+    book_id: str,
+    include_inactive: bool = False,
+    include_deleted: bool = False,
+    include_archived: bool = False,
+) -> List[Account]:
+    query = db.query(Account).filter(Account.book_id == book_id)
+    if not include_inactive:
+        query = query.filter(Account.is_active == True)
+    if not include_archived:
+        query = query.filter(Account.is_archived == False)
     if not include_deleted:
         query = query.filter(Account.is_deleted == False)
     return query.all()
@@ -183,6 +201,22 @@ def update_account(db: Session, account_id: str, book_id: str, data: AccountUpda
         if value is not None and key in ["billing_day", "repayment_day"]:
             value = str(value)
         setattr(account, key, value)
+
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def set_account_archived(db: Session, account_id: str, book_id: str, archived: bool) -> Account:
+    account = get_account(db, account_id, book_id)
+    if not account or account.is_deleted:
+        raise NotFoundException("Account not found")
+
+    account.is_archived = archived
+    if archived:
+        account.is_active = False
+    else:
+        account.is_active = True
 
     db.commit()
     db.refresh(account)
