@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton } from 'antd'
+import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton, Alert } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
@@ -10,7 +10,19 @@ import { TagMultiSelect } from './components/TagMultiSelect'
 import TransactionListComponent from './components/TransactionList'
 import { TransactionDetailModal } from './components/TransactionDetailModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
-import { apiGet, apiPost, apiDelete, apiPatch, type RecurringBillRecord } from './services/api'
+import {
+  apiGet,
+  apiPost,
+  apiDelete,
+  apiPatch,
+  apiUpload,
+  type RecurringBillRecord,
+  type ReconciliationDefaults,
+  type ReconciliationSessionDetail,
+  type ReconciliationSessionSummary,
+  type ReconciliationStatementRow,
+  type ReconciliationLedgerTransaction,
+} from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
@@ -230,6 +242,22 @@ const getTransactionAmountMeta = (transaction: { direction?: string; transaction
     return { prefix: '+', color: 'var(--accent-green)' }
   }
   return { prefix: '-', color: 'var(--accent-red)' }
+}
+
+const formatMoney = (value?: number | string | null) => `¥${Number(value || 0).toFixed(2)}`
+
+const formatDateLabel = (value?: string | null) => {
+  if (!value) return '-'
+  return value.slice(0, 10)
+}
+
+const formatBucketTitle = (key: string) => {
+  if (key === 'matched') return '已匹配'
+  if (key === 'missing') return '账单缺失'
+  if (key === 'duplicate') return '重复候选'
+  if (key === 'unresolved') return '待复核'
+  if (key === 'extra') return '账本多出'
+  return key
 }
 
 function AppShell() {
@@ -1531,6 +1559,17 @@ const AccountDetailPage = () => {
   const [limitSubmitting, setLimitSubmitting] = useState(false)
   const [adjustForm] = Form.useForm()
   const [adjustSubmitting, setAdjustSubmitting] = useState(false)
+  const [reconciliationForm] = Form.useForm()
+  const [reconciliationCloseForm] = Form.useForm()
+  const [reconciliationSessions, setReconciliationSessions] = useState<ReconciliationSessionSummary[]>([])
+  const [activeReconciliation, setActiveReconciliation] = useState<ReconciliationSessionDetail | null>(null)
+  const [reconciliationDefaults, setReconciliationDefaults] = useState<ReconciliationDefaults | null>(null)
+  const [reconciliationLoading, setReconciliationLoading] = useState(false)
+  const [reconciliationSubmitting, setReconciliationSubmitting] = useState(false)
+  const [reconciliationCreateVisible, setReconciliationCreateVisible] = useState(false)
+  const [reconciliationCloseVisible, setReconciliationCloseVisible] = useState(false)
+  const [reconciliationEvidenceFile, setReconciliationEvidenceFile] = useState<File | null>(null)
+  const [reconciliationBillType, setReconciliationBillType] = useState('alipay')
   const [month, setMonth] = useState(() => {
     const now = new Date()
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -1608,17 +1647,76 @@ const AccountDetailPage = () => {
     }
   }
 
+  const loadReconciliationSession = async (sessionId: string) => {
+    const detail = await apiGet<ReconciliationSessionDetail>(`/api/reconciliations/sessions/${sessionId}`)
+    setActiveReconciliation(detail)
+    return detail
+  }
+
+  const loadReconciliationHistory = async (options?: { preserveActive?: boolean }) => {
+    if (!accountId) return
+
+    setReconciliationLoading(true)
+    try {
+      const sessions = await apiGet<ReconciliationSessionSummary[]>(`/api/reconciliations/accounts/${accountId}/sessions`)
+      setReconciliationSessions(sessions)
+
+      const preferredId = options?.preserveActive ? activeReconciliation?.id : undefined
+      const fallback = sessions.find((session) => session.status === 'in_progress') || sessions[0]
+      const nextSession = sessions.find((session) => session.id === preferredId) || fallback
+
+      if (nextSession) {
+        await loadReconciliationSession(nextSession.id)
+      } else {
+        setActiveReconciliation(null)
+      }
+    } catch (error) {
+      console.error('Failed to load reconciliation history', error)
+      setReconciliationSessions([])
+      setActiveReconciliation(null)
+    } finally {
+      setReconciliationLoading(false)
+    }
+  }
+
+  const openCreateReconciliation = async () => {
+    if (!accountId) return
+    setReconciliationSubmitting(true)
+    try {
+      const defaults = await apiGet<ReconciliationDefaults>(`/api/reconciliations/accounts/${accountId}/defaults`)
+      setReconciliationDefaults(defaults)
+      reconciliationForm.setFieldsValue({
+        statement_period_start: defaults.statement_period_start,
+        statement_period_end: defaults.statement_period_end,
+        statement_opening_balance: defaults.statement_opening_balance ?? undefined,
+        statement_closing_balance: Number(defaults.suggested_statement_closing_balance || 0),
+        notes: '',
+      })
+      setReconciliationCreateVisible(true)
+    } catch (error) {
+      console.error('Failed to load reconciliation defaults', error)
+      message.error('加载对账默认值失败')
+    } finally {
+      setReconciliationSubmitting(false)
+    }
+  }
+
   const refreshAccountDetail = async (options?: { includeTransactions?: boolean }) => {
     await loadAccount()
     await loadBalanceTrend()
     if (options?.includeTransactions) {
       await loadTransactions()
     }
+    await loadReconciliationHistory({ preserveActive: true })
   }
 
   useEffect(() => {
     loadAccount()
   }, [bookId, accountId])
+
+  useEffect(() => {
+    void loadReconciliationHistory()
+  }, [accountId])
 
   useEffect(() => {
     loadBalanceTrend()
@@ -1689,6 +1787,104 @@ const AccountDetailPage = () => {
       message.error('调整失败')
     } finally {
       setAdjustSubmitting(false)
+    }
+  }
+
+  const handleCreateReconciliation = async (values: any) => {
+    if (!accountId) return
+
+    setReconciliationSubmitting(true)
+    try {
+      const detail = await apiPost<ReconciliationSessionDetail>('/api/reconciliations/sessions', {
+        account_id: accountId,
+        statement_period_start: values.statement_period_start,
+        statement_period_end: values.statement_period_end,
+        statement_opening_balance: values.statement_opening_balance ?? undefined,
+        statement_closing_balance: values.statement_closing_balance,
+        notes: values.notes || undefined,
+      })
+      message.success('已创建对账会话')
+      setReconciliationCreateVisible(false)
+      reconciliationForm.resetFields()
+      setActiveReconciliation(detail)
+      await loadReconciliationHistory()
+    } catch (error) {
+      console.error('Failed to create reconciliation', error)
+      message.error('创建对账失败')
+    } finally {
+      setReconciliationSubmitting(false)
+    }
+  }
+
+  const handleUploadReconciliationEvidence = async () => {
+    if (!activeReconciliation?.id || !reconciliationEvidenceFile) {
+      message.warning('请选择账单文件')
+      return
+    }
+
+    const formData = new FormData()
+    formData.append('file', reconciliationEvidenceFile)
+    formData.append('bill_type', reconciliationBillType)
+
+    setReconciliationSubmitting(true)
+    try {
+      const detail = await apiUpload<ReconciliationSessionDetail>(
+        `/api/reconciliations/sessions/${activeReconciliation.id}/evidence`,
+        formData,
+      )
+      message.success('账单证据已导入')
+      setActiveReconciliation(detail)
+      setReconciliationEvidenceFile(null)
+      await loadReconciliationHistory({ preserveActive: true })
+    } catch (error) {
+      console.error('Failed to upload reconciliation evidence', error)
+      message.error('导入账单证据失败')
+    } finally {
+      setReconciliationSubmitting(false)
+    }
+  }
+
+  const markReconciliationReviewed = async () => {
+    if (!activeReconciliation?.id) return
+    setReconciliationSubmitting(true)
+    try {
+      const detail = await apiPatch<ReconciliationSessionDetail>(
+        `/api/reconciliations/sessions/${activeReconciliation.id}`,
+        { review_state: 'reviewed' },
+      )
+      setActiveReconciliation(detail)
+      await loadReconciliationHistory({ preserveActive: true })
+      message.success('已标记为已复核')
+    } catch (error) {
+      console.error('Failed to update reconciliation review state', error)
+      message.error('更新复核状态失败')
+    } finally {
+      setReconciliationSubmitting(false)
+    }
+  }
+
+  const handleCloseReconciliation = async (values: any) => {
+    if (!activeReconciliation?.id) return
+    setReconciliationSubmitting(true)
+    try {
+      const detail = await apiPost<ReconciliationSessionDetail>(
+        `/api/reconciliations/sessions/${activeReconciliation.id}/close`,
+        {
+          action: values.action,
+          note: values.note || undefined,
+          is_counted_in_reports: values.is_counted_in_reports || false,
+        },
+      )
+      setActiveReconciliation(detail)
+      setReconciliationCloseVisible(false)
+      reconciliationCloseForm.resetFields()
+      await refreshAccountDetail({ includeTransactions: true })
+      message.success('对账已完成')
+    } catch (error) {
+      console.error('Failed to close reconciliation', error)
+      message.error('关闭对账失败')
+    } finally {
+      setReconciliationSubmitting(false)
     }
   }
 
@@ -1858,6 +2054,264 @@ const AccountDetailPage = () => {
           <Button size="small" type="primary" onClick={() => setAdjustModalVisible(true)}>调整</Button>
           </div>
         )}
+      </Card>
+
+      <Card
+        style={{ marginBottom: 16 }}
+        title="账户对账"
+        extra={
+          !isArchived ? (
+            <Button type="primary" size="small" onClick={() => { void openCreateReconciliation() }} loading={reconciliationSubmitting}>
+              开始对账
+            </Button>
+          ) : null
+        }
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          {reconciliationDefaults && (
+            <Alert
+              type="info"
+              showIcon
+              message={reconciliationDefaults.is_credit_account ? '默认沿用当前信用账单周期' : '非信用账户可手工调整对账周期与余额锚点'}
+              description={`建议周期 ${formatDateLabel(reconciliationDefaults.statement_period_start)} 至 ${formatDateLabel(reconciliationDefaults.statement_period_end)}，当前账本收盘值 ${formatMoney(reconciliationDefaults.ledger_closing_balance)}。`}
+            />
+          )}
+
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>历史记录</div>
+            {reconciliationLoading ? (
+              <Spin />
+            ) : reconciliationSessions.length === 0 ? (
+              <Empty description="暂无对账记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : (
+              <List
+                size="small"
+                dataSource={reconciliationSessions}
+                renderItem={(session) => (
+                  <List.Item
+                    style={{
+                      cursor: 'pointer',
+                      paddingInline: 0,
+                      background: activeReconciliation?.id === session.id ? 'var(--bg-elevated)' : 'transparent',
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                    }}
+                    onClick={() => { void loadReconciliationSession(session.id) }}
+                  >
+                    <div style={{ width: '100%' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>
+                            {formatDateLabel(session.statement_period_start)} - {formatDateLabel(session.statement_period_end)}
+                          </div>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                            差额 {formatMoney(session.difference_amount)} · 证据 {session.evidence_row_count} 行
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <Tag color={session.status === 'balanced' ? 'green' : session.status === 'adjusted' ? 'blue' : session.status === 'discrepant' ? 'orange' : 'gold'}>
+                            {session.status}
+                          </Tag>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{formatDateLabel(session.created_at)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </List.Item>
+                )}
+              />
+            )}
+          </div>
+
+          {activeReconciliation && (
+            <div style={{ border: '1px solid var(--border-color)', borderRadius: 12, padding: 16, background: 'var(--bg-card)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>当前对账会话</div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    周期 {formatDateLabel(activeReconciliation.statement_period_start)} 至 {formatDateLabel(activeReconciliation.statement_period_end)}
+                  </div>
+                </div>
+                <Space wrap>
+                  <Tag color={activeReconciliation.review_state === 'reviewed' ? 'green' : 'gold'}>
+                    复核: {activeReconciliation.review_state}
+                  </Tag>
+                  <Tag color={activeReconciliation.status === 'balanced' ? 'green' : activeReconciliation.status === 'adjusted' ? 'blue' : activeReconciliation.status === 'discrepant' ? 'orange' : 'gold'}>
+                    {activeReconciliation.status}
+                  </Tag>
+                </Space>
+              </div>
+
+              <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                <Col xs={24} md={12}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>账单收盘余额</div>
+                    <div style={{ fontSize: 20, fontWeight: 600 }}>{formatMoney(activeReconciliation.statement_closing_balance)}</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                      开盘锚点 {activeReconciliation.statement_opening_balance == null ? '未提供' : formatMoney(activeReconciliation.statement_opening_balance)}
+                    </div>
+                  </Card>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>账本收盘余额</div>
+                    <div style={{ fontSize: 20, fontWeight: 600 }}>{formatMoney(activeReconciliation.ledger_closing_balance)}</div>
+                    <div style={{ color: Number(activeReconciliation.difference_amount || 0) === 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontSize: 12 }}>
+                      差额 {formatMoney(activeReconciliation.difference_amount)}
+                    </div>
+                  </Card>
+                </Col>
+                <Col xs={12} md={6}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>账单合计</div>
+                    <div style={{ fontWeight: 600 }}>{formatMoney(activeReconciliation.statement_total_amount)}</div>
+                  </Card>
+                </Col>
+                <Col xs={12} md={6}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>账本合计</div>
+                    <div style={{ fontWeight: 600 }}>{formatMoney(activeReconciliation.ledger_total_amount)}</div>
+                  </Card>
+                </Col>
+                <Col xs={12} md={6}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>账单证据</div>
+                    <div style={{ fontWeight: 600 }}>{activeReconciliation.evidence_row_count} 行</div>
+                  </Card>
+                </Col>
+                <Col xs={12} md={6}>
+                  <Card size="small">
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>来源</div>
+                    <div style={{ fontWeight: 600 }}>{activeReconciliation.evidence_source_type || '仅账本'}</div>
+                  </Card>
+                </Col>
+              </Row>
+
+              {activeReconciliation.status === 'in_progress' && !isArchived && (
+                <div style={{ marginBottom: 16, display: 'grid', gap: 10 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <Select value={reconciliationBillType} onChange={setReconciliationBillType} style={{ width: 160 }}>
+                      <Select.Option value="alipay">支付宝</Select.Option>
+                      <Select.Option value="wechat">微信</Select.Option>
+                      <Select.Option value="jd">京东</Select.Option>
+                      <Select.Option value="alipay_pouch">支付宝亲情卡</Select.Option>
+                      <Select.Option value="custom">自定义</Select.Option>
+                    </Select>
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx"
+                      onChange={(event) => setReconciliationEvidenceFile(event.target.files?.[0] || null)}
+                    />
+                    <Button onClick={() => { void handleUploadReconciliationEvidence() }} loading={reconciliationSubmitting}>
+                      导入账单证据
+                    </Button>
+                    <Button onClick={() => { void markReconciliationReviewed() }} disabled={activeReconciliation.review_state === 'reviewed'} loading={reconciliationSubmitting}>
+                      标记已复核
+                    </Button>
+                    <Button type="primary" onClick={() => {
+                      reconciliationCloseForm.setFieldsValue({
+                        action: Number(activeReconciliation.difference_amount || 0) === 0 ? 'balanced' : 'discrepant',
+                        note: activeReconciliation.close_note || '',
+                        is_counted_in_reports: false,
+                      })
+                      setReconciliationCloseVisible(true)
+                    }}>
+                      关闭对账
+                    </Button>
+                  </div>
+                  {activeReconciliation.evidence_filename && (
+                    <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                      当前证据文件：{activeReconciliation.evidence_filename}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeReconciliation.close_note && (
+                <Alert
+                  type={activeReconciliation.status === 'discrepant' ? 'warning' : 'success'}
+                  showIcon
+                  message={`结束方式: ${activeReconciliation.status}`}
+                  description={activeReconciliation.close_transaction_id ? `${activeReconciliation.close_note} · 调整流水 ${activeReconciliation.close_transaction_id}` : activeReconciliation.close_note}
+                  style={{ marginBottom: 16 }}
+                />
+              )}
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                {Object.entries(activeReconciliation.comparison.buckets).map(([key, value]) => (
+                  <Tag key={key} color={key === 'matched' ? 'green' : key === 'extra' ? 'orange' : key === 'unresolved' ? 'gold' : key === 'duplicate' ? 'volcano' : 'blue'}>
+                    {formatBucketTitle(key)} {value}
+                  </Tag>
+                ))}
+              </div>
+
+              <div style={{ display: 'grid', gap: 12 }}>
+                {[
+                  ['matched', activeReconciliation.comparison.matched_rows],
+                  ['missing', activeReconciliation.comparison.missing_rows],
+                  ['duplicate', activeReconciliation.comparison.duplicate_rows],
+                  ['unresolved', activeReconciliation.comparison.unresolved_rows],
+                ].map(([key, rows]) => (
+                  <Card key={key} size="small" title={`${formatBucketTitle(key)} (${(rows as ReconciliationStatementRow[]).length})`}>
+                    {(rows as ReconciliationStatementRow[]).length === 0 ? (
+                      <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无记录" />
+                    ) : (
+                      <List
+                        size="small"
+                        dataSource={rows as ReconciliationStatementRow[]}
+                        renderItem={(row) => (
+                          <List.Item>
+                            <div style={{ width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                <div>
+                                  <div style={{ fontWeight: 500 }}>
+                                    {formatDateLabel(row.occurred_at)} · {row.counterparty || row.description || '账单行'}
+                                  </div>
+                                  <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                                    {row.match_reason || '无匹配说明'}
+                                    {row.candidate_transaction_ids.length > 0 ? ` · 候选 ${row.candidate_transaction_ids.length} 条` : ''}
+                                  </div>
+                                </div>
+                                <div style={{ fontWeight: 600 }}>{formatMoney(row.amount)}</div>
+                              </div>
+                            </div>
+                          </List.Item>
+                        )}
+                      />
+                    )}
+                  </Card>
+                ))}
+
+                <Card size="small" title={`账本多出 (${activeReconciliation.comparison.extra_transactions.length})`}>
+                  {activeReconciliation.comparison.extra_transactions.length === 0 ? (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无记录" />
+                  ) : (
+                    <List
+                      size="small"
+                      dataSource={activeReconciliation.comparison.extra_transactions}
+                      renderItem={(txn: ReconciliationLedgerTransaction) => (
+                        <List.Item>
+                          <div style={{ width: '100%' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                              <div>
+                                <div style={{ fontWeight: 500 }}>
+                                  {formatDateLabel(txn.occurred_at)} · {txn.merchant || txn.note || txn.transaction_type}
+                                </div>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                                  {txn.external_ref || txn.transaction_type}
+                                </div>
+                              </div>
+                              <div style={{ fontWeight: 600 }}>{formatMoney(txn.amount)}</div>
+                            </div>
+                          </div>
+                        </List.Item>
+                      )}
+                    />
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* 余额趋势图 */}
@@ -2053,6 +2507,81 @@ const AccountDetailPage = () => {
           </div>
           
           <Button type="primary" htmlType="submit" block loading={limitSubmitting}>确认调整</Button>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="开始账户对账"
+        open={reconciliationCreateVisible}
+        onCancel={() => {
+          setReconciliationCreateVisible(false)
+          reconciliationForm.resetFields()
+        }}
+        footer={null}
+      >
+        <Form form={reconciliationForm} layout="vertical" onFinish={handleCreateReconciliation}>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={isCreditAccount ? '信用账户默认沿用现有账单周期' : '非信用账户可按对账单手工设置周期'}
+            description={reconciliationDefaults ? `当前建议账本收盘值 ${formatMoney(reconciliationDefaults.ledger_closing_balance)}` : '创建后可继续导入账单证据并复核差异。'}
+          />
+          <Form.Item name="statement_period_start" label="账单起始日" rules={[{ required: true, message: '请输入账单起始日' }]}>
+            <Input type="date" />
+          </Form.Item>
+          <Form.Item name="statement_period_end" label="账单结束日" rules={[{ required: true, message: '请输入账单结束日' }]}>
+            <Input type="date" />
+          </Form.Item>
+          <Form.Item name="statement_opening_balance" label="账单期初余额（可选）">
+            <InputNumber style={{ width: '100%' }} precision={2} />
+          </Form.Item>
+          <Form.Item name="statement_closing_balance" label="账单收盘余额" rules={[{ required: true, message: '请输入账单收盘余额' }]}>
+            <InputNumber style={{ width: '100%' }} precision={2} />
+          </Form.Item>
+          <Form.Item name="notes" label="备注">
+            <Input.TextArea rows={3} placeholder="例如：四月信用卡对账、银行月结单" />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={reconciliationSubmitting}>创建对账会话</Button>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="关闭对账"
+        open={reconciliationCloseVisible}
+        onCancel={() => {
+          setReconciliationCloseVisible(false)
+          reconciliationCloseForm.resetFields()
+        }}
+        footer={null}
+      >
+        <Form form={reconciliationCloseForm} layout="vertical" onFinish={handleCloseReconciliation}>
+          <Alert
+            type={Number(activeReconciliation?.difference_amount || 0) === 0 ? 'success' : 'warning'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`当前差额 ${formatMoney(activeReconciliation?.difference_amount)}`}
+            description="差额为 0 可直接 balanced；保留差异请选 discrepant；需要补平则选 adjusted，并通过既有余额调整流水落账。"
+          />
+          <Form.Item name="action" label="结束方式" rules={[{ required: true, message: '请选择结束方式' }]}>
+            <Radio.Group>
+              <Space direction="vertical">
+                <Radio value="balanced">balanced</Radio>
+                <Radio value="adjusted">adjusted</Radio>
+                <Radio value="discrepant">discrepant</Radio>
+              </Space>
+            </Radio.Group>
+          </Form.Item>
+          <Form.Item name="note" label="说明">
+            <Input.TextArea rows={3} placeholder="记录这次关闭的依据或遗留说明" />
+          </Form.Item>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <Form.Item name="is_counted_in_reports" valuePropName="checked" noStyle>
+              <Switch size="small" />
+            </Form.Item>
+            <span>如果执行 adjusted，则将调整流水计入收支报表</span>
+          </div>
+          <Button type="primary" htmlType="submit" block loading={reconciliationSubmitting}>确认关闭</Button>
         </Form>
       </Modal>
 

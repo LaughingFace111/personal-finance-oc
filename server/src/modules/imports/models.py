@@ -27,6 +27,7 @@ class ImportBatch(Base):
 
     # Relationships
     rows = relationship("ImportRow", back_populates="batch", cascade="all, delete-orphan")
+    reconciliation_sessions = relationship("ReconciliationSession", back_populates="evidence_import_batch")
 
 
 class ImportRow(Base):

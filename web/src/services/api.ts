@@ -243,6 +243,101 @@ export interface RecurringBillRecord {
   updated_at: string;
 }
 
+export interface ReconciliationBucketSummary {
+  matched: number;
+  missing: number;
+  duplicate: number;
+  unresolved: number;
+  extra: number;
+}
+
+export interface ReconciliationStatementRow {
+  id: string;
+  row_no: number;
+  occurred_at: string;
+  direction: string;
+  amount: number | string;
+  currency: string;
+  raw_account_name?: string | null;
+  counterparty?: string | null;
+  description?: string | null;
+  order_no?: string | null;
+  merchant_order_no?: string | null;
+  external_ref?: string | null;
+  match_status: string;
+  match_reason?: string | null;
+  matched_transaction_id?: string | null;
+  candidate_transaction_ids: string[];
+  review_status: string;
+  review_note?: string | null;
+}
+
+export interface ReconciliationLedgerTransaction {
+  id: string;
+  occurred_at: string;
+  direction: string;
+  amount: number | string;
+  merchant?: string | null;
+  note?: string | null;
+  external_ref?: string | null;
+  transaction_type: string;
+  match_reason?: string | null;
+}
+
+export interface ReconciliationComparison {
+  statement_total_amount: number | string;
+  ledger_total_amount: number | string;
+  statement_closing_balance: number | string;
+  ledger_closing_balance: number | string;
+  difference_amount: number | string;
+  buckets: ReconciliationBucketSummary;
+  matched_rows: ReconciliationStatementRow[];
+  missing_rows: ReconciliationStatementRow[];
+  duplicate_rows: ReconciliationStatementRow[];
+  unresolved_rows: ReconciliationStatementRow[];
+  extra_transactions: ReconciliationLedgerTransaction[];
+}
+
+export interface ReconciliationSessionSummary {
+  id: string;
+  account_id: string;
+  statement_period_start: string;
+  statement_period_end: string;
+  statement_closing_balance: number | string;
+  ledger_closing_balance: number | string;
+  difference_amount: number | string;
+  status: string;
+  review_state: string;
+  evidence_filename?: string | null;
+  evidence_row_count: number;
+  close_note?: string | null;
+  close_transaction_id?: string | null;
+  closed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReconciliationSessionDetail extends ReconciliationSessionSummary {
+  statement_opening_balance?: number | string | null;
+  statement_total_amount: number | string;
+  ledger_total_amount: number | string;
+  evidence_source_type?: string | null;
+  evidence_import_batch_id?: string | null;
+  notes?: string | null;
+  comparison: ReconciliationComparison;
+}
+
+export interface ReconciliationDefaults {
+  account_id: string;
+  statement_period_start: string;
+  statement_period_end: string;
+  statement_opening_balance?: number | string | null;
+  suggested_statement_closing_balance: number | string;
+  ledger_closing_balance: number | string;
+  difference_amount: number | string;
+  is_credit_account: boolean;
+}
+
 export interface ExpenseByCategoryParams {
   bookId: string;
   dateFrom: string;
