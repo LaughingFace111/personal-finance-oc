@@ -10,7 +10,7 @@ import { TagMultiSelect } from './components/TagMultiSelect'
 import TransactionListComponent from './components/TransactionList'
 import { TransactionDetailModal } from './components/TransactionDetailModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
-import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
+import { apiGet, apiPost, apiDelete, apiPatch, apiDownload } from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
@@ -876,6 +876,16 @@ const DateDetailPage = () => {
 const TransactionsPage = () => {
   const { user } = useAuth()
   const bookId = user?.default_book_id
+  const [books, setBooks] = useState<Array<{ id: string; name: string }>>([])
+  const [exportAccounts, setExportAccounts] = useState<Array<{ id: string; name: string }>>([])
+  const [exportModalOpen, setExportModalOpen] = useState(false)
+  const [exportSubmitting, setExportSubmitting] = useState(false)
+  const [exportFilters, setExportFilters] = useState({
+    book_id: bookId || '',
+    account_id: '',
+    start_date: '',
+    end_date: '',
+  })
 
   // 时间筛选状态
   const [yearRange, setYearRange] = useState({ min_year: null as number | null, max_year: null as number | null })
@@ -898,6 +908,28 @@ const TransactionsPage = () => {
       })
   }, [bookId])
 
+  useEffect(() => {
+    if (!bookId) return
+    apiGet<Array<{ id: string; name: string }>>('/api/books')
+      .then((res) => {
+        setBooks(Array.isArray(res) ? res : [])
+      })
+      .catch(() => setBooks([]))
+  }, [bookId])
+
+  useEffect(() => {
+    if (!exportModalOpen || !exportFilters.book_id) {
+      setExportAccounts([])
+      return
+    }
+
+    apiGet<Array<{ id: string; name: string }>>(`/api/accounts?book_id=${exportFilters.book_id}`)
+      .then((res) => {
+        setExportAccounts(Array.isArray(res) ? res : [])
+      })
+      .catch(() => setExportAccounts([]))
+  }, [exportModalOpen, exportFilters.book_id])
+
   const [detailOpen, setDetailOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const [listRefreshToken, setListRefreshToken] = useState(0)
@@ -917,43 +949,108 @@ const TransactionsPage = () => {
 
   const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
+  const buildDefaultExportRange = () => {
+    const fallbackYear = selectedYear ?? new Date().getFullYear()
+    if (selectedMonth) {
+      const start = new Date(fallbackYear, selectedMonth - 1, 1)
+      const end = new Date(fallbackYear, selectedMonth, 0)
+      return {
+        start_date: formatLocalDate(start),
+        end_date: formatLocalDate(end),
+      }
+    }
+
+    return {
+      start_date: `${fallbackYear}-01-01`,
+      end_date: `${fallbackYear}-12-31`,
+    }
+  }
+
+  const openExportModal = () => {
+    const range = buildDefaultExportRange()
+    setExportFilters({
+      book_id: bookId || '',
+      account_id: '',
+      start_date: range.start_date,
+      end_date: range.end_date,
+    })
+    setExportModalOpen(true)
+  }
+
+  const handleExport = async () => {
+    if (!exportFilters.book_id) {
+      message.error('请选择账本')
+      return
+    }
+
+    const params = new URLSearchParams({ book_id: exportFilters.book_id })
+    if (exportFilters.account_id) params.set('account_id', exportFilters.account_id)
+    if (exportFilters.start_date) params.set('start_date', exportFilters.start_date)
+    if (exportFilters.end_date) params.set('end_date', exportFilters.end_date)
+
+    setExportSubmitting(true)
+    try {
+      const { blob, filename } = await apiDownload(`/api/export/transactions?${params.toString()}`)
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = filename || 'transactions-export.csv'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(downloadUrl)
+      message.success('CSV 导出已开始')
+      setExportModalOpen(false)
+    } catch (error) {
+      console.error('Export failed:', error)
+    } finally {
+      setExportSubmitting(false)
+    }
+  }
+
   return (
     <div>
       {/* 时间筛选器 */}
-      <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
-        <Select
-          placeholder="选择年份"
-          value={selectedYear}
-          onChange={v => { setSelectedYear(v); setSelectedMonth(null) }}
-          style={{ width: 120 }}
-          allowClear
-        >
-          {yearOptions.map(y => (
-            <Select.Option key={y} value={y}>{y}年</Select.Option>
-          ))}
-        </Select>
-        <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', paddingBottom: 4 }}>
-          {months.map(m => (
-            <div
-              key={m}
-              onClick={() => setSelectedMonth(m)}
-              style={{
-                minWidth: 40, padding: '6px 12px', borderRadius: 16, textAlign: 'center',
-                cursor: 'pointer',
-                background: selectedMonth === m ? 'var(--accent-red)' : 'var(--bg-elevated)',
-                color: selectedMonth === m ? '#fff' : 'var(--text-primary)',
-                fontSize: 14, transition: 'all 0.2s'
-              }}
-            >
-              {m}月
-            </div>
-          ))}
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flex: 1, minWidth: 280 }}>
+          <Select
+            placeholder="选择年份"
+            value={selectedYear}
+            onChange={v => { setSelectedYear(v); setSelectedMonth(null) }}
+            style={{ width: 120 }}
+            allowClear
+          >
+            {yearOptions.map(y => (
+              <Select.Option key={y} value={y}>{y}年</Select.Option>
+            ))}
+          </Select>
+          <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', paddingBottom: 4 }}>
+            {months.map(m => (
+              <div
+                key={m}
+                onClick={() => setSelectedMonth(m)}
+                style={{
+                  minWidth: 40, padding: '6px 12px', borderRadius: 16, textAlign: 'center',
+                  cursor: 'pointer',
+                  background: selectedMonth === m ? 'var(--accent-red)' : 'var(--bg-elevated)',
+                  color: selectedMonth === m ? '#fff' : 'var(--text-primary)',
+                  fontSize: 14, transition: 'all 0.2s'
+                }}
+              >
+                {m}月
+              </div>
+            ))}
+          </div>
         </div>
+        <Button icon={<FileTextOutlined />} onClick={openExportModal}>
+          导出 CSV
+        </Button>
       </div>
 
       {/* 交易列表（独立组件，支持无限滚动） */}
       <TransactionListComponent
         onItemClick={handleItemClick}
+        selectedYear={selectedYear}
         selectedMonth={selectedMonth}
         refreshToken={listRefreshToken}
       />
@@ -965,6 +1062,66 @@ const TransactionsPage = () => {
         onClose={() => setDetailOpen(false)}
         onRefresh={() => setListRefreshToken((value) => value + 1)}
       />
+
+      <Modal
+        title="导出交易"
+        open={exportModalOpen}
+        onCancel={() => setExportModalOpen(false)}
+        onOk={() => { void handleExport() }}
+        okText="下载 CSV"
+        confirmLoading={exportSubmitting}
+      >
+        <div style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账本</div>
+            <Select
+              value={exportFilters.book_id || undefined}
+              onChange={(value) => setExportFilters((prev) => ({ ...prev, book_id: value, account_id: '' }))}
+              style={{ width: '100%' }}
+              placeholder="选择账本"
+            >
+              {books.map((book) => (
+                <Select.Option key={book.id} value={book.id}>{book.name}</Select.Option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>账户</div>
+            <Select
+              value={exportFilters.account_id || undefined}
+              onChange={(value) => setExportFilters((prev) => ({ ...prev, account_id: value || '' }))}
+              style={{ width: '100%' }}
+              placeholder="全部账户"
+              allowClear
+            >
+              {exportAccounts.map((account) => (
+                <Select.Option key={account.id} value={account.id}>{account.name}</Select.Option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>开始日期</div>
+            <input
+              type="date"
+              value={exportFilters.start_date}
+              onChange={(event) => setExportFilters((prev) => ({ ...prev, start_date: event.target.value }))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
+            />
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)', fontSize: 13 }}>结束日期</div>
+            <input
+              type="date"
+              value={exportFilters.end_date}
+              onChange={(event) => setExportFilters((prev) => ({ ...prev, end_date: event.target.value }))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid #d9d9d9' }}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

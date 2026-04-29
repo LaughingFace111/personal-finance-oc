@@ -20,6 +20,7 @@ from src.modules.rules import router as rules_router
 from src.modules.recurring_rules import router as recurring_rules_router
 from src.modules.recurring_pending import router as recurring_pending_router
 from src.modules.reports import router as reports_router
+from src.modules.exports import router as exports_router
 from src.modules.tags import router as tags_router
 from src.modules.bills import router as bills_router
 from src.modules.budgets.router import router as budgets_router
@@ -74,6 +75,7 @@ app.include_router(rules_router, prefix="/api")
 app.include_router(recurring_rules_router, prefix="/api")
 app.include_router(recurring_pending_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(exports_router, prefix="/api")
 app.include_router(tags_router, prefix="/api")
 app.include_router(budgets_router, prefix="/api")
 app.include_router(wishlists_router, prefix="/api")

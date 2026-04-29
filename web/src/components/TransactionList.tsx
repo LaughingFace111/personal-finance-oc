@@ -8,6 +8,7 @@ import { useAppStore } from '../stores/appStore'
 
 interface TransactionListProps {
   onItemClick?: (item: any) => void
+  selectedYear?: number | null
   selectedMonth?: number | null
   items?: TransactionItem[]
   loading?: boolean
@@ -62,6 +63,7 @@ const NEUTRAL_TRANSACTION_TYPES = new Set([
 
 export default function TransactionList({
   onItemClick,
+  selectedYear,
   selectedMonth,
   items,
   loading: externalLoading,
@@ -88,7 +90,7 @@ export default function TransactionList({
     if (pageNum === 1) setLoading(true)
     else setLoadingMore(true)
 
-    const year = new Date().getFullYear()
+    const year = selectedYear ?? new Date().getFullYear()
     let url = `/api/transactions?book_id=${bookId}&year=${year}&page=${pageNum}&page_size=50&include_hidden=${showHiddenTransactions}`
     if (selectedMonth) url += `&month=${selectedMonth}`
 
@@ -102,7 +104,7 @@ export default function TransactionList({
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [bookId, isControlled, selectedMonth, showHiddenTransactions])
+  }, [bookId, isControlled, selectedMonth, selectedYear, showHiddenTransactions])
 
   useEffect(() => {
     if (!bookId) return

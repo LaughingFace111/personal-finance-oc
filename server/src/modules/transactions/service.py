@@ -171,6 +171,66 @@ def _collapse_transfer_rows(rows) -> List[str]:
     return visible_ids
 
 
+def _build_transactions_query(db: Session, book_id: str, filters: dict):
+    """Build the base filtered transaction query shared by list and export flows."""
+    query = db.query(Transaction).filter(Transaction.book_id == book_id)
+
+    if filters.get("date_from"):
+        query = query.filter(Transaction.occurred_at >= filters["date_from"])
+    if filters.get("date_to"):
+        query = query.filter(Transaction.occurred_at <= filters["date_to"])
+    if filters.get("account_id"):
+        account_id = filters["account_id"]
+        account = get_account(db, account_id, book_id)
+        if account and _is_credit_account(account.account_type):
+            query = query.filter(
+                or_(
+                    Transaction.account_id == account_id,
+                    Transaction.counterparty_account_id == account_id,
+                )
+            )
+        else:
+            query = query.filter(Transaction.account_id == account_id)
+    if filters.get("category_id"):
+        query = query.filter(Transaction.category_id == filters["category_id"])
+    if filters.get("transaction_type"):
+        query = query.filter(Transaction.transaction_type == filters["transaction_type"])
+    if filters.get("status"):
+        query = query.filter(Transaction.status == filters["status"])
+    else:
+        query = query.filter(Transaction.status != TransactionStatus.VOID.value)
+    if filters.get("keyword"):
+        query = query.filter(
+            Transaction.merchant.ilike(f"%{filters['keyword']}%") |
+            Transaction.note.ilike(f"%{filters['keyword']}%")
+        )
+    if filters.get("tag"):
+        query = query.filter(Transaction.tags.ilike(f"%{filters['tag']}%"))
+
+    if not filters.get("include_hidden"):
+        query = query.filter(Transaction.is_hidden == False)
+
+    return query
+
+
+def _get_visible_transaction_ids(query) -> List[str]:
+    """Return visible transaction ids after applying transfer collapsing rules."""
+    ordering = [
+        Transaction.occurred_at.desc(),
+        Transaction.created_at.desc(),
+        Transaction.id.desc(),
+    ]
+    return _collapse_transfer_rows(
+        query.with_entities(
+            Transaction.id,
+            Transaction.transaction_type,
+            Transaction.direction,
+            Transaction.related_transaction_id,
+            Transaction.business_key,
+        ).order_by(*ordering).all()
+    )
+
+
 def _apply_split_transfer_account_effect(
     db: Session,
     account_id: str,
@@ -960,63 +1020,8 @@ def create_refund(db: Session, book_id: str, data: RefundCreate) -> Transaction:
 
 def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Transaction], int]:
     """Get transactions with filters - Optimized version"""
-    # 🛡️ L: 预加载 category 和 account 关系，消除 N+1（避免遍历每条记录时单独查库）
-    query = db.query(Transaction).filter(Transaction.book_id == book_id)
-
-    # Apply filters
-    if filters.get("date_from"):
-        query = query.filter(Transaction.occurred_at >= filters["date_from"])
-    if filters.get("date_to"):
-        query = query.filter(Transaction.occurred_at <= filters["date_to"])
-    if filters.get("account_id"):
-        account_id = filters["account_id"]
-        account = get_account(db, account_id, book_id)
-        if account and _is_credit_account(account.account_type):
-            query = query.filter(
-                or_(
-                    Transaction.account_id == account_id,
-                    Transaction.counterparty_account_id == account_id,
-                )
-            )
-        else:
-            query = query.filter(Transaction.account_id == account_id)
-    if filters.get("category_id"):
-        query = query.filter(Transaction.category_id == filters["category_id"])
-    if filters.get("transaction_type"):
-        query = query.filter(Transaction.transaction_type == filters["transaction_type"])
-    if filters.get("status"):
-        query = query.filter(Transaction.status == filters["status"])
-    else:
-        # 默认不显示已作废交易,除非明确指定 status
-        query = query.filter(Transaction.status != TransactionStatus.VOID.value)
-    if filters.get("keyword"):
-        query = query.filter(
-            Transaction.merchant.ilike(f"%{filters['keyword']}%") |
-            Transaction.note.ilike(f"%{filters['keyword']}%")
-        )
-    if filters.get("tag"):
-        # Filter by tags JSON field containing the tag name
-        query = query.filter(Transaction.tags.ilike(f"%{filters['tag']}%"))
-
-    # 🛡️ L: 隐身账单过滤 — 默认不显示，除非明确要求
-    if not filters.get("include_hidden"):
-        query = query.filter(Transaction.is_hidden == False)
-
-    ordering = [
-        Transaction.occurred_at.desc(),
-        Transaction.created_at.desc(),
-        Transaction.id.desc(),
-    ]
-
-    visible_transaction_ids = _collapse_transfer_rows(
-        query.with_entities(
-            Transaction.id,
-            Transaction.transaction_type,
-            Transaction.direction,
-            Transaction.related_transaction_id,
-            Transaction.business_key,
-        ).order_by(*ordering).all()
-    )
+    query = _build_transactions_query(db, book_id, filters)
+    visible_transaction_ids = _get_visible_transaction_ids(query)
     total = len(visible_transaction_ids)
 
     # Pagination
@@ -1028,6 +1033,14 @@ def get_transactions(db: Session, book_id: str, filters: dict) -> Tuple[List[Tra
 
     transactions = _load_transactions_for_response(db, page_transaction_ids)
     return _annotate_refund_status(db, book_id, transactions), total
+
+
+def get_transactions_for_export(db: Session, book_id: str, filters: dict) -> List[Transaction]:
+    """Get the full visible transaction set for export without pagination."""
+    query = _build_transactions_query(db, book_id, filters)
+    transaction_ids = _get_visible_transaction_ids(query)
+    transactions = _load_transactions_for_response(db, transaction_ids)
+    return _annotate_refund_status(db, book_id, transactions)
 
 
 def get_transaction(db: Session, transaction_id: str, book_id: str) -> Optional[Transaction]:

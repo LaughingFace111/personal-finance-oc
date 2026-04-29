@@ -175,6 +175,54 @@ export async function apiUpload<T = any>(url: string, formData: FormData, option
   return response.json();
 }
 
+export async function apiDownload(url: string, options?: FetchOptions): Promise<{ blob: Blob; filename: string | null }> {
+  const { showErrorMessage = true, ...requestOptions } = options || {};
+  const response = await apiFetch(url, {
+    ...requestOptions,
+    method: 'GET',
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    localStorage.removeItem('token');
+    if (showErrorMessage) {
+      message.error('登录已失效，请重新登录');
+    }
+    redirectToLogin();
+    throw new Error('AUTH_EXPIRED');
+  }
+
+  if (!response.ok) {
+    let errorMsg = '下载失败';
+    try {
+      const errorData = await response.json();
+      const detail = errorData.detail;
+      if (typeof detail === 'string') {
+        errorMsg = detail;
+      } else if (Array.isArray(detail)) {
+        errorMsg = detail.map((d: any) => d.msg || JSON.stringify(d)).join('; ');
+      } else if (detail && typeof detail === 'object') {
+        errorMsg = detail.message || detail.error || detail.msg || JSON.stringify(detail);
+      } else {
+        errorMsg = errorData.message || errorData.error || errorMsg;
+      }
+    } catch {
+      errorMsg = `下载失败 (${response.status})`;
+    }
+    if (showErrorMessage) {
+      message.error(errorMsg);
+    }
+    throw new Error(errorMsg);
+  }
+
+  const disposition = response.headers.get('content-disposition') || '';
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
+
+  return {
+    blob: await response.blob(),
+    filename: filenameMatch?.[1] || null,
+  };
+}
+
 export interface ExpenseByCategoryParams {
   bookId: string;
   dateFrom: string;
