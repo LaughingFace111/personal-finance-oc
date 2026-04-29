@@ -1,7 +1,7 @@
 import { Button, Card, Select, message } from 'antd'
 import { useEffect, useState } from 'react'
 import { useAuth } from '../App'
-import { apiGet } from '../services/api'
+import { apiDownload, apiGet } from '../services/api'
 
 type AccountOption = {
   id: string
@@ -28,6 +28,7 @@ export default function ExportPage() {
   const bookId = user?.default_book_id || ''
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [loadingAccounts, setLoadingAccounts] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [filters, setFilters] = useState(() => ({
     account_id: '',
     ...buildDefaultDateRange(),
@@ -52,7 +53,7 @@ export default function ExportPage() {
       })
   }, [bookId])
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!bookId) {
       message.error('未找到默认账本')
       return
@@ -63,9 +64,25 @@ export default function ExportPage() {
     if (filters.start_date) params.set('start_date', filters.start_date)
     if (filters.end_date) params.set('end_date', filters.end_date)
 
-    const exportUrl = new URL('/api/export/transactions', window.location.origin)
-    exportUrl.search = params.toString()
-    window.open(exportUrl.toString(), '_blank', 'noopener,noreferrer')
+    setExporting(true)
+    try {
+      const { blob, filename } = await apiDownload(`/api/export/transactions?${params.toString()}`)
+      const downloadUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const fallbackFilename = `transactions-${filters.start_date || 'start'}-${filters.end_date || 'end'}.csv`
+
+      link.href = downloadUrl
+      link.download = filename || fallbackFilename
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(downloadUrl)
+    } catch {
+      // apiDownload already handles auth redirects and user-facing error messages.
+    } finally {
+      setExporting(false)
+    }
   }
 
   return (
@@ -108,7 +125,7 @@ export default function ExportPage() {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-          <Button type="primary" onClick={handleExport}>
+          <Button type="primary" onClick={handleExport} loading={exporting}>
             导出 CSV
           </Button>
         </div>
