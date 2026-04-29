@@ -47,8 +47,6 @@ class AccountUpdate(BaseModel):
     billing_day_rule: Optional[str] = None
     repayment_day: Optional[int] = Field(default=None, ge=1, le=31)
     note: Optional[str] = None
-    is_active: Optional[bool] = None
-    is_archived: Optional[bool] = None
 
 
 class AccountResponse(AccountBase):

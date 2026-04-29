@@ -18,6 +18,7 @@ from .service import (
     get_subscription,
     get_upcoming_bills,
     list_subscriptions,
+    _serialize_subscription,
     update_subscription,
 )
 
@@ -67,7 +68,7 @@ def get(
     subscription = get_subscription(db, subscription_id, bid)
     if not subscription:
         raise NotFoundException("Subscription not found")
-    return subscription
+    return _serialize_subscription(subscription)
 
 
 @router.patch("/{subscription_id}", response_model=SubscriptionResponse)

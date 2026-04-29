@@ -207,8 +207,11 @@ def _ensure_subscription_schema(bind_engine) -> None:
                     name VARCHAR(100) NOT NULL,
                     amount_type VARCHAR(20) NOT NULL,
                     amount NUMERIC(15, 2) NOT NULL DEFAULT 0,
-                    cycle_days VARCHAR(20) NOT NULL,
-                    next_due_date DATE NOT NULL,
+                    frequency_unit VARCHAR(20) NOT NULL,
+                    frequency_interval NUMERIC(10, 0) NOT NULL DEFAULT 1,
+                    day_of_month NUMERIC(2, 0),
+                    due_anchor_date DATE NOT NULL,
+                    next_payment_date DATE NOT NULL,
                     account_id VARCHAR(36) NOT NULL,
                     created_at DATETIME,
                     updated_at DATETIME,
@@ -217,6 +220,62 @@ def _ensure_subscription_schema(bind_engine) -> None:
                 )
                 """
             )
+        else:
+            existing_columns = {
+                column["name"] for column in inspector.get_columns("subscriptions")
+            }
+            if "cycle_days" in existing_columns or "next_due_date" in existing_columns:
+                connection.exec_driver_sql("ALTER TABLE subscriptions RENAME TO subscriptions_legacy_phase8")
+                connection.exec_driver_sql(
+                    """
+                    CREATE TABLE subscriptions (
+                        id VARCHAR(36) PRIMARY KEY,
+                        book_id VARCHAR(36) NOT NULL,
+                        name VARCHAR(100) NOT NULL,
+                        amount_type VARCHAR(20) NOT NULL,
+                        amount NUMERIC(15, 2) NOT NULL DEFAULT 0,
+                        frequency_unit VARCHAR(20) NOT NULL,
+                        frequency_interval NUMERIC(10, 0) NOT NULL DEFAULT 1,
+                        day_of_month NUMERIC(2, 0),
+                        due_anchor_date DATE NOT NULL,
+                        next_payment_date DATE NOT NULL,
+                        account_id VARCHAR(36) NOT NULL,
+                        created_at DATETIME,
+                        updated_at DATETIME,
+                        FOREIGN KEY(book_id) REFERENCES books (id),
+                        FOREIGN KEY(account_id) REFERENCES accounts (id)
+                    )
+                    """
+                )
+                connection.exec_driver_sql(
+                    """
+                    INSERT INTO subscriptions (
+                        id, book_id, name, amount_type, amount,
+                        frequency_unit, frequency_interval, day_of_month,
+                        due_anchor_date, next_payment_date, account_id, created_at, updated_at
+                    )
+                    SELECT
+                        id,
+                        book_id,
+                        name,
+                        amount_type,
+                        amount,
+                        'custom_days',
+                        CASE
+                            WHEN trim(coalesce(cycle_days, '')) GLOB '[0-9]*' AND trim(coalesce(cycle_days, '')) <> ''
+                                THEN CAST(trim(cycle_days) AS INTEGER)
+                            ELSE 30
+                        END,
+                        NULL,
+                        next_due_date,
+                        next_due_date,
+                        account_id,
+                        created_at,
+                        updated_at
+                    FROM subscriptions_legacy_phase8
+                    """
+                )
+                connection.exec_driver_sql("DROP TABLE subscriptions_legacy_phase8")
 
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_subscriptions_book_id ON subscriptions (book_id)"
@@ -225,8 +284,8 @@ def _ensure_subscription_schema(bind_engine) -> None:
             "CREATE INDEX IF NOT EXISTS ix_subscriptions_account_id ON subscriptions (account_id)"
         )
         connection.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_subscriptions_next_due_date ON subscriptions (next_due_date)"
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_next_payment_date ON subscriptions (next_payment_date)"
         )
         connection.exec_driver_sql(
-            "CREATE INDEX IF NOT EXISTS ix_subscriptions_book_due ON subscriptions (book_id, next_due_date)"
+            "CREATE INDEX IF NOT EXISTS ix_subscriptions_book_due ON subscriptions (book_id, next_payment_date)"
         )

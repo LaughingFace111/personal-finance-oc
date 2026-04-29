@@ -14,6 +14,24 @@ from .models import Account
 from .schemas import AccountCreate, AccountUpdate
 
 
+def _build_account_query(
+    db: Session,
+    book_id: str,
+    *,
+    include_inactive: bool = False,
+    include_archived: bool = False,
+    include_deleted: bool = False,
+):
+    query = db.query(Account).filter(Account.book_id == book_id)
+    if not include_inactive:
+        query = query.filter(Account.is_active == True)
+    if not include_archived:
+        query = query.filter(Account.is_archived == False)
+    if not include_deleted:
+        query = query.filter(Account.is_deleted == False)
+    return query
+
+
 def _to_decimal_or_zero(value: Any) -> Decimal:
     """Normalize nullable numeric values from ORM/SQL aggregates to Decimal(0)."""
     if value is None:
@@ -152,13 +170,13 @@ def create_account(db: Session, book_id: str, data: AccountCreate) -> Account:
 
 def get_accounts(db: Session, book_id: str, include_inactive: bool = False, include_deleted: bool = False) -> List[Account]:
     """Get all accounts for book"""
-    query = db.query(Account).filter(Account.book_id == book_id)
-    if not include_inactive:
-        query = query.filter(Account.is_active == True)
-    query = query.filter(Account.is_archived == False)
-    if not include_deleted:
-        query = query.filter(Account.is_deleted == False)
-    return query.all()
+    return _build_account_query(
+        db,
+        book_id,
+        include_inactive=include_inactive,
+        include_archived=False,
+        include_deleted=include_deleted,
+    ).all()
 
 
 def get_accounts_for_management(
@@ -168,14 +186,13 @@ def get_accounts_for_management(
     include_deleted: bool = False,
     include_archived: bool = False,
 ) -> List[Account]:
-    query = db.query(Account).filter(Account.book_id == book_id)
-    if not include_inactive:
-        query = query.filter(Account.is_active == True)
-    if not include_archived:
-        query = query.filter(Account.is_archived == False)
-    if not include_deleted:
-        query = query.filter(Account.is_deleted == False)
-    return query.all()
+    return _build_account_query(
+        db,
+        book_id,
+        include_inactive=include_inactive,
+        include_archived=include_archived,
+        include_deleted=include_deleted,
+    ).all()
 
 
 def get_account(db: Session, account_id: str, book_id: str) -> Optional[Account]:
@@ -196,6 +213,10 @@ def update_account(db: Session, account_id: str, book_id: str, data: AccountUpda
     account = get_account(db, account_id, book_id)
     if not account:
         raise NotFoundException("Account not found")
+    if account.is_deleted:
+        raise NotFoundException("Account not found")
+    if account.is_archived:
+        raise AppException(status_code=409, code=ErrorCode.CONFLICT, message="Archived accounts are read-only")
 
     for key, value in data.model_dump(exclude_unset=True).items():
         if value is not None and key in ["billing_day", "repayment_day"]:
@@ -213,10 +234,6 @@ def set_account_archived(db: Session, account_id: str, book_id: str, archived: b
         raise NotFoundException("Account not found")
 
     account.is_archived = archived
-    if archived:
-        account.is_active = False
-    else:
-        account.is_active = True
 
     db.commit()
     db.refresh(account)
@@ -478,6 +495,7 @@ def get_credit_accounts_repayment_summary(db: Session, book_id: str) -> List[Dic
         Account.book_id == book_id,
         Account.account_type.in_(['credit_card', 'credit_line']),
         Account.is_active == True,
+        Account.is_archived == False,
         Account.is_deleted == False
     ).all()
     

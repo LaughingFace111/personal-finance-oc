@@ -91,7 +91,7 @@ def list_accounts(
     include_inactive: bool = False,
     include_archived: bool = False,
 ):
-    """Get all accounts"""
+    """Get accounts with archive hidden by default unless explicitly requested."""
     bid = get_current_book_id(current_user, db, book_id)
     accounts = get_accounts_for_management(db, bid, include_inactive=include_inactive, include_archived=include_archived)
     

@@ -223,6 +223,26 @@ export async function apiDownload(url: string, options?: FetchOptions): Promise<
   };
 }
 
+export interface RecurringBillRecord {
+  id: string;
+  book_id: string;
+  name: string;
+  amount_type: 'fixed' | 'variable';
+  amount: number | string;
+  frequency_unit: 'weekly' | 'monthly' | 'yearly' | 'custom_days';
+  frequency_interval: number;
+  day_of_month?: number | null;
+  due_anchor_date: string;
+  next_payment_date: string;
+  account_id: string;
+  account_name?: string | null;
+  cadence_label: string;
+  due_detail: string;
+  days_until_payment: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ExpenseByCategoryParams {
   bookId: string;
   dateFrom: string;

@@ -10,7 +10,7 @@ import { TagMultiSelect } from './components/TagMultiSelect'
 import TransactionListComponent from './components/TransactionList'
 import { TransactionDetailModal } from './components/TransactionDetailModal'
 import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
-import { apiGet, apiPost, apiDelete, apiPatch } from './services/api'
+import { apiGet, apiPost, apiDelete, apiPatch, type RecurringBillRecord } from './services/api'
 import { mapTagNamesToIds, parseTransactionTagNames, toDateInputValue } from './pages/transactionFormSupport'
 import { useTheme, getThemeVariables } from './hooks/useTheme'
 import { AuthContext, useAuth } from './contexts/AuthContext'
@@ -671,20 +671,18 @@ const DashboardPage = () => {
 const UpcomingBillsWidget = () => {
   const { user } = useAuth()
   const navigate = useNavigate()
-  const [bills, setBills] = useState<any[]>([])
+  const [bills, setBills] = useState<RecurringBillRecord[]>([])
   const [loading, setLoading] = useState(true)
   const bookId = user?.default_book_id
 
   useEffect(() => {
     if (!bookId) return
     setLoading(true)
-    apiGet(`/api/subscriptions/upcoming?book_id=${bookId}&days=30`)
-      .then((data: any) => setBills(Array.isArray(data) ? data : []))
+    apiGet<RecurringBillRecord[]>(`/api/subscriptions/upcoming?book_id=${bookId}&days=30`)
+      .then((data) => setBills(Array.isArray(data) ? data : []))
       .catch(() => setBills([]))
       .finally(() => setLoading(false))
   }, [bookId])
-
-  if (loading || bills.length === 0) return null
 
   return (
     <div style={{ margin: '0 0 16px', borderRadius: 16, background: 'var(--bg-card)', overflow: 'hidden', boxShadow: 'var(--shadow-card)' }}>
@@ -696,24 +694,40 @@ const UpcomingBillsWidget = () => {
         <Button type="link" size="small" onClick={() => navigate('/subscriptions')}>查看全部</Button>
       </div>
       <div style={{ padding: '0 16px 16px' }}>
-        {bills.slice(0, 5).map((item: any, index: number) => (
-          <div
-            key={item.id}
-            style={{
-              padding: '12px 0',
-              borderBottom: index < Math.min(bills.length, 5) - 1 ? '1px solid var(--border-color)' : 'none'
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <span style={{ fontWeight: 500 }}>{item.name}</span>
-              <span style={{ fontWeight: 600 }}>¥{Number(item.amount || 0).toFixed(2)}</span>
+        {loading ? (
+          <div style={{ padding: '8px 0' }}><Spin size="small" /></div>
+        ) : bills.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未来 30 天暂无账单" />
+        ) : (
+          bills.slice(0, 5).map((item, index) => (
+            <div
+              key={item.id}
+              style={{
+                padding: '12px 0',
+                borderBottom: index < Math.min(bills.length, 5) - 1 ? '1px solid var(--border-color)' : 'none'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 6 }}>
+                <div>
+                  <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span>{item.name}</span>
+                    <Tag color={item.amount_type === 'fixed' ? 'blue' : 'gold'}>
+                      {item.amount_type === 'fixed' ? '固定金额' : '可变金额'}
+                    </Tag>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    {item.account_name || '未绑定账户'} · {item.cadence_label}
+                  </div>
+                </div>
+                <span style={{ fontWeight: 600 }}>¥{Number(item.amount || 0).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
+                <span>{item.due_detail}</span>
+                <span>{item.days_until_payment === 0 ? '今天付款' : `${item.days_until_payment} 天后付款`} · {item.next_payment_date}</span>
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>
-              <span>{item.account_name || '未绑定账户'}</span>
-              <span>{item.days_until_due === 0 ? '今天到期' : `${item.days_until_due} 天后到期`} · {item.next_due_date}</span>
-            </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   )
@@ -1472,7 +1486,7 @@ const AccountsPage = () => {
                     <div>
                       <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span>{item.name}</span>
-                        {item.is_archived && <Tag color="default">Archived</Tag>}
+                        {item.is_archived && <Tag color="default">已归档</Tag>}
                       </div>
                       <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
                     </div>
@@ -1511,6 +1525,7 @@ const AccountsPage = () => {
                     <div style={{ fontSize: 18, fontWeight: 600, marginTop: 8 }}>¥{Number(item.current_balance || 0).toFixed(2)}</div>
                   )}
                   {item.is_archived && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>最后余额: ¥{Number(item.current_balance || 0).toFixed(2)}</div>}
+                  {item.is_archived && <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 }}>已归档账户默认不会出现在账户选择器中</div>}
                   {item.debt_amount > 0 && !creditInfo && <div style={{ color: '#ff4d4f', fontSize: 12 }}>负债: ¥{Number(item.debt_amount).toFixed(2)}</div>}
                 </Card>
               </List.Item>
@@ -1642,6 +1657,7 @@ const AccountDetailPage = () => {
   const isCreditAccount = account?.account_type === 'credit_card' || account?.account_type === 'credit_line'
   const isLoanAccount = account?.account_type === 'loan'
   const isAssetAccount = ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account?.account_type)
+  const isArchived = Boolean(account?.is_archived)
   const trendTitle = isCreditAccount
     ? '每日收盘可用额度趋势'
     : isLoanAccount
@@ -1719,14 +1735,14 @@ const AccountDetailPage = () => {
           <div>
             <div style={{ fontSize: 18, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>{account.name}</span>
-              {account.is_archived && <Tag color="default">Archived</Tag>}
+              {isArchived && <Tag color="default">已归档</Tag>}
             </div>
             <div style={{ color: '#666', fontSize: 14 }}>{typeLabels[account.account_type] || account.account_type}</div>
             <div style={{ fontSize: 24, fontWeight: 600, marginTop: 8 }}>¥{Number(account.current_balance || 0).toFixed(2)}</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button type="primary" size="small" onClick={() => navigate(`/accounts/${accountId}/edit`)}>编辑</Button>
-            {account.is_archived ? (
+            {!isArchived && <Button type="primary" size="small" onClick={() => navigate(`/accounts/${accountId}/edit`)}>编辑</Button>}
+            {isArchived ? (
               <Button
                 size="small"
                 onClick={async () => {
@@ -1759,27 +1775,37 @@ const AccountDetailPage = () => {
                 归档
               </Button>
             )}
-            <Popconfirm
-              title="删除账户"
-              description="删除后，该账户的历史交易将被保留并标记为[已删除账户]，此操作不可逆，是否继续？"
-              onConfirm={async () => {
-                try {
-                  await apiDelete(`/api/accounts/${accountId}`)
-                  message.success('账户已删除')
-                  navigate('/accounts')
-                } catch (error) {
-                  console.error("Request failed:", error)
-                  message.error('删除失败')
-                }
-              }}
-              okText="确认删除"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-            >
-              <Button danger size="small">删除账户</Button>
-            </Popconfirm>
+            {!isArchived && (
+              <Popconfirm
+                title="删除账户"
+                description="删除后，该账户的历史交易将被保留并标记为[已删除账户]，此操作不可逆，是否继续？"
+                onConfirm={async () => {
+                  try {
+                    await apiDelete(`/api/accounts/${accountId}`)
+                    message.success('账户已删除')
+                    navigate('/accounts')
+                  } catch (error) {
+                    console.error("Request failed:", error)
+                    message.error('删除失败')
+                  }
+                }}
+                okText="确认删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button danger size="small">删除账户</Button>
+              </Popconfirm>
+            )}
           </div>
         </div>
+        {isArchived && (
+          <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: '#fafafa', border: '1px solid var(--border-color)' }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>该账户已归档</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+              归档账户默认不会出现在账户管理列表或账户选择器中。你仍可在这里查看历史信息，最后余额为 ¥{Number(account.current_balance || 0).toFixed(2)}。
+            </div>
+          </div>
+        )}
         
         {/* 信用账户额外信息 */}
         {(account.account_type === 'credit_card' || account.account_type === 'credit_line') && (
@@ -1842,17 +1868,21 @@ const AccountDetailPage = () => {
               </div>
             )}
             {/* 🛡️ L: 调整额度按钮 */}
-            <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-              <Button size="small" onClick={() => setLimitModalVisible(true)}>调整额度</Button>
-            </div>
+            {!isArchived && (
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <Button size="small" onClick={() => setLimitModalVisible(true)}>调整额度</Button>
+              </div>
+            )}
           </div>
         )}
 
         {/* 余额调整 */}
-        <div style={{ marginTop: 16 }}>
+        {!isArchived && (
+          <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>余额调整</div>
           <Button size="small" type="primary" onClick={() => setAdjustModalVisible(true)}>调整</Button>
-        </div>
+          </div>
+        )}
       </Card>
 
       {/* 余额趋势图 */}
@@ -2104,6 +2134,11 @@ const AccountEditPage = () => {
     setFetching(true)
     apiGet(`/api/accounts/${accountId}`)
       .then(acc => {
+        if (acc.is_archived) {
+          message.info('已归档账户仅支持在详情页查看或恢复')
+          navigate(`/accounts/${accountId}`)
+          return
+        }
         const accType = acc.account_type
         setAccountType(accType)
         setIsAssetAccount(['cash', 'debit_card', 'ewallet'].includes(accType))
@@ -2229,19 +2264,34 @@ const AccountEditPage = () => {
 const SubscriptionsPage = () => {
   const { user } = useAuth()
   const bookId = user?.default_book_id
-  const [subscriptions, setSubscriptions] = useState<any[]>([])
+  const [subscriptions, setSubscriptions] = useState<RecurringBillRecord[]>([])
   const [accounts, setAccounts] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<any>(null)
+  const [editing, setEditing] = useState<RecurringBillRecord | null>(null)
   const [form] = Form.useForm()
+  const frequencyUnit = Form.useWatch('frequency_unit', form)
+
+  const openCreateModal = () => {
+    setEditing(null)
+    form.resetFields()
+    form.setFieldsValue({
+      amount_type: 'fixed',
+      frequency_unit: 'monthly',
+      frequency_interval: 1,
+      day_of_month: new Date().getDate(),
+      due_anchor_date: formatLocalDate(new Date()),
+      next_payment_date: formatLocalDate(new Date()),
+    })
+    setModalOpen(true)
+  }
 
   const loadData = () => {
     if (!bookId) return
     setLoading(true)
     Promise.all([
-      apiGet(`/api/subscriptions?book_id=${bookId}`),
+      apiGet<RecurringBillRecord[]>(`/api/subscriptions?book_id=${bookId}`),
       apiGet(`/api/accounts?book_id=${bookId}`),
     ])
       .then(([subscriptionRes, accountRes]) => {
@@ -2259,25 +2309,17 @@ const SubscriptionsPage = () => {
     loadData()
   }, [bookId])
 
-  const openCreateModal = () => {
-    setEditing(null)
-    form.resetFields()
-    form.setFieldsValue({
-      amount_type: 'fixed',
-      cycle_days: '30',
-      next_due_date: formatLocalDate(new Date()),
-    })
-    setModalOpen(true)
-  }
-
-  const openEditModal = (item: any) => {
+  const openEditModal = (item: RecurringBillRecord) => {
     setEditing(item)
     form.setFieldsValue({
       name: item.name,
       amount_type: item.amount_type,
       amount: Number(item.amount || 0),
-      cycle_days: item.cycle_days,
-      next_due_date: item.next_due_date,
+      frequency_unit: item.frequency_unit,
+      frequency_interval: item.frequency_interval,
+      day_of_month: item.day_of_month ?? undefined,
+      due_anchor_date: item.due_anchor_date,
+      next_payment_date: item.next_payment_date,
       account_id: item.account_id,
     })
     setModalOpen(true)
@@ -2322,7 +2364,7 @@ const SubscriptionsPage = () => {
         <List
           grid={{ gutter: 16, column: 2 }}
           dataSource={subscriptions}
-          renderItem={(item: any) => (
+          renderItem={(item) => (
             <List.Item>
               <Card size="small">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
@@ -2333,7 +2375,12 @@ const SubscriptionsPage = () => {
                         {item.amount_type === 'fixed' ? '固定金额' : '可变金额'}
                       </Tag>
                     </div>
-                    <div style={{ marginTop: 8, fontSize: 22, fontWeight: 700 }}>¥{Number(item.amount || 0).toFixed(2)}</div>
+                    <div style={{ marginTop: 8, fontSize: 22, fontWeight: 700 }}>
+                      ¥{Number(item.amount || 0).toFixed(2)}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                      {item.amount_type === 'fixed' ? '固定金额' : '用于规划的预计金额'}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <Button size="small" onClick={() => openEditModal(item)}>编辑</Button>
@@ -2358,8 +2405,9 @@ const SubscriptionsPage = () => {
                 </div>
                 <div style={{ marginTop: 12, display: 'grid', gap: 6, fontSize: 13, color: 'var(--text-secondary)' }}>
                   <div>账户: {item.account_name || '未绑定账户'}</div>
-                  <div>到期日: 每 {item.cycle_days} 天</div>
-                  <div>下次付款日: {item.next_due_date}</div>
+                  <div>扣款节奏: {item.cadence_label}</div>
+                  <div>到期说明: {item.due_detail}</div>
+                  <div>下次付款日: {item.next_payment_date}</div>
                 </div>
               </Card>
             </List.Item>
@@ -2372,6 +2420,7 @@ const SubscriptionsPage = () => {
         open={modalOpen}
         onCancel={() => { setModalOpen(false); form.resetFields(); setEditing(null) }}
         footer={null}
+        width={560}
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
@@ -2386,10 +2435,30 @@ const SubscriptionsPage = () => {
           <Form.Item name="amount" label="金额" rules={[{ required: true, message: '请输入金额' }]}>
             <InputNumber style={{ width: '100%' }} min={0} precision={2} />
           </Form.Item>
-          <Form.Item name="cycle_days" label="周期天数" rules={[{ required: true, message: '请输入周期天数' }]}>
-            <Input placeholder="例如：30" />
+          <Form.Item name="frequency_unit" label="周期单位" rules={[{ required: true, message: '请选择周期单位' }]}>
+            <Select onChange={(value) => {
+              if (value !== 'monthly') {
+                form.setFieldValue('day_of_month', undefined)
+              }
+            }}>
+              <Select.Option value="monthly">每月</Select.Option>
+              <Select.Option value="weekly">每周</Select.Option>
+              <Select.Option value="yearly">每年</Select.Option>
+              <Select.Option value="custom_days">自定义天数</Select.Option>
+            </Select>
           </Form.Item>
-          <Form.Item name="next_due_date" label="下次付款日" rules={[{ required: true, message: '请选择下次付款日' }]}>
+          <Form.Item name="frequency_interval" label="周期间隔" rules={[{ required: true, message: '请输入周期间隔' }]}>
+            <InputNumber style={{ width: '100%' }} min={1} precision={0} />
+          </Form.Item>
+          {frequencyUnit === 'monthly' && (
+            <Form.Item name="day_of_month" label="每月扣款日" rules={[{ required: true, message: '请选择每月扣款日' }]}>
+              <InputNumber style={{ width: '100%' }} min={1} max={31} precision={0} />
+            </Form.Item>
+          )}
+          <Form.Item name="due_anchor_date" label="用户锚点日期" rules={[{ required: true, message: '请选择锚点日期' }]}>
+            <Input type="date" />
+          </Form.Item>
+          <Form.Item name="next_payment_date" label="下次付款日" rules={[{ required: true, message: '请选择下次付款日' }]}>
             <Input type="date" />
           </Form.Item>
           <Form.Item name="account_id" label="关联账户" rules={[{ required: true, message: '请选择账户' }]}>
@@ -2399,6 +2468,9 @@ const SubscriptionsPage = () => {
               ))}
             </Select>
           </Form.Item>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
+            固定金额用于稳定账单；可变金额用于记录预估支出。首页“即将到期账单”会直接复用这里保存的下次付款日。
+          </div>
           <Button type="primary" htmlType="submit" block loading={saving}>
             {editing ? '保存修改' : '创建账单'}
           </Button>

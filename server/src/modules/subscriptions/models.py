@@ -14,8 +14,11 @@ class Subscription(Base):
     name = Column(String(100), nullable=False)
     amount_type = Column(String(20), nullable=False)
     amount = Column(Numeric(15, 2), nullable=False, default=0)
-    cycle_days = Column(String(20), nullable=False)
-    next_due_date = Column(Date, nullable=False, index=True)
+    frequency_unit = Column(String(20), nullable=False)
+    frequency_interval = Column(Numeric(10, 0), nullable=False, default=1)
+    day_of_month = Column(Numeric(2, 0))
+    due_anchor_date = Column(Date, nullable=False)
+    next_payment_date = Column(Date, nullable=False, index=True)
     account_id = Column(String(36), ForeignKey("accounts.id"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -24,5 +27,5 @@ class Subscription(Base):
     account = relationship("Account")
 
     __table_args__ = (
-        Index("ix_subscriptions_book_due", "book_id", "next_due_date"),
+        Index("ix_subscriptions_book_due", "book_id", "next_payment_date"),
     )
