@@ -1490,31 +1490,6 @@ const AccountsPage = () => {
                       </div>
                       <div style={{ color: '#999', fontSize: 12 }}>{typeLabels[item.account_type] || item.account_type}</div>
                     </div>
-                    {item.is_archived ? (
-                      <Button
-                        size="small"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          apiPost(`/api/accounts/${item.id}/unarchive`)
-                            .then(() => { message.success('账户已恢复'); loadAccounts() })
-                            .catch((error) => console.error('Unarchive failed:', error))
-                        }}
-                      >
-                        恢复
-                      </Button>
-                    ) : (
-                      <Button
-                        size="small"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          apiPost(`/api/accounts/${item.id}/archive`)
-                            .then(() => { message.success('账户已归档'); loadAccounts() })
-                            .catch((error) => console.error('Archive failed:', error))
-                        }}
-                      >
-                        归档
-                      </Button>
-                    )}
                   </div>
                   {creditInfo ? (
                     <div style={{ marginTop: 8 }}>
