@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 from src.common.enums import AccountType
@@ -77,3 +77,21 @@ class AccountBalanceResponse(BaseModel):
     current_balance: Decimal
     debt_amount: Decimal
     credit_limit: Optional[Decimal] = None
+
+
+class NetWorthAccountItem(BaseModel):
+    id: str
+    name: str
+    account_type: AccountType
+    role: Literal["asset", "liability"]
+    value: Decimal
+
+
+class NetWorthResponse(BaseModel):
+    total_assets: Decimal
+    total_liabilities: Decimal
+    net_worth: Decimal
+    assets_by_type: Dict[str, Decimal]
+    liabilities_by_type: Dict[str, Decimal]
+    accounts: List[NetWorthAccountItem]
+    calculated_at: datetime

@@ -14,8 +14,9 @@ from src.core.auth import get_current_user
 from src.modules.auth.models import User
 from src.core import AppException, ErrorCode, NotFoundException
 
-from .schemas import AccountCreate, AccountResponse, AccountUpdate
+from .schemas import AccountCreate, AccountResponse, AccountUpdate, NetWorthResponse
 from .service import (
+    calculate_net_worth,
     calculate_credit_statement_info,
     create_account,
     delete_account,
@@ -69,6 +70,16 @@ def get_credit_repayment_summary(
     from .service import get_credit_accounts_repayment_summary
     bid = get_current_book_id(current_user, db, book_id)
     return get_credit_accounts_repayment_summary(db, bid)
+
+
+@router.get("/net-worth", response_model=NetWorthResponse)
+def get_net_worth(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    bid = get_current_book_id(current_user, db, book_id)
+    return calculate_net_worth(db, bid)
 
 
 @router.post("", response_model=AccountResponse)

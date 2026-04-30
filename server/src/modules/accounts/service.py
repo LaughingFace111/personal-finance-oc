@@ -11,7 +11,15 @@ from src.common.enums import AccountType, TransactionType, TransactionDirection
 from src.core import ErrorCode, AppException, generate_uuid, NotFoundException
 
 from .models import Account
-from .schemas import AccountCreate, AccountUpdate
+from .schemas import AccountCreate, AccountUpdate, NetWorthAccountItem, NetWorthResponse
+
+
+ASSET_ACCOUNT_TYPES = {
+    AccountType.CASH.value,
+    AccountType.DEBIT_CARD.value,
+    AccountType.EWALLET.value,
+    AccountType.VIRTUAL.value,
+}
 
 
 def _build_account_query(
@@ -177,6 +185,72 @@ def get_accounts(db: Session, book_id: str, include_inactive: bool = False, incl
         include_archived=False,
         include_deleted=include_deleted,
     ).all()
+
+
+def calculate_net_worth(db: Session, book_id: str) -> NetWorthResponse:
+    accounts = _build_account_query(
+        db,
+        book_id,
+        include_inactive=True,
+        include_archived=False,
+        include_deleted=False,
+    ).all()
+
+    total_assets = Decimal("0")
+    total_liabilities = Decimal("0")
+    assets_by_type: Dict[str, Decimal] = {}
+    liabilities_by_type: Dict[str, Decimal] = {}
+    items: List[NetWorthAccountItem] = []
+
+    for account in accounts:
+        account_type = account.account_type
+        current_balance = _to_decimal_or_zero(account.current_balance)
+        debt_amount = _to_decimal_or_zero(account.debt_amount)
+        credit_limit = _to_decimal_or_zero(account.credit_limit)
+
+        if account_type in ASSET_ACCOUNT_TYPES:
+            role = "asset"
+            value = current_balance
+            total_assets += value
+            assets_by_type[account_type] = assets_by_type.get(account_type, Decimal("0")) + value
+        elif account_type == AccountType.CREDIT_CARD.value:
+            role = "liability"
+            value = debt_amount
+            total_liabilities += value
+            liabilities_by_type[account_type] = liabilities_by_type.get(account_type, Decimal("0")) + value
+        elif account_type == AccountType.CREDIT_LINE.value:
+            role = "liability"
+            if current_balance > credit_limit:
+                value = max(Decimal("0"), credit_limit - current_balance)
+            else:
+                value = debt_amount
+            total_liabilities += value
+            liabilities_by_type[account_type] = liabilities_by_type.get(account_type, Decimal("0")) + value
+        else:
+            role = "liability"
+            value = debt_amount
+            total_liabilities += value
+            liabilities_by_type[account_type] = liabilities_by_type.get(account_type, Decimal("0")) + value
+
+        items.append(
+            NetWorthAccountItem(
+                id=account.id,
+                name=account.name,
+                account_type=account_type,
+                role=role,
+                value=value,
+            )
+        )
+
+    return NetWorthResponse(
+        total_assets=total_assets,
+        total_liabilities=total_liabilities,
+        net_worth=total_assets - total_liabilities,
+        assets_by_type=assets_by_type,
+        liabilities_by_type=liabilities_by_type,
+        accounts=items,
+        calculated_at=datetime.utcnow(),
+    )
 
 
 def get_accounts_for_management(

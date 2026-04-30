@@ -145,6 +145,24 @@ export function apiPatch<T = any>(url: string, body?: any, options?: FetchOption
   });
 }
 
+export interface NetWorthAccount {
+  id: string;
+  name: string;
+  account_type: string;
+  role: 'asset' | 'liability';
+  value: number | string;
+}
+
+export interface NetWorthResponse {
+  total_assets: number | string;
+  total_liabilities: number | string;
+  net_worth: number | string;
+  assets_by_type: Record<string, number | string>;
+  liabilities_by_type: Record<string, number | string>;
+  accounts: NetWorthAccount[];
+  calculated_at: string;
+}
+
 export type ReimbursementStatus = 'pending' | 'approved' | 'rejected' | 'reimbursed';
 
 export interface ReimbursementRecord {
