@@ -91,3 +91,11 @@ class PlanStatus(str, Enum):
 class UserStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
+
+
+# Reimbursement status
+class ReimbursementStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    REIMBURSED = "reimbursed"

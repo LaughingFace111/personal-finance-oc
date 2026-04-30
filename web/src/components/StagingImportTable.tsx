@@ -867,6 +867,7 @@ export function StagingImportTable() {
       }),
     );
   }, [bookId]);
+  void refreshTags;
 
   const handleTagsUpdated = useCallback((nextTags: TagOption[]) => {
     const normalizedTags = nextTags.map((tag) => {

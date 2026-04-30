@@ -106,6 +106,14 @@ export function apiPost<T = any>(url: string, body?: any, options?: FetchOptions
   });
 }
 
+export function apiPostSplit<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
+  return apiJson<T>(url, {
+    ...options,
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 // PUT request
 export function apiPut<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
   return apiJson<T>(url, { 
@@ -120,6 +128,14 @@ export function apiDelete<T = any>(url: string, options?: FetchOptions): Promise
   return apiJson<T>(url, { ...options, method: 'DELETE' });
 }
 
+export function apiDeleteSplit<T = any>(url: string, options?: FetchOptions): Promise<T> {
+  return apiJson<T>(url, { ...options, method: 'DELETE' });
+}
+
+export function apiGetSplit<T = any>(url: string, options?: FetchOptions): Promise<T> {
+  return apiJson<T>(url, { ...options, method: 'GET' });
+}
+
 // PATCH request
 export function apiPatch<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
   return apiJson<T>(url, { 
@@ -127,6 +143,35 @@ export function apiPatch<T = any>(url: string, body?: any, options?: FetchOption
     method: 'PATCH', 
     body: body ? JSON.stringify(body) : undefined 
   });
+}
+
+export type ReimbursementStatus = 'pending' | 'approved' | 'rejected' | 'reimbursed';
+
+export interface ReimbursementRecord {
+  id: string;
+  book_id: string;
+  source_transaction_id?: string | null;
+  status: ReimbursementStatus;
+  contact_name: string;
+  description: string;
+  amount: number | string;
+  currency: string;
+  occurred_at: string;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function apiGetReimbursement<T = any>(url: string, options?: FetchOptions): Promise<T> {
+  return apiGet<T>(url, options);
+}
+
+export function apiPostReimbursement<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
+  return apiPost<T>(url, body, options);
+}
+
+export function apiPatchReimbursement<T = any>(url: string, body?: any, options?: FetchOptions): Promise<T> {
+  return apiPatch<T>(url, body, options);
 }
 
 // Upload request (for FormData - file uploads)

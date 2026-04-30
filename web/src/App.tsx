@@ -1,15 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom'
-import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Skeleton, Alert } from 'antd'
+import { Layout, Menu, Drawer, message, Form, Input, Card, Row, Col, List, Avatar, Tag, Button, Empty, Spin, Select, InputNumber, Checkbox, Modal, Radio, Space, Popconfirm, Tooltip, Switch, Alert } from 'antd'
 import ReactECharts from 'echarts-for-react'
-import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined, FallOutlined } from '@ant-design/icons'
+import { DashboardOutlined, WalletOutlined, TagsOutlined, SwapOutlined, BankOutlined, UploadOutlined, BarChartOutlined, SettingOutlined, PlusOutlined, MenuOutlined, CloseOutlined, ArrowUpOutlined, DeleteOutlined, FileTextOutlined, CalendarOutlined, ClockCircleOutlined, ShoppingOutlined, AccountBookOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
 import { StagingImportTable } from './components/StagingImportTable'
-import { HierarchyPickerModal } from './components/HierarchyPickerModal'
 import { CategorySelector } from './components/CategorySelector'
 import { TagMultiSelect } from './components/TagMultiSelect'
 import TransactionListComponent from './components/TransactionList'
 import { TransactionDetailModal } from './components/TransactionDetailModal'
-import { transactionFormFieldClass, transactionFormLabelClass } from './components/TransactionFormLayout'
+import { transactionFormLabelClass } from './components/TransactionFormLayout'
 import {
   apiGet,
   apiPost,
@@ -51,10 +50,14 @@ const DurableAssetsPage = lazy(() => import('./pages/DurableAssetsPage'))
 const BudgetsPage = lazy(() => import('./pages/BudgetsPage'))
 const BudgetFormPage = lazy(() => import('./pages/BudgetFormPage'))
 const BudgetDetailPage = lazy(() => import('./pages/BudgetDetailPage'))
+const ReimbursementsPage = lazy(() => import('./pages/ReimbursementsPage'))
+const ReimbursementFormPage = lazy(() => import('./pages/ReimbursementFormPage'))
 const SettingsPageView = lazy(() => import('./pages/SettingsPage'))
 const ImportsPageView = lazy(() => import('./pages/ImportsPage'))
 const TransferPage = lazy(() => import('./pages/TransferPage'))
 const ExportPage = lazy(() => import('./pages/ExportPage'))
+const SplitFormPage = lazy(() => import('./pages/SplitFormPage'))
+const SplitDetailPage = lazy(() => import('./pages/SplitDetailPage'))
 
 export { useAuth }
 
@@ -184,6 +187,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   
   return <>{children}</>
 }
+void ProtectedRoute
 
 const DRAWER_WIDTH = 280
 const menuItems = [
@@ -203,8 +207,8 @@ const menuItems = [
   { key: '/reports', icon: <BarChartOutlined />, label: '报表' },
   { key: '/settings', icon: <SettingOutlined />, label: '设置' },
 ]
-const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/subscriptions': '固定账单中心', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
-    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/other': '其他交易', '/export': '导出', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
+const pageTitles: Record<string, string> = { '/dashboard': '首页', '/transactions': '交易记录', '/transactions/new': '记一笔', '/transactions/:id': '编辑交易', '/accounts': '账户管理', '/accounts/:id': '账户详情', '/accounts/:id/edit': '编辑账户', '/categories': '分类管理', '/categories/:id': '编辑分类', '/tags': '标签管理', '/categories/new': '新建分类', '/accounts/new': '新建账户', '/tags/new': '新建标签', '/loans': '贷款管理', '/loans/new': '添加贷款', '/installments': '分期任务', '/installments/new': '新增分期', '/installments/:id/edit': '编辑分期', '/subscriptions': '固定账单中心', '/wishlist': '愿望单', '/budgets': '预算', '/budgets/new': '新建预算', '/reimbursements': '报销垫付管理', '/reimbursements/new': '新建报销申请', '/assets': '日均成本', '/imports': '批量导入', '/reports': '报表中心', '/reports/home': '报表中心', '/reports/monthly-summary': '收支统计表', '/reports/expense-distribution': '支出分布图', '/reports/income-distribution': '收入分布图', '/reports/monthly-comparison': '月收支对比表', '/reports/tag-distribution': '标签分布图', '/reports/tag-detail/:tagId': '标签详情',
+    '/reports/account-balance-trend': '账户余额趋势', '/transfer': '转账', '/add-transaction': '收入/支出', '/split/new': '交易拆分', '/split/:transactionId': '拆分详情', '/other': '其他交易', '/export': '导出', '/settings': '设置', '/settings/rules': '匹配规则', '/settings/import-templates': '导入模板管理', '/settings/transaction-templates': '快捷模板管理', '/settings/recurring-rules': '周期记账' }
 
 const formatLocalDate = (value: Date) => {
   const year = value.getFullYear()
@@ -243,6 +247,7 @@ const getTransactionAmountMeta = (transaction: { direction?: string; transaction
   }
   return { prefix: '-', color: 'var(--accent-red)' }
 }
+void getTransactionAmountMeta
 
 const formatMoney = (value?: number | string | null) => `¥${Number(value || 0).toFixed(2)}`
 
@@ -398,6 +403,8 @@ return (
             <Route path="/reports/account-balance-trend" element={<Suspense fallback={<LoadingFallback />}><AccountBalanceTrendPage /></Suspense>} />
             <Route path="/transfer" element={<Suspense fallback={<LoadingFallback />}><TransferPage /></Suspense>} />
             <Route path="/add-transaction" element={<Suspense fallback={<LoadingFallback />}><AddTransactionPage /></Suspense>} />
+            <Route path="/split/new" element={<Suspense fallback={<LoadingFallback />}><SplitFormPage /></Suspense>} />
+            <Route path="/split/:transactionId" element={<Suspense fallback={<LoadingFallback />}><SplitDetailPage /></Suspense>} />
             {/* 其他交易 - 导航枢纽页 */}
             <Route path="/other" element={<Suspense fallback={<LoadingFallback />}><OtherHubPage /></Suspense>} />
             <Route path="/other/installment" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="installment" /></Suspense>} />
@@ -409,6 +416,9 @@ return (
             <Route path="/budgets/new" element={<Suspense fallback={<LoadingFallback />}><BudgetFormPage /></Suspense>} />
             <Route path="/budgets/:id" element={<Suspense fallback={<LoadingFallback />}><BudgetDetailPage /></Suspense>} />
             <Route path="/budgets/:id/edit" element={<Suspense fallback={<LoadingFallback />}><BudgetFormPage /></Suspense>} />
+            <Route path="/reimbursements" element={<Suspense fallback={<LoadingFallback />}><ReimbursementsPage /></Suspense>} />
+            <Route path="/reimbursements/new" element={<Suspense fallback={<LoadingFallback />}><ReimbursementFormPage /></Suspense>} />
+            <Route path="/reimbursements/:id/edit" element={<Suspense fallback={<LoadingFallback />}><ReimbursementFormPage /></Suspense>} />
             <Route path="/assets" element={<Suspense fallback={<LoadingFallback />}><DurableAssetsPage /></Suspense>} />
             <Route path="/other/lend" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="lend" /></Suspense>} />
             <Route path="/other/borrow" element={<Suspense fallback={<LoadingFallback />}><OtherTransactionPage initialSubType="borrow" /></Suspense>} />
@@ -506,6 +516,7 @@ const DashboardPage = () => {
     daily: Record<string, { income: number, expense: number, net_balance: number }>
   }>({ income: 0, expense: 0, daily: {} })
   const [loading, setLoading] = useState(true)
+  void loading
   const bookId = user?.default_book_id
 
   const year = currentDate.getFullYear()
@@ -886,7 +897,7 @@ const DateDetailPage = () => {
   }, [bookId, date])
 
   const formatDate = (d: string) => {
-    const [year, month, day] = d.split('-')
+    const [, month, day] = d.split('-')
     return `${parseInt(month)}月${parseInt(day)}日`
   }
 
@@ -1494,7 +1505,7 @@ const AccountsPage = () => {
         <Button type="primary" onClick={() => navigate('/accounts/new')}>添加账户</Button>
       </div>
       {loading ? <Spin /> : data.length === 0 ? 
-        <Empty description="暂无账户" extra={<Button type="primary" onClick={() => navigate('/accounts/new')}>添加账户</Button>} /> : 
+        <Empty description="暂无账户" /> : 
         <List 
           grid={{ gutter: 16, column: 2 }} 
           dataSource={[...data].sort((a, b) => Number(a.is_archived) - Number(b.is_archived))} 
@@ -1729,7 +1740,6 @@ const AccountDetailPage = () => {
   // 判断账户类型
   const isCreditAccount = account?.account_type === 'credit_card' || account?.account_type === 'credit_line'
   const isLoanAccount = account?.account_type === 'loan'
-  const isAssetAccount = ['cash', 'debit_card', 'ewallet', 'virtual'].includes(account?.account_type)
   const isArchived = Boolean(account?.is_archived)
   const trendTitle = isCreditAccount
     ? '每日收盘可用额度趋势'
@@ -2245,19 +2255,19 @@ const AccountDetailPage = () => {
               </div>
 
               <div style={{ display: 'grid', gap: 12 }}>
-                {[
+                {([
                   ['matched', activeReconciliation.comparison.matched_rows],
                   ['missing', activeReconciliation.comparison.missing_rows],
                   ['duplicate', activeReconciliation.comparison.duplicate_rows],
                   ['unresolved', activeReconciliation.comparison.unresolved_rows],
-                ].map(([key, rows]) => (
+                ] as Array<[string, ReconciliationStatementRow[]]>).map(([key, rows]) => (
                   <Card key={key} size="small" title={`${formatBucketTitle(key)} (${(rows as ReconciliationStatementRow[]).length})`}>
-                    {(rows as ReconciliationStatementRow[]).length === 0 ? (
+                    {rows.length === 0 ? (
                       <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无记录" />
                     ) : (
                       <List
                         size="small"
-                        dataSource={rows as ReconciliationStatementRow[]}
+                        dataSource={rows}
                         renderItem={(row) => (
                           <List.Item>
                             <div style={{ width: '100%' }}>
@@ -2628,6 +2638,7 @@ const AccountEditPage = () => {
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(true)
   const [accountType, setAccountType] = useState<string>('')
+  void accountType
   const [isAssetAccount, setIsAssetAccount] = useState(false)
   const [isCreditAccount, setIsCreditAccount] = useState(false)
   const [isLoanAccount, setIsLoanAccount] = useState(false)
@@ -2863,7 +2874,7 @@ const SubscriptionsPage = () => {
       {loading ? (
         <Spin />
       ) : subscriptions.length === 0 ? (
-        <Empty description="暂无固定账单" extra={<Button type="primary" onClick={openCreateModal}>新增账单</Button>} />
+        <Empty description="暂无固定账单" />
       ) : (
         <List
           grid={{ gutter: 16, column: 2 }}
@@ -3070,7 +3081,7 @@ const CategoriesPage = () => {
     <div>
       {loading ? <Spin /> : 
         categoryTree.length === 0 ? 
-          <Empty description="暂无分类" extra={<Button type="primary" onClick={() => navigate('/categories/new')}>添加分类</Button>} /> : 
+          <Empty description="暂无分类" /> : 
           categoryTree.map(root => (
             <div key={root.id} style={{ marginBottom: 8 }}>
               {/* 一级分类 */}
@@ -3218,7 +3229,7 @@ const LoansPage = () => {
 
   return (
     <div>
-      {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无贷款" extra={<Button type="primary" onClick={() => navigate('/loans/new')}>添加贷款</Button>} /> : 
+      {loading ? <Spin /> : data.length === 0 ? <Empty description="暂无贷款" /> : 
         <List size="small" dataSource={data} renderItem={item => <List.Item><div><div>{item.loan_name}</div><div style={{ fontSize: 12, color: '#999' }}>剩余 ¥{Number(item.principal_remaining).toFixed(2)}</div></div><Tag color="blue">{(item.current_period || 0)}/{item.total_periods}期</Tag></List.Item>} />}
     </div>
   )
@@ -3260,6 +3271,7 @@ const LoanFormPage = () => {
 const ImportsPage = () => {
   return <StagingImportTable />
 }
+void ImportsPage
 
 const ReportsPage = () => {
   const navigate = useNavigate()
@@ -3581,7 +3593,7 @@ const TagsPage = () => {
   return (
     <div>
       {loading ? <Spin /> : data.length === 0 ?
-        <Empty description="暂无标签" extra={<Button type="primary" onClick={() => navigate('/tags/new')}>添加标签</Button>} /> :
+        <Empty description="暂无标签" /> :
         data.map(group => {
           const isExpanded = expandedGroups.has(group.id)
           const childCount = group.children?.length || 0
@@ -3928,6 +3940,8 @@ const SettingsPage = () => {
     </div>
   )
 }
+void TagsPage
+void SettingsPage
 
 const MatchRulesPage = () => {
   const { user } = useAuth()

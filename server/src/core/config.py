@@ -62,6 +62,9 @@ class Settings(BaseSettings):
         # 2026-04-29 开发环境前端隧道
         "https://235b27f7.r38.cpolar.top",
         "http://235b27f7.r38.cpolar.top",
+        # 2026-04-30 开发环境前端隧道
+        "https://44b27164.r11.vip.cpolar.cn",
+        "http://44b27164.r11.vip.cpolar.cn",
     ]
 
     class Config:

@@ -58,6 +58,7 @@ export default function AccountBalanceTrendPage() {
     if (!data?.points?.length) return {};
 
     const isMonthly = data.granularity === 'month';
+    void isMonthly;
     const points = data.points;
 
     return {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { message } from 'antd';
 import { TagMultiSelect } from '../components/TagMultiSelect';
 import {
   TransactionFormLayout,
@@ -8,7 +9,7 @@ import {
   transactionFormSectionClass,
   transactionFormTextareaClass,
 } from '../components/TransactionFormLayout';
-import { apiPost } from '../services/api';
+import { apiPost, apiPostReimbursement } from '../services/api';
 import { AccountOption, TagOption, getDefaultBookId } from './transactionFormSupport';
 
 interface DebtPageProps {
@@ -31,6 +32,7 @@ export default function DebtPage({ type }: DebtPageProps) {
   const [memo, setMemo] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [tagIds, setTagIds] = useState<string[]>([]);
+  const [submitReimbursement, setSubmitReimbursement] = useState(false);
 
   useEffect(() => {
     const loadData = async () => {
@@ -61,7 +63,7 @@ export default function DebtPage({ type }: DebtPageProps) {
       .filter(Boolean);
   }, [tagIds, tags]);
 
-  const title = type === 'lend' ? '借出登记' : '借入登记';
+  const title = type === 'lend' ? '借出登记 / 可提交报销垫付' : '借入登记 / 可提交报销垫付';
   const direction = type === 'lend' ? 'out' : 'in'  // 借出=money out, 借入=money in;
   const transactionType = type === 'lend' ? 'debt_lend' : 'debt_borrow';
 
@@ -74,7 +76,7 @@ export default function DebtPage({ type }: DebtPageProps) {
       const bookId = await getDefaultBookId();
       if (!bookId) throw new Error('无法获取账本信息');
 
-      await apiPost('/api/transactions', {
+      const createdTransaction = await apiPost('/api/transactions', {
         occurred_at: new Date(date).toISOString(),
         book_id: bookId,
         account_id: accountId,
@@ -89,6 +91,20 @@ export default function DebtPage({ type }: DebtPageProps) {
           reason: reason || null,
         }),
       });
+
+      if (submitReimbursement) {
+        await apiPostReimbursement('/api/reimbursements', {
+          source_transaction_id: createdTransaction.id,
+          contact_name: counterparty,
+          description: reason || memo || (type === 'lend' ? '借出垫付报销申请' : '借入垫付报销申请'),
+          amount: parseFloat(loanAmount),
+          currency: createdTransaction.currency || 'CNY',
+          occurred_at: new Date(date).toISOString(),
+        });
+        message.success('借贷交易和报销申请已创建');
+        navigate('/reimbursements');
+        return;
+      }
 
       navigate('/dashboard');
     } catch (err) {
@@ -121,6 +137,30 @@ export default function DebtPage({ type }: DebtPageProps) {
             <label className={transactionFormLabelClass}>金额 *</label>
             <input type="number" step="0.01" min="0" value={loanAmount} onChange={(e) => setLoanAmount(e.target.value)} placeholder="0.00" className={transactionFormFieldClass} required />
           </div>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              border: '1px solid var(--border-color)',
+              borderRadius: '14px',
+              padding: '12px 14px',
+              background: 'var(--bg-elevated)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={submitReimbursement}
+              onChange={(e) => setSubmitReimbursement(e.target.checked)}
+            />
+            <span>
+              <span style={{ display: 'block', fontWeight: 600, color: 'var(--text-primary)' }}>同时提交报销垫付</span>
+              <span style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                保存借贷交易后，自动创建关联的报销申请
+              </span>
+            </span>
+          </label>
 
           <div>
             <label className={transactionFormLabelClass}>约定还款日 *</label>

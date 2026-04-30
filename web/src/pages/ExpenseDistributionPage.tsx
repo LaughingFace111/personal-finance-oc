@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Button, Spin, Empty, Select } from 'antd'
+import { Card, Button, Spin, Empty } from 'antd'
 import { LeftOutlined, RightOutlined, HomeOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { CategoryMultiSelect } from '../components/CategoryMultiSelect'

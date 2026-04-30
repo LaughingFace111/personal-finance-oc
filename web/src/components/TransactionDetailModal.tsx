@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Spin, Tag, message } from 'antd';
+import { useNavigate } from 'react-router-dom';
 import { CategorySelector } from './CategorySelector';
 import { TagMultiSelect, hexToRgba } from './TagMultiSelect';
-import { apiDelete, apiGet, apiPatch, apiPost } from '../services/api';
+import {
+  apiDelete,
+  apiGet,
+  apiGetReimbursement,
+  apiPatch,
+  apiPatchReimbursement,
+  apiPost,
+  type ReimbursementRecord,
+  type ReimbursementStatus,
+} from '../services/api';
 import TransferPage from '../pages/TransferPage';
 import OtherTransactionPage from '../pages/OtherTransactionPage';
 import { getHierarchyPathLabel } from '../utils/hierarchySelection';
@@ -56,6 +66,21 @@ function getTransactionTypeLabel(transactionType?: string | null) {
   }
 }
 
+function getReimbursementStatusMeta(status?: ReimbursementStatus | null) {
+  switch (status) {
+    case 'pending':
+      return { label: '待处理', color: 'gold' as const };
+    case 'approved':
+      return { label: '待报销', color: 'blue' as const };
+    case 'rejected':
+      return { label: '已拒绝', color: 'red' as const };
+    case 'reimbursed':
+      return { label: '已报销', color: 'green' as const };
+    default:
+      return { label: '未知', color: 'default' as const };
+  }
+}
+
 export function TransactionDetailModal({
   open,
   transaction,
@@ -63,6 +88,7 @@ export function TransactionDetailModal({
   onClose,
   onRefresh,
 }: TransactionDetailModalProps) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<DetailMode>('detail');
@@ -83,8 +109,28 @@ export function TransactionDetailModal({
   });
   const [transferEditValues, setTransferEditValues] = useState<any | null>(null);
   const [transferLoading, setTransferLoading] = useState(false);
+  const [reimbursement, setReimbursement] = useState<ReimbursementRecord | null>(null);
+  const [reimbursementLoading, setReimbursementLoading] = useState(false);
+  const [reimbursementSubmitting, setReimbursementSubmitting] = useState(false);
   const [refundForm] = Form.useForm();
   const transactionId = transaction?.id;
+
+  const loadReimbursement = async (targetTransactionId?: string | null, targetTransactionType?: string | null) => {
+    if (!bookId || !targetTransactionId || !targetTransactionType || !['debt_borrow', 'debt_lend'].includes(targetTransactionType)) {
+      setReimbursement(null);
+      return;
+    }
+
+    setReimbursementLoading(true);
+    try {
+      const records = await apiGetReimbursement<ReimbursementRecord[]>(
+        `/api/reimbursements?book_id=${bookId}&source_transaction_id=${targetTransactionId}`,
+      );
+      setReimbursement((records || [])[0] || null);
+    } finally {
+      setReimbursementLoading(false);
+    }
+  };
 
   const loadDetail = async () => {
     if (!bookId || !transactionId) return;
@@ -141,6 +187,14 @@ export function TransactionDetailModal({
         setTags([]);
       });
   }, [open, bookId, transactionId]);
+
+  useEffect(() => {
+    if (!open || !bookId || !detail?.id) {
+      setReimbursement(null);
+      return;
+    }
+    void loadReimbursement(detail.id, detail.transaction_type);
+  }, [bookId, detail?.id, detail?.transaction_type, open]);
 
   useEffect(() => {
     if (!detail) return;
@@ -268,7 +322,20 @@ export function TransactionDetailModal({
 
   const handleRefresh = async () => {
     await loadDetail();
+    await loadReimbursement(detail?.id, detail?.transaction_type);
     onRefresh?.();
+  };
+
+  const handleMarkReimbursed = async () => {
+    if (!bookId || !reimbursement?.id) return;
+    setReimbursementSubmitting(true);
+    try {
+      await apiPatchReimbursement(`/api/reimbursements/${reimbursement.id}/reimburse?book_id=${bookId}`);
+      message.success('已标记为报销完成');
+      await handleRefresh();
+    } finally {
+      setReimbursementSubmitting(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -310,6 +377,10 @@ export function TransactionDetailModal({
 
   const canCopyTransaction =
     detail?.transaction_type === 'income' || detail?.transaction_type === 'expense';
+  const canSplitTransaction =
+    (detail?.transaction_type === 'income' || detail?.transaction_type === 'expense') &&
+    !detail?.is_split_parent &&
+    !detail?.is_split_child;
 
   const openCopyMode = () => {
     if (!detail) return;
@@ -424,6 +495,16 @@ export function TransactionDetailModal({
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <Button onClick={() => setMode('edit')}>编辑</Button>
         {canCopyTransaction && <Button onClick={openCopyMode}>复制</Button>}
+        {canSplitTransaction && (
+          <Button
+            onClick={() => {
+              handleClose();
+              navigate(`/split/new?original_id=${detail?.id}`);
+            }}
+          >
+            拆分
+          </Button>
+        )}
         {canShowRefundActions && (
           <Button type="primary" onClick={() => openRefundModal()}>
             退款
@@ -469,6 +550,46 @@ export function TransactionDetailModal({
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
               <span style={{ color: 'var(--text-secondary)' }}>对方账户</span>
               <span>{accountMap.get(detail.counterparty_account_id)?.name || detail.counterparty_account_id}</span>
+            </div>
+          )}
+          {['debt_borrow', 'debt_lend'].includes(detail?.transaction_type) && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+              <span style={{ color: 'var(--text-secondary)' }}>报销状态</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {reimbursementLoading ? (
+                  <Spin size="small" />
+                ) : reimbursement ? (
+                  <>
+                    <Tag color={getReimbursementStatusMeta(reimbursement.status).color}>
+                      {getReimbursementStatusMeta(reimbursement.status).label}
+                    </Tag>
+                    {reimbursement.status === 'pending' && (
+                      <Button
+                        type="link"
+                        size="small"
+                        onClick={() => {
+                          handleClose();
+                          navigate('/reimbursements');
+                        }}
+                      >
+                        查看报销
+                      </Button>
+                    )}
+                    {reimbursement.status === 'approved' && (
+                      <Button
+                        type="link"
+                        size="small"
+                        loading={reimbursementSubmitting}
+                        onClick={() => void handleMarkReimbursed()}
+                      >
+                        标记已报销
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <span>未创建</span>
+                )}
+              </div>
             </div>
           )}
           {detailTags.length > 0 && (

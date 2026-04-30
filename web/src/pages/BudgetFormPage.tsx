@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Button, Card, Form, Input, InputNumber, Radio, Select, Spin, Switch, message } from 'antd'
+import { Button, Card, Form, Input, InputNumber, Radio, Spin, Switch, message } from 'antd'
 
 import { useAuth } from '../App'
 import { CategorySelector, type CategoryOption } from '../components/CategorySelector'

@@ -50,7 +50,9 @@ function parseJsonObject<T>(value?: string | null): Partial<T> {
 
 function parseMappings(value: string): MappingItem[] {
   const parsed = parseJsonObject<Record<string, string>>(value)
-  const mappings = Object.entries(parsed).map(([source, target]) => ({ source, target }))
+  const mappings = Object.entries(parsed)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    .map(([source, target]) => ({ source, target }))
   return mappings.length > 0 ? mappings : [emptyMapping()]
 }
 
