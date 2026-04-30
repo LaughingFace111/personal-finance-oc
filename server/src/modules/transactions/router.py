@@ -14,12 +14,17 @@ from .schemas import (
     TransactionCreate, TransactionResponse, TransactionUpdate,
     TransferCreate, CreditCardRepaymentCreate, RefundCreate, TransactionFilter, TransactionSummary,
     TransferEditResponse,
+    SplitItemCreate, TransactionSplitResponse, SplitReplaceRequest,
+    SplitItem, SplitCreate, SplitDetailResponse,
 )
 from .service import (
     create_transaction, create_transfer, create_credit_card_repayment, create_refund,
     get_transactions, get_transaction, update_transaction, delete_transaction,
     get_transfer_edit_context, update_transfer,
-    adjust_account_balance
+    adjust_account_balance,
+    create_transaction_split, get_transaction_splits,
+    replace_transaction_splits, delete_transaction_splits,
+    split_transaction, get_split_detail, delete_split,
 )
 from src.modules.books.service import get_default_book
 from src.common.enums import TransactionType, TransactionDirection
@@ -320,3 +325,136 @@ def delete(
     bid = get_current_book_id(current_user, db, book_id)
     delete_transaction(db, transaction_id, bid)
     return {"message": "Transaction voided"}
+
+
+# ─── Transaction Split ────────────────────────────────────────────────────────
+
+
+@router.post("/{transaction_id}/splits", response_model=TransactionSplitResponse)
+def create_split(
+    transaction_id: str,
+    data: SplitReplaceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Split a transaction into multiple category allocations.
+
+    The parent transaction becomes a hidden group header and child split
+    transactions are created, each with its own category and amount.
+    The sum of child amounts must equal the parent's amount.
+    """
+    bid = get_current_book_id(current_user, db, book_id)
+    log_audit(
+        action="create_transaction_split",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=transaction_id,
+        details={"split_count": len(data.splits)},
+    )
+    return create_transaction_split(db, bid, transaction_id, data.splits)
+
+
+@router.get("/{transaction_id}/splits", response_model=TransactionSplitResponse)
+def get_split(
+    transaction_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Get split group details: parent transaction and all child splits."""
+    bid = get_current_book_id(current_user, db, book_id)
+    return get_transaction_splits(db, bid, transaction_id)
+
+
+@router.put("/{transaction_id}/splits", response_model=TransactionSplitResponse)
+def replace_split(
+    transaction_id: str,
+    data: SplitReplaceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Replace all child splits of a split group."""
+    bid = get_current_book_id(current_user, db, book_id)
+    log_audit(
+        action="replace_transaction_split",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=transaction_id,
+        details={"split_count": len(data.splits)},
+    )
+    return replace_transaction_splits(db, bid, transaction_id, data.splits)
+
+
+@router.delete("/{transaction_id}/splits", response_model=TransactionResponse)
+def delete_split(
+    transaction_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None
+):
+    """Delete all splits and restore the parent to a normal visible transaction."""
+    bid = get_current_book_id(current_user, db, book_id)
+    log_audit(
+        action="delete_transaction_split",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=transaction_id,
+        details={},
+    )
+    return delete_transaction_splits(db, bid, transaction_id)
+
+
+# ─── Phase 10: Transaction Split (Simplified Contract) ────────────────────────
+
+
+@router.post("/{transaction_id}/split", response_model=SplitDetailResponse)
+def split_transaction_route(
+    transaction_id: str,
+    data: SplitCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Split an income/expense transaction into multiple category-allocation children."""
+    bid = get_current_book_id(current_user, db, book_id)
+    log_audit(
+        action="split_transaction",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=transaction_id,
+        details={"split_count": len(data.splits)},
+    )
+    return split_transaction(db, bid, transaction_id, data.splits)
+
+
+@router.get("/{transaction_id}/split", response_model=SplitDetailResponse)
+def get_split_detail_route(
+    transaction_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Get split detail: original transaction and all children."""
+    bid = get_current_book_id(current_user, db, book_id)
+    return get_split_detail(db, bid, transaction_id)
+
+
+@router.delete("/{transaction_id}/split", response_model=TransactionResponse)
+def delete_split_route(
+    transaction_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    book_id: str = None,
+):
+    """Delete all split children and restore the parent to a normal transaction."""
+    bid = get_current_book_id(current_user, db, book_id)
+    log_audit(
+        action="delete_split",
+        user_id=current_user.id,
+        resource_type="transaction",
+        resource_id=transaction_id,
+        details={},
+    )
+    return delete_split(db, bid, transaction_id)

@@ -19,12 +19,20 @@ from src.core import (
 from .models import Transaction
 from .schemas import (
     TransactionCreate,
+    TransactionResponse,
     TransactionUpdate,
     RefundCreate,
     TransferCreate,
     CreditCardRepaymentCreate,
     TransferEditResponse,
     LinkedRefundTransaction,
+    SplitItemCreate,
+    SplitItemResponse,
+    TransactionSplitResponse,
+    SplitReplaceRequest,
+    SplitItem,
+    SplitCreate,
+    SplitDetailResponse,
 )
 from src.modules.accounts.service import (
     calculate_credit_statement_info,
@@ -214,7 +222,11 @@ def _build_transactions_query(db: Session, book_id: str, filters: dict):
 
 
 def _get_visible_transaction_ids(query) -> List[str]:
-    """Return visible transaction ids after applying transfer collapsing rules."""
+    """Return visible transaction ids after applying transfer collapsing rules.
+
+    Split-group parent transactions (split_group_id == id with children) are excluded
+    from the visible list; their child splits appear individually with their own categories.
+    """
     ordering = [
         Transaction.occurred_at.desc(),
         Transaction.created_at.desc(),
@@ -227,6 +239,7 @@ def _get_visible_transaction_ids(query) -> List[str]:
             Transaction.direction,
             Transaction.related_transaction_id,
             Transaction.business_key,
+            Transaction.split_group_id,
         ).order_by(*ordering).all()
     )
 
@@ -1496,3 +1509,799 @@ def adjust_account_balance(
         db.commit()
 
     return txn
+
+
+# ─── Transaction Split ────────────────────────────────────────────────────────
+
+
+def _is_split_parent(txn: Transaction) -> bool:
+    """Check if transaction is a split group parent."""
+    return txn.is_split_parent
+
+
+def _is_split_child(txn: Transaction) -> bool:
+    """Check if transaction is a split child."""
+    return txn.is_split_child
+
+
+def create_transaction_split(
+    db: Session,
+    book_id: str,
+    parent_txn_id: str,
+    splits: List[SplitItemCreate],
+) -> TransactionSplitResponse:
+    """Create a split group from a parent transaction.
+
+    The parent becomes the group header (hidden from normal lists) and child
+    split transactions are created, each with its own category and amount.
+
+    The sum of split amounts must equal the parent's original amount (tolerance 0.01).
+
+    Balance effect: parent is reversed (now hidden), children apply normally.
+    Net balance change = 0 (same as original single transaction).
+    """
+    parent = get_transaction(db, parent_txn_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+
+    # Guards
+    if parent.status == TransactionStatus.VOID.value:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Cannot split a voided transaction")
+    if _is_split_child(parent):
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Cannot split a transaction that is already a split child")
+    if _is_split_parent(parent):
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Transaction is already split")
+    if parent.transaction_type == TransactionType.TRANSFER.value:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Transfer transactions cannot be split")
+
+    # SPLT-09: Block split if original has existing refunds
+    if parent.transaction_type == TransactionType.EXPENSE.value:
+        existing_refunds = db.query(Transaction).filter(
+            Transaction.book_id == book_id,
+            Transaction.related_transaction_id == parent.id,
+            Transaction.transaction_type == TransactionType.REFUND.value,
+            Transaction.status == TransactionStatus.CONFIRMED.value,
+        ).count()
+        if existing_refunds > 0:
+            raise AppException(
+                status_code=400, code=ErrorCode.INVALID_PARAMS,
+                message="Cannot split a transaction that already has refunds"
+            )
+
+    if len(splits) < 2:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="At least 2 split items are required")
+
+    # Validate sum of split amounts
+    total_split = sum(s.amount for s in splits)
+    tolerance = Decimal("0.01")
+    if abs(total_split - parent.amount) > tolerance:
+        raise AppException(
+            status_code=400, code=ErrorCode.INVALID_PARAMS,
+            message=f"Split amounts must sum to {parent.amount}, got {total_split}"
+        )
+
+    # Save original include flags before mutating parent
+    original_include_expense = parent.include_in_expense
+    original_include_income = parent.include_in_income
+    original_include_cashflow = parent.include_in_cashflow
+
+    # Store original category_id in parent's extra field before clearing it
+    original_category_id = parent.category_id
+    extra_data = {
+        "original_category_id": original_category_id,
+        "original_include_expense": original_include_expense,
+        "original_include_income": original_include_income,
+        "original_include_cashflow": original_include_cashflow,
+    }
+    if parent.extra:
+        try:
+            existing_extra = json.loads(parent.extra)
+            if isinstance(existing_extra, dict):
+                existing_extra.update(extra_data)
+                extra_data = existing_extra
+        except (TypeError, json.JSONDecodeError):
+            pass
+    parent.extra = json.dumps(extra_data)
+
+    # Reverse parent balance effect (parent is becoming hidden)
+    _reverse_transaction_effects(db, parent)
+
+    # Convert parent into group header
+    parent.split_group_id = parent.id
+    parent.is_split_parent = True
+    parent.category_id = None
+    parent.is_hidden = True
+    parent.include_in_expense = False
+    parent.include_in_income = False
+    parent.include_in_cashflow = False
+
+    # Create child split transactions
+    child_txns: List[Transaction] = []
+    for split_item in splits:
+        child = Transaction(
+            id=generate_uuid(),
+            book_id=book_id,
+            occurred_at=parent.occurred_at,
+            posted_at=parent.posted_at,
+            transaction_type=parent.transaction_type,
+            direction=parent.direction,
+            amount=split_item.amount,
+            currency=parent.currency,
+            account_id=parent.account_id,
+            counterparty_account_id=None,  # splits don't support counterparty
+            category_id=split_item.category_id,
+            merchant=parent.merchant,
+            note=split_item.note,
+            source_type=SourceType.MANUAL,
+            status=TransactionStatus.CONFIRMED.value,
+            tags=parent.tags,
+            split_group_id=parent.id,  # reference to parent
+            is_split_child=True,
+            split_parent_id=parent.id,
+            # 🛡️ L: Children inherit original include flags (not parent's post-split False)
+            include_in_expense=original_include_expense,
+            include_in_income=original_include_income,
+            include_in_cashflow=original_include_cashflow,
+        )
+        db.add(child)
+        child_txns.append(child)
+
+    db.commit()
+
+    # Apply balance effects for each child split (same direction/type as parent)
+    for child in child_txns:
+        _apply_transaction_effects(db, child)
+
+    db.commit()
+    clear_overview_cache()
+
+    # Reload parent with relations for response
+    db.refresh(parent)
+    parent_txn = get_transaction(db, parent.id, book_id)
+
+    return TransactionSplitResponse(
+        parent=_transaction_to_response(parent_txn),
+        splits=[
+            SplitItemResponse(
+                id=c.id,
+                occurred_at=c.occurred_at,
+                amount=c.amount,
+                currency=c.currency,
+                category_id=c.category_id,
+                category_name=c.category.name if c.category else None,
+                merchant=c.merchant,
+                note=c.note,
+                status=c.status,
+            )
+            for c in child_txns
+        ],
+        original_category_id=original_category_id,
+    )
+
+
+def get_transaction_splits(
+    db: Session,
+    book_id: str,
+    parent_txn_id: str,
+) -> TransactionSplitResponse:
+    """Get split group details: parent transaction and all child splits."""
+    parent = get_transaction(db, parent_txn_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+
+    # Load children
+    children = db.query(Transaction).options(
+        selectinload(Transaction.category),
+    ).filter(
+        Transaction.book_id == book_id,
+        Transaction.split_group_id == parent.id,
+        Transaction.id != parent.id,
+    ).order_by(Transaction.created_at.asc()).all()
+
+    # Extract original_category_id from parent's extra
+    original_category_id = None
+    if parent.extra:
+        try:
+            extra = json.loads(parent.extra)
+            if isinstance(extra, dict):
+                original_category_id = extra.get("original_category_id")
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    return TransactionSplitResponse(
+        parent=_transaction_to_response(parent),
+        splits=[
+            SplitItemResponse(
+                id=c.id,
+                occurred_at=c.occurred_at,
+                amount=c.amount,
+                currency=c.currency,
+                category_id=c.category_id,
+                category_name=c.category.name if c.category else None,
+                merchant=c.merchant,
+                note=c.note,
+                status=c.status,
+            )
+            for c in children
+        ],
+        original_category_id=original_category_id,
+    )
+
+
+def replace_transaction_splits(
+    db: Session,
+    book_id: str,
+    parent_txn_id: str,
+    splits: List[SplitItemCreate],
+) -> TransactionSplitResponse:
+    """Replace all child splits of a split group.
+
+    Balance effects of old children are reversed, then new children are created.
+    """
+    parent = get_transaction(db, parent_txn_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+    if not _is_split_parent(parent):
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Transaction is not a split group")
+
+    if len(splits) < 2:
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="At least 2 split items are required")
+
+    # Validate sum
+    total_split = sum(s.amount for s in splits)
+    tolerance = Decimal("0.01")
+    if abs(total_split - parent.amount) > tolerance:
+        raise AppException(
+            status_code=400, code=ErrorCode.INVALID_PARAMS,
+            message=f"Split amounts must sum to {parent.amount}, got {total_split}"
+        )
+
+    # SPLT-06: Children inherit original report flags from extra metadata
+    orig_expense = False
+    orig_income = False
+    orig_cashflow = False
+    if parent.extra:
+        try:
+            extra = json.loads(parent.extra)
+            if isinstance(extra, dict):
+                orig_expense = extra.get("original_include_expense", False)
+                orig_income = extra.get("original_include_income", False)
+                orig_cashflow = extra.get("original_include_cashflow", False)
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    # Load and delete old children (reverse balance effects first)
+    old_children = db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.split_group_id == parent.id,
+        Transaction.id != parent.id,
+    ).all()
+
+    for old_child in old_children:
+        _reverse_transaction_effects(db, old_child)
+        db.delete(old_child)
+
+    # Create new children
+    new_children: List[Transaction] = []
+    for split_item in splits:
+        child = Transaction(
+            id=generate_uuid(),
+            book_id=book_id,
+            occurred_at=parent.occurred_at,
+            posted_at=parent.posted_at,
+            transaction_type=parent.transaction_type,
+            direction=parent.direction,
+            amount=split_item.amount,
+            currency=parent.currency,
+            account_id=parent.account_id,
+            counterparty_account_id=None,
+            category_id=split_item.category_id,
+            merchant=parent.merchant,
+            note=split_item.note,
+            source_type=SourceType.MANUAL,
+            status=TransactionStatus.CONFIRMED.value,
+            tags=parent.tags,
+            split_group_id=parent.id,
+            is_split_child=True,
+            split_parent_id=parent.id,
+            include_in_expense=orig_expense,
+            include_in_income=orig_income,
+            include_in_cashflow=orig_cashflow,
+        )
+        db.add(child)
+        new_children.append(child)
+
+    db.commit()
+
+    # Apply new children balance effects
+    for child in new_children:
+        _apply_transaction_effects(db, child)
+
+    db.commit()
+    clear_overview_cache()
+
+    # Reload parent
+    db.refresh(parent)
+    parent_txn = get_transaction(db, parent.id, book_id)
+
+    # Restore original_category_id from parent's extra
+    original_category_id = None
+    if parent.extra:
+        try:
+            extra = json.loads(parent.extra)
+            if isinstance(extra, dict):
+                original_category_id = extra.get("original_category_id")
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    return TransactionSplitResponse(
+        parent=_transaction_to_response(parent_txn),
+        splits=[
+            SplitItemResponse(
+                id=c.id,
+                occurred_at=c.occurred_at,
+                amount=c.amount,
+                currency=c.currency,
+                category_id=c.category_id,
+                category_name=c.category.name if c.category else None,
+                merchant=c.merchant,
+                note=c.note,
+                status=c.status,
+            )
+            for c in new_children
+        ],
+        original_category_id=original_category_id,
+    )
+
+
+def delete_transaction_splits(
+    db: Session,
+    book_id: str,
+    parent_txn_id: str,
+) -> Transaction:
+    """Delete all splits and restore the parent to a normal visible transaction."""
+    parent = get_transaction(db, parent_txn_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+    if not _is_split_parent(parent):
+        raise AppException(status_code=400, code=ErrorCode.INVALID_PARAMS,
+                           message="Transaction is not a split group")
+
+    # Load and delete old children (reverse balance effects first)
+    old_children = db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.split_group_id == parent.id,
+        Transaction.id != parent.id,
+    ).all()
+
+    for old_child in old_children:
+        _reverse_transaction_effects(db, old_child)
+        db.delete(old_child)
+
+    # Restore original category from extra
+    original_category_id = None
+    if parent.extra:
+        try:
+            extra = json.loads(parent.extra)
+            if isinstance(extra, dict):
+                original_category_id = extra.get("original_category_id")
+                # Clean up extra field (remove split metadata)
+                cleaned_extra = {k: v for k, v in extra.items()
+                                 if k not in ("original_category_id", "split_created_at")}
+                parent.extra = json.dumps(cleaned_extra) if cleaned_extra else None
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    # Restore parent to normal transaction
+    parent.split_group_id = None
+    parent.is_split_parent = False
+    parent.is_split_child = False
+    parent.split_parent_id = None
+    parent.category_id = original_category_id
+    parent.is_hidden = False
+    # Recalculate include flags based on transaction type and account
+    account = get_account_by_id(db, parent.account_id)
+    if account:
+        incl_exp, incl_inc, incl_cf = _calculate_include_flags(
+            parent.transaction_type, account.account_type
+        )
+        parent.include_in_expense = incl_exp
+        parent.include_in_income = incl_inc
+        parent.include_in_cashflow = incl_cf
+
+    # Re-apply parent balance effect (it was reversed when split was created)
+    _apply_transaction_effects(db, parent)
+
+    db.commit()
+    clear_overview_cache()
+
+    return get_transaction(db, parent.id, book_id)
+
+
+def _transaction_to_response(txn: Transaction) -> TransactionResponse:
+    """Convert a Transaction model to TransactionResponse.
+
+    This is a lightweight serializer used by split endpoints.
+    For full annotation (refund status, etc.), use get_transaction instead.
+    """
+    return TransactionResponse(
+        id=txn.id,
+        book_id=txn.book_id,
+        occurred_at=txn.occurred_at,
+        posted_at=txn.posted_at,
+        transaction_type=txn.transaction_type,
+        direction=txn.direction,
+        amount=txn.amount,
+        currency=txn.currency,
+        account_id=txn.account_id,
+        counterparty_account_id=txn.counterparty_account_id,
+        category_id=txn.category_id,
+        merchant=txn.merchant,
+        note=txn.note,
+        status=txn.status,
+        tags=txn.tags,
+        extra=txn.extra,
+        related_transaction_id=txn.related_transaction_id,
+        business_key=txn.business_key,
+        include_in_expense=txn.include_in_expense,
+        include_in_income=txn.include_in_income,
+        include_in_cashflow=txn.include_in_cashflow,
+        is_hidden=txn.is_hidden,
+        created_at=txn.created_at,
+        updated_at=txn.updated_at,
+        split_group_id=txn.split_group_id,
+        is_split_parent=txn.is_split_parent,
+        is_split_child=txn.is_split_child,
+        split_parent_id=txn.split_parent_id,
+        split_children_count=0,  # Caller can override
+    )
+
+
+# ─── Phase 10: Transaction Split (Simplified Contract) ────────────────────────
+
+
+def split_transaction(
+    db: Session,
+    book_id: str,
+    transaction_id: str,
+    splits: List[SplitItem],
+) -> SplitDetailResponse:
+    """Split an income/expense transaction into multiple category-allocation children.
+
+    Phase 10 contract:
+    - Validates type is income or expense (not transfer/refund/debt)
+    - Validates no existing refunds on original
+    - Validates sum of split amounts equals original amount exactly
+    - Sets original: is_split_parent=True, is_hidden=True, exclude from reports
+    - Creates children with: split_group_id=parent.id, is_split_child=True,
+      split_parent_id=parent.id, each carrying their own amount+category
+    - Children inherit original's include_expense/income/cashflow flags
+    """
+    parent = get_transaction(db, transaction_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+
+    # ── Type guard: only income or expense ─────────────────────────────────
+    if parent.transaction_type not in (
+        TransactionType.INCOME.value,
+        TransactionType.EXPENSE.value,
+    ):
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Only income or expense transactions can be split",
+        )
+
+    # ── Already split guard ───────────────────────────────────────────────
+    if parent.is_split_child:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Cannot split a transaction that is already a split child",
+        )
+    if parent.is_split_parent:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Transaction is already split",
+        )
+
+    # ── Refund guard: block if original has linked refunds ────────────────
+    has_refunds = db.query(Transaction).filter(
+        Transaction.book_id == book_id,
+        Transaction.related_transaction_id == parent.id,
+        Transaction.transaction_type == TransactionType.REFUND.value,
+        Transaction.status != TransactionStatus.VOID.value,
+    ).count()
+    if has_refunds > 0:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Cannot split a transaction that already has refunds",
+        )
+
+    # ── Minimum 2 splits ─────────────────────────────────────────────────
+    if len(splits) < 2:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="At least 2 split items are required",
+        )
+
+    # ── Sum validation (exact, no tolerance) ─────────────────────────────
+    total_split = sum(Decimal(str(s.amount)) for s in splits)
+    original_amount = Decimal(str(parent.amount))
+    if total_split != original_amount:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message=f"Split amounts must sum to {original_amount}, got {total_split}",
+        )
+
+    # ── Store original values in parent's extra for restore ──────────────
+    original_category_id = parent.category_id
+    extra_data = {"original_category_id": original_category_id}
+    if parent.extra:
+        try:
+            existing_extra = json.loads(parent.extra)
+            if isinstance(existing_extra, dict):
+                existing_extra.update(extra_data)
+                extra_data = existing_extra
+        except (TypeError, json.JSONDecodeError):
+            pass
+    parent.extra = json.dumps(extra_data)
+
+    # ── Capture original include flags before mutating parent ────────────
+    original_include_expense = parent.include_in_expense
+    original_include_income = parent.include_in_income
+    original_include_cashflow = parent.include_in_cashflow
+
+    # ── Reverse parent balance effect (parent becomes hidden) ─────────────
+    _reverse_transaction_effects(db, parent)
+
+    # ── Convert parent to split group header ─────────────────────────────
+    parent.split_group_id = parent.id
+    parent.is_split_parent = True
+    parent.category_id = None
+    parent.is_hidden = True
+    parent.include_in_expense = False
+    parent.include_in_income = False
+    parent.include_in_cashflow = False
+
+    # ── Create child transactions ─────────────────────────────────────────
+    child_txns: List[Transaction] = []
+    for split_item in splits:
+        child = Transaction(
+            id=generate_uuid(),
+            book_id=book_id,
+            occurred_at=parent.occurred_at,
+            posted_at=parent.posted_at,
+            transaction_type=parent.transaction_type,
+            direction=parent.direction,
+            amount=Decimal(str(split_item.amount)),
+            currency=parent.currency,
+            account_id=parent.account_id,
+            counterparty_account_id=None,
+            category_id=split_item.category_id,
+            merchant=parent.merchant,
+            note=split_item.note,
+            source_type=SourceType.MANUAL,
+            status=TransactionStatus.CONFIRMED.value,
+            tags=parent.tags,
+            split_group_id=parent.id,
+            is_split_child=True,
+            split_parent_id=parent.id,
+            # Children inherit original include flags (not parent's False)
+            include_in_expense=original_include_expense,
+            include_in_income=original_include_income,
+            include_in_cashflow=original_include_cashflow,
+        )
+        db.add(child)
+        child_txns.append(child)
+
+    db.commit()
+
+    # ── Apply balance effects for each child ─────────────────────────────
+    for child in child_txns:
+        _apply_transaction_effects(db, child)
+
+    db.commit()
+    clear_overview_cache()
+
+    # ── Reload parent and build response ─────────────────────────────────
+    db.refresh(parent)
+    parent_txn = get_transaction(db, parent.id, book_id)
+
+    # Build full TransactionResponse for each child
+    child_responses = []
+    for c in child_txns:
+        db.refresh(c)
+        child_responses.append(
+            TransactionResponse(
+                id=c.id,
+                book_id=c.book_id,
+                occurred_at=c.occurred_at,
+                posted_at=c.posted_at,
+                transaction_type=c.transaction_type,
+                direction=c.direction,
+                amount=c.amount,
+                currency=c.currency,
+                account_id=c.account_id,
+                counterparty_account_id=c.counterparty_account_id,
+                category_id=c.category_id,
+                merchant=c.merchant,
+                note=c.note,
+                status=c.status,
+                tags=c.tags,
+                extra=c.extra,
+                related_transaction_id=c.related_transaction_id,
+                business_key=c.business_key,
+                include_in_expense=c.include_in_expense,
+                include_in_income=c.include_in_income,
+                include_in_cashflow=c.include_in_cashflow,
+                is_hidden=c.is_hidden,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+                split_group_id=c.split_group_id,
+                is_split_parent=c.is_split_parent,
+                is_split_child=c.is_split_child,
+                split_parent_id=c.split_parent_id,
+                split_children_count=0,
+            )
+        )
+
+    return SplitDetailResponse(
+        original_transaction=_transaction_to_response(parent_txn),
+        children=child_responses,
+    )
+
+
+def get_split_detail(
+    db: Session,
+    book_id: str,
+    transaction_id: str,
+) -> SplitDetailResponse:
+    """Get split group detail: original transaction and all children."""
+    parent = get_transaction(db, transaction_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+    if not parent.is_split_parent:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Transaction is not a split parent",
+        )
+
+    # Load children
+    children = (
+        db.query(Transaction)
+        .options(selectinload(Transaction.category))
+        .filter(
+            Transaction.book_id == book_id,
+            Transaction.split_group_id == parent.id,
+            Transaction.id != parent.id,
+        )
+        .order_by(Transaction.created_at.asc())
+        .all()
+    )
+
+    child_responses = []
+    for c in children:
+        child_responses.append(
+            TransactionResponse(
+                id=c.id,
+                book_id=c.book_id,
+                occurred_at=c.occurred_at,
+                posted_at=c.posted_at,
+                transaction_type=c.transaction_type,
+                direction=c.direction,
+                amount=c.amount,
+                currency=c.currency,
+                account_id=c.account_id,
+                counterparty_account_id=c.counterparty_account_id,
+                category_id=c.category_id,
+                merchant=c.merchant,
+                note=c.note,
+                status=c.status,
+                tags=c.tags,
+                extra=c.extra,
+                related_transaction_id=c.related_transaction_id,
+                business_key=c.business_key,
+                include_in_expense=c.include_in_expense,
+                include_in_income=c.include_in_income,
+                include_in_cashflow=c.include_in_cashflow,
+                is_hidden=c.is_hidden,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+                split_group_id=c.split_group_id,
+                is_split_parent=c.is_split_parent,
+                is_split_child=c.is_split_child,
+                split_parent_id=c.split_parent_id,
+                split_children_count=0,
+            )
+        )
+
+    return SplitDetailResponse(
+        original_transaction=_transaction_to_response(parent),
+        children=child_responses,
+    )
+
+
+def delete_split(
+    db: Session,
+    book_id: str,
+    transaction_id: str,
+) -> Transaction:
+    """Delete all split children and restore the parent to a normal transaction."""
+    parent = get_transaction(db, transaction_id, book_id)
+    if not parent:
+        raise NotFoundException("Transaction not found")
+    if not parent.is_split_parent:
+        raise AppException(
+            status_code=400,
+            code=ErrorCode.INVALID_PARAMS,
+            message="Transaction is not a split parent",
+        )
+
+    # ── Load and delete children (reverse balance effects first) ─────────
+    children = (
+        db.query(Transaction)
+        .filter(
+            Transaction.book_id == book_id,
+            Transaction.split_group_id == parent.id,
+            Transaction.id != parent.id,
+        )
+        .all()
+    )
+    for child in children:
+        _reverse_transaction_effects(db, child)
+        db.delete(child)
+
+    # ── Restore parent to normal transaction ─────────────────────────────
+    original_category_id = None
+    if parent.extra:
+        try:
+            extra = json.loads(parent.extra)
+            if isinstance(extra, dict):
+                original_category_id = extra.get("original_category_id")
+                # Clean up split metadata from extra
+                cleaned_extra = {
+                    k: v
+                    for k, v in extra.items()
+                    if k not in ("original_category_id", "split_created_at")
+                }
+                parent.extra = json.dumps(cleaned_extra) if cleaned_extra else None
+        except (TypeError, json.JSONDecodeError):
+            pass
+
+    parent.split_group_id = None
+    parent.is_split_parent = False
+    parent.is_split_child = False
+    parent.split_parent_id = None
+    parent.category_id = original_category_id
+    parent.is_hidden = False
+
+    # Recalculate include flags based on transaction type and account
+    account = get_account_by_id(db, parent.account_id)
+    if account:
+        incl_exp, incl_inc, incl_cf = _calculate_include_flags(
+            parent.transaction_type, account.account_type
+        )
+        parent.include_in_expense = incl_exp
+        parent.include_in_income = incl_inc
+        parent.include_in_cashflow = incl_cf
+
+    # Re-apply parent balance effect (it was reversed when split was created)
+    _apply_transaction_effects(db, parent)
+
+    db.commit()
+    clear_overview_cache()
+
+    return get_transaction(db, parent.id, book_id)

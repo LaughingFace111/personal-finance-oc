@@ -39,6 +39,10 @@ class Transaction(Base):
     include_in_income = Column(Boolean, default=True, index=True)  # 🛡️ L: 添加索引
     is_hidden = Column(Boolean, default=False, index=True)  # 🛡️ L: 隐身账单标记（暗号触发）
     include_in_cashflow = Column(Boolean, default=True)
+    split_group_id = Column(String(36), nullable=True, index=True)  # 拆分组 ID（组长=id，子拆分=组长.id）
+    is_split_parent = Column(Boolean, default=False)  # 🛡️ L: Phase 10 - 拆分组长标记
+    is_split_child = Column(Boolean, default=False)   # 🛡️ L: Phase 10 - 拆分子交易标记
+    split_parent_id = Column(String(36), nullable=True)  # 🛡️ L: Phase 10 - 子交易→组长引用
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

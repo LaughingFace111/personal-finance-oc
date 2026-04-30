@@ -85,6 +85,11 @@ class TransactionResponse(TransactionBase):
     is_partially_refunded: bool = False
     is_fully_refunded: bool = False
     linked_refunds: List[LinkedRefundTransaction] = Field(default_factory=list)
+    split_group_id: Optional[str] = None  # 拆分组 ID（组长与子拆分共享）
+    is_split_parent: bool = False  # 是否为拆分组长
+    is_split_child: bool = False   # 🛡️ L: Phase 10 - 是否为拆分子交易
+    split_parent_id: Optional[str] = None  # 🛡️ L: Phase 10 - 子交易→组长引用
+    split_children_count: int = 0  # 子拆分数（仅组长有值）
 
     class Config:
         from_attributes = True
@@ -158,3 +163,70 @@ class TransactionSummary(BaseModel):
     page: int
     page_size: int
     items: List[TransactionResponse]
+
+
+# ─── Transaction Split ────────────────────────────────────────────────────────
+
+
+class SplitItemCreate(BaseModel):
+    """单条拆分的创建输入"""
+    model_config = ConfigDict(extra="forbid")
+
+    category_id: str
+    amount: Decimal = Field(..., gt=0)
+    note: Optional[str] = None
+
+
+class SplitItemResponse(BaseModel):
+    """单条拆分在响应中的结构"""
+    id: str
+    occurred_at: datetime
+    amount: Decimal
+    currency: str
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    merchant: Optional[str] = None
+    note: Optional[str] = None
+    status: TransactionStatus = TransactionStatus.CONFIRMED
+
+    class Config:
+        from_attributes = True
+
+
+class TransactionSplitResponse(BaseModel):
+    """拆分操作的完整响应，包含组长和所有子拆分"""
+    parent: TransactionResponse  # 组长交易
+    splits: List[SplitItemResponse]  # 子拆分列表
+    original_category_id: Optional[str] = None  # 原始 category_id（用于还原）
+
+
+class SplitReplaceRequest(BaseModel):
+    """替换（编辑）拆分的请求体"""
+    model_config = ConfigDict(extra="forbid")
+
+    splits: List[SplitItemCreate] = Field(..., min_length=2)
+
+
+# ─── Phase 10: Transaction Split (Simplified) ─────────────────────────────────
+
+
+class SplitItem(BaseModel):
+    """Phase 10 拆分条目的创建输入（简化版）"""
+    model_config = ConfigDict(extra="forbid")
+
+    amount: Decimal = Field(..., gt=0)
+    category_id: Optional[str] = None
+    note: Optional[str] = None
+
+
+class SplitCreate(BaseModel):
+    """Phase 10 创建拆分的请求体"""
+    model_config = ConfigDict(extra="forbid")
+
+    splits: List[SplitItem] = Field(..., min_length=2)
+
+
+class SplitDetailResponse(BaseModel):
+    """Phase 10 拆分详情响应：组长 + 所有子交易"""
+    original_transaction: TransactionResponse
+    children: List[TransactionResponse]
